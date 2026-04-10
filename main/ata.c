@@ -134,20 +134,16 @@ static inline void ata_read_buffer(int chn, u32 *dst)
 	EXI_ImmEx(chn,&dat,4,EXI_WRITE);
 	if(_ideexi_version == IDE_EXI_V1) {
 		// IDE_EXI_V1, select / deselect for every 4 bytes
-		EXI_Deselect(chn);
-		EXI_Unlock(chn);
+		EXI_DeselectEx(chn);
 		u32 i = 0;
 		u32 *ptr = dst;
 		for(i = 0; i < dwords; i++) {
-			EXI_LockEx(chn,dev);
-			EXI_Select(chn,dev,EXI_SPEED32MHZ);
+			EXI_SelectEx(chn,dev,EXI_SPEED32MHZ);
 			EXI_ImmEx(chn,ptr,4,EXI_READ);
+			EXI_DeselectEx(chn);
 			ptr++;
-			EXI_Deselect(chn);
-			EXI_Unlock(chn);
 		}
-		EXI_LockEx(chn,dev);
-		EXI_Select(chn,dev,EXI_SPEED32MHZ);
+		EXI_SelectEx(chn,dev,EXI_SPEED32MHZ);
 		EXI_ImmEx(chn,&dat,4,EXI_READ);
 		EXI_Deselect(chn);
 		EXI_Unlock(chn);
@@ -525,7 +521,12 @@ static bool __ataa_writeSectors(DISC_INTERFACE *disc, sec_t sector, sec_t numSec
 	return !ataWriteSectors(0, (u64)sector, numSectors, buffer);
 }
 
-static bool __ataa_clearStatus(DISC_INTERFACE *disc)
+static bool __ataa_eraseSectors(DISC_INTERFACE *disc, sec_t sector, sec_t numSectors)
+{
+	return false;
+}
+
+static bool __ataa_flush(DISC_INTERFACE *disc)
 {
 	return true;
 }
@@ -555,7 +556,12 @@ static bool __atab_writeSectors(DISC_INTERFACE *disc, sec_t sector, sec_t numSec
 	return !ataWriteSectors(1, (u64)sector, numSectors, buffer);
 }
 
-static bool __atab_clearStatus(DISC_INTERFACE *disc)
+static bool __atab_eraseSectors(DISC_INTERFACE *disc, sec_t sector, sec_t numSectors)
+{
+	return false;
+}
+
+static bool __atab_flush(DISC_INTERFACE *disc)
 {
 	return true;
 }
@@ -585,7 +591,12 @@ static bool __ata1_writeSectors(DISC_INTERFACE *disc, sec_t sector, sec_t numSec
 	return !ataWriteSectors(2, (u64)sector, numSectors, buffer);
 }
 
-static bool __ata1_clearStatus(DISC_INTERFACE *disc)
+static bool __ata1_eraseSectors(DISC_INTERFACE *disc, sec_t sector, sec_t numSectors)
+{
+	return false;
+}
+
+static bool __ata1_flush(DISC_INTERFACE *disc)
 {
 	return true;
 }
@@ -602,9 +613,11 @@ DISC_INTERFACE __io_ataa = {
 	(FN_MEDIUM_ISINSERTED)&__ataa_isInserted,
 	(FN_MEDIUM_READSECTORS)&__ataa_readSectors,
 	(FN_MEDIUM_WRITESECTORS)&__ataa_writeSectors,
-	(FN_MEDIUM_CLEARSTATUS)&__ataa_clearStatus,
+	(FN_MEDIUM_ERASESECTORS)&__ataa_eraseSectors,
+	(FN_MEDIUM_FLUSH)&__ataa_flush,
 	(FN_MEDIUM_SHUTDOWN)&__ataa_shutdown,
-	0x1000000000000,
+	~0,
+	1,
 	512
 } ;
 DISC_INTERFACE __io_atab = {
@@ -614,9 +627,11 @@ DISC_INTERFACE __io_atab = {
 	(FN_MEDIUM_ISINSERTED)&__atab_isInserted,
 	(FN_MEDIUM_READSECTORS)&__atab_readSectors,
 	(FN_MEDIUM_WRITESECTORS)&__atab_writeSectors,
-	(FN_MEDIUM_CLEARSTATUS)&__atab_clearStatus,
+	(FN_MEDIUM_ERASESECTORS)&__atab_eraseSectors,
+	(FN_MEDIUM_FLUSH)&__atab_flush,
 	(FN_MEDIUM_SHUTDOWN)&__atab_shutdown,
-	0x1000000000000,
+	~0,
+	1,
 	512
 } ;
 DISC_INTERFACE __io_ata1 = {
@@ -626,8 +641,10 @@ DISC_INTERFACE __io_ata1 = {
 	(FN_MEDIUM_ISINSERTED)&__ata1_isInserted,
 	(FN_MEDIUM_READSECTORS)&__ata1_readSectors,
 	(FN_MEDIUM_WRITESECTORS)&__ata1_writeSectors,
-	(FN_MEDIUM_CLEARSTATUS)&__ata1_clearStatus,
+	(FN_MEDIUM_ERASESECTORS)&__ata1_eraseSectors,
+	(FN_MEDIUM_FLUSH)&__ata1_flush,
 	(FN_MEDIUM_SHUTDOWN)&__ata1_shutdown,
-	0x1000000000000,
+	~0,
+	1,
 	512
 } ;
