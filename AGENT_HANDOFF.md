@@ -24,9 +24,18 @@ Must print **`CPUTEST PASS`** and **`pif smoke PASS`**, then exit 0. Second proc
 
 ```sh
 make -f Makefile.dc HOST=1
-./not64-dc-bringup                 # default: roms/dc_cputest.z64
+./not64-dc-bringup                          # default: roms/dc_cputest.z64
 ./not64-dc-bringup roms/dc_dummy.z64
+./not64-dc-bringup /path/to/game.z64 50000000   # argv[2] = step budget
 ```
+
+`argv[2]` is the interpreter step budget (0 = run until the ROM stops). The
+bring-up prints **steps actually retired** and a post-run state dump (COP0,
+MI, VI, SP/DPC) ending in a VERDICT line. `VI origin` is the Phase 4 gate:
+non-zero means a ROM handed over a framebuffer.
+
+Do not commit game dumps. `.gitignore` excludes `/roms/*.z64|n64|v64` except
+the two generated bring-up images.
 
 ---
 
@@ -48,6 +57,7 @@ The Wii/GC product still builds from `Makefile.menu2_*`. Dreamcast is a **third 
 | `roms/gen_dc_roms.py` | Regenerates dummy + CPUTEST `.z64` |
 | `roms/dc_cputest.z64` | IPL: ORI/ADDU/XOR/ANDI/SLL/LUI/SW/LW/ADDI/SLTI/BNE + BEQ spin; header carries `'DO'` / `'E'` / v1 to exercise the DC header un-swap |
 | `roms/dc_dummy.z64` | IPL: `B -1` |
+| (your own dump) | `./not64-dc-bringup game.z64 50000000` — see Phase 3.5 in `PORTING.md` |
 
 Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D__DREAMCAST__ -DNOASM -DUSE_TLB_CACHE`, **without** `-DPPC_DYNAREC`.
 
@@ -154,7 +164,7 @@ held during C-presses.
 
 1. **KallistiOS ELF** — install `sh-elf-gcc` + KOS (`KOS_BASE`, `environ.sh`). `make -f Makefile.dc` → `not64-dc.elf`. Same bring-up on lxdream/redream or hardware. Cloud image does not have this yet (`environment.json` when someone can install it).
 2. **AICA** — `audio-dc.c` only fills a ring. Host smoke is enough; hardware needs `snd_stream` (or equivalent) draining that ring.
-3. **Real CPU test / homebrew** — CPUTEST is still a handful of IPL ops, not a full IPL3/PIF/RSP boot. A tiny homebrew `.z64` is the next correctness bar. Host PIF joybus is wired; a booting ROM has not used it yet.
+3. **Get a real ROM to VI** — *this is the live problem.* A retail 32 MiB cart now loads, runs IPL3, PI-DMAs the game into RDRAM at its header PC, and retires **50M instructions with no exception, no NI and no unmapped fetch** — then loops in real code at `0x80000130`-`0x80000188` and never sets `VI origin`. Full evidence, including what is ruled out, is **Phase 3.5 in `PORTING.md`**. Start there: `EPC` is untouched so it is not an exception loop, and the PI DMA is verified correct, so suspect the boot handshake the loop is polling (`PIF_RAM[0x3C]` is all zeros where hardware leaves a CIC/PIF value).
 4. **Menu step 8a** — ROM browser over `/sd/not64/roms` on KOS `bfont`. Needs no renderer, so it can land right after the KOS ELF and replaces the argv path. Design (screens, which `dc_config.c` settings survive on DC, why `libgui/` does not port) is **Phase 8 in `PORTING.md`** — read it before writing menu code.
 5. **Software first frame** (Phase 4) — only after a ROM actually hits RDP/VI. Start from `mupen64_soft_gfx/` / `GX_gfx/`, not glN64.
 6. **SH4 dynarec** — last. New `r4300/sh4/`. PPC JIT is not a template you search-replace.

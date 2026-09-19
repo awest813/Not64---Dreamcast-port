@@ -62,7 +62,7 @@ unsigned long op;
 static long skip;
 #ifdef __DREAMCAST__
 unsigned long dc_interp_step_limit;
-static unsigned long dc_interp_steps;
+unsigned long dc_interp_steps;   /* retired this run; read by the bring-up */
 #endif
 
 void prefetch();

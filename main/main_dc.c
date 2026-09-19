@@ -31,6 +31,7 @@ KOS_INIT_FLAGS(INIT_DEFAULT);
 #endif
 
 extern unsigned long dc_interp_step_limit;
+extern unsigned long dc_interp_steps;
 extern BOOL hasLoadedROM;
 extern void init_controller_ts(void);
 extern void auto_assign_controllers(void);
@@ -462,6 +463,39 @@ static void rsp_info_init(void)
 	initiateRSP(rsp_info, (DWORD*)&cycle_count);
 }
 
+/*
+ * After a run, say what the ROM actually reached. The Phase 4 gate is "a ROM
+ * hits RDP/VI", so VI origin/width is the signal worth printing: non-zero
+ * means the game has handed the video interface a framebuffer and a software
+ * renderer now has something to draw.
+ */
+static void dump_run_state(void)
+{
+	printf("  COP0   Count=0x%08lx Compare=0x%08lx Status=0x%08lx Cause=0x%08lx EPC=0x%08lx\n",
+	       (unsigned long)(unsigned int)reg_cop0[9],
+	       (unsigned long)(unsigned int)reg_cop0[11],
+	       (unsigned long)(unsigned int)reg_cop0[12],
+	       (unsigned long)(unsigned int)reg_cop0[13],
+	       (unsigned long)(unsigned int)reg_cop0[14]);
+	printf("  MI     intr=0x%08lx mask=0x%08lx\n",
+	       (unsigned long)MI_register.mi_intr_reg,
+	       (unsigned long)MI_register.mi_intr_mask_reg);
+	printf("  VI     origin=0x%08lx width=%lu status=0x%08lx current=%lu\n",
+	       (unsigned long)vi_register.vi_origin,
+	       (unsigned long)vi_register.vi_width,
+	       (unsigned long)vi_register.vi_status,
+	       (unsigned long)vi_register.vi_current);
+	printf("  SP     status=0x%08lx  DPC start=0x%08lx end=0x%08lx current=0x%08lx\n",
+	       (unsigned long)sp_register.sp_status_reg,
+	       (unsigned long)dpc_register.dpc_start,
+	       (unsigned long)dpc_register.dpc_end,
+	       (unsigned long)dpc_register.dpc_current);
+	printf("  VERDICT: %s\n",
+	       vi_register.vi_origin
+		       ? "VI framebuffer set - ROM reached video (Phase 4 gate)"
+		       : "VI origin still 0 - no framebuffer handed over yet");
+}
+
 static int load_and_step(const char *path, unsigned long steps)
 {
 	fileBrowser_file romfile;
@@ -543,8 +577,14 @@ static int load_and_step(const char *path, unsigned long steps)
 
 	dc_interp_step_limit = steps;
 	go();
-	printf("Interpreter stopped after step limit %lu (interp_addr=0x%08lx stop=%d)\n",
-	       steps, interp_addr, stop);
+	/* Report what was actually retired: echoing the limit hides an early
+	 * exit (exception, unmapped fetch, NI opcode) as a clean finish. */
+	printf("Interpreter retired %lu of %lu steps (%s), interp_addr=0x%08lx stop=%d\n",
+	       dc_interp_steps, steps,
+	       (steps && dc_interp_steps >= steps) ? "hit step limit"
+						   : "stopped early",
+	       (unsigned long)(unsigned int)interp_addr, stop);
+	dump_run_state();
 	ret = check_cputest(path);
 	cpu_deinit();
 	TLBCache_deinit();
@@ -555,6 +595,7 @@ static int load_and_step(const char *path, unsigned long steps)
 int main(int argc, char **argv)
 {
 	const char *rompath = "roms/dc_cputest.z64";
+	unsigned long steps = DC_BRINGUP_STEPS;
 	int fail = 0;
 
 	setvbuf(stdout, NULL, _IONBF, 0);
@@ -572,10 +613,13 @@ int main(int argc, char **argv)
 
 	if (argc > 1)
 		rompath = argv[1];
+	/* Optional step budget: a real ROM needs far more than the bring-up
+	 * default to get through IPL3. 0 means run until the ROM stops. */
+	if (argc > 2)
+		steps = strtoul(argv[2], NULL, 0);
 
-	printf("Phase 2/3: interpreter %lu steps using %s\n",
-	       DC_BRINGUP_STEPS, rompath);
-	if (load_and_step(rompath, DC_BRINGUP_STEPS))
+	printf("Phase 2/3: interpreter %lu steps using %s\n", steps, rompath);
+	if (load_and_step(rompath, steps))
 		fail = 1;
 
 #ifndef DC_HOST_STUB

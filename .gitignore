@@ -3,3 +3,10 @@
 /not64-dc.elf
 *.o
 /saves/dc_host.txt
+
+# Drop-in ROMs: keep the generated bring-up images, never commit a game dump.
+/roms/*.z64
+/roms/*.n64
+/roms/*.v64
+!/roms/dc_dummy.z64
+!/roms/dc_cputest.z64

@@ -35,7 +35,8 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | Host I/O smoke | Save file, injected Maple A, AI ring DMA, PIF joybus read/write |
 | ROM header decode on DC | Fixed — `dc_fix_header_byte_order()` un-swaps Name/Cartridge_ID/Country_code; asserted by CPUTEST |
 | Maple → N64 button map | Done — triggers carry Z/R, `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons; 10 host cases in `smoke_map()` |
-| Software / PVR renderer | Not started |
+| First commercial ROM (host) | Boots IPL3, PI-DMAs the game in, retires 50M instructions — but never reaches VI. See Phase 3.5 |
+| Software / PVR renderer | Not started (blocked: no ROM has reached VI yet) |
 | Dreamcast menu | Designed only (Phase 8 below); no code. `libgui/` does not port |
 | SH4 dynarec | Not started |
 | Cloud environment KOS toolchain | **Missing** (`sh-elf-gcc` not installed) |
@@ -145,6 +146,7 @@ Phase 0  Decisions + environment     (decisions locked; KOS still missing here)
 Phase 1  KOS / host bring-up         (done on host stub)
 Phase 2  Interpreter core links      (done on host: dummy + CPUTEST)
 Phase 3  I/O wired into emulator     (host PIF/Maple/AI/save; AICA on hardware next)
+Phase 3.5 First real commercial ROM   (loads + 50M instructions; does NOT reach VI yet)
 Phase 4  First emulated frame        (next: software renderer)
 Phase 5  Memory map hardening        (ROM stream, cache sizes)
 Phase 6  SH4 dynarec                 (performance)
@@ -222,6 +224,69 @@ Do not start SH4 dynarec or PVR until more of a real boot (PIF + RSP) works; CPU
 - ROM cache clips reads/writes to `rom_length`; LRU eviction no longer dereferences a NULL window.
 - Bring-up calls `cpu_deinit` / `TLBCache_deinit` / `ROMCache_deinit` after a run.
 - `make -f Makefile.dc HOST=1 test` is the regression gate.
+
+---
+
+### Phase 3.5 — First real commercial ROM (host stub)
+
+A 32 MiB retail cart (`Mario Golf (USA).z64`) was run through the host stub.
+This is the first time anything but a hand-written 15-instruction IPL has gone
+through the core, and it exercised paths nothing else had.
+
+```sh
+./not64-dc-bringup /path/to/game.z64 50000000     # argv[2] = step budget
+```
+
+**Works:**
+
+- [x] Real z64 header: `MarioGolf64`, country `0x45`, PC `0x80025c00` — matches
+      the raw bytes, so `dc_fix_header_byte_order()` holds up outside the test ROM
+- [x] **`ROMTooBig` streaming path** — 32 MiB ROM through a 1 MiB window. This
+      code had never run before; the dummy and CPUTEST images are 4 KiB
+- [x] CIC detection from real CRCs (`CIC_Chip=2`)
+- [x] IPL3 executes from `SP_DMEM` at `0xa4000040`
+- [x] **PI DMA cart -> RDRAM**: `cart=0x10001000 dram=0x00025c00 len=0x100000`,
+      and the landing word is `3c08800d` (`LUI r8,0x800d`) — real game code, at
+      the address the header's PC points at
+- [x] **50,000,000 MIPS instructions retired** with no exception, no `NI`
+      opcode and no unmapped fetch
+
+**Does not work — the ROM never reaches video.** `VI origin` stays 0, so the
+Phase 4 renderer has nothing to draw and Phase 4 is not yet unblocked.
+
+Final state after 50M steps:
+
+```
+COP0   Count=0x0b6e2352 Compare=0 Status=0x34000000 Cause=0 EPC=0xffffffff
+MI     intr=0x00000018 (VI|PI pending)  mask=0x00000000 (all masked)
+VI     origin=0 width=0
+SP     status=0x00000001 (halted)   DPC start/end/current = 0
+```
+
+Execution loops inside `0x80000130`-`0x80000188`. That is **real code, not
+NOPs** — `0x80000130: 10000003` (`BEQ r0,r0,+3`), `0x134: 3c09b000`
+(`LUI r9,0xb000`, the cart domain), then `SW`/`ADDIU` stepping by `0x1000`
+and reading back. It looks like a memory sizing/clearing routine, and the
+words above `0x158` have been zeroed while it ran.
+
+Evidence narrowing the fault:
+
+- `EPC` is still `0xffffffff` and `Status.EXL` is clear, so **no exception has
+  ever been taken** — this is not an exception loop.
+- `Status.IE = 0` and `MI mask = 0`: the ROM has not enabled interrupts, yet
+  `MI intr = 0x18` shows VI and PI events were raised and never acknowledged.
+- The PI DMA completed correctly, so this is *not* a ROM-cache or byte-swap
+  bug. Suspect the boot handshake the ROM is polling for: `PIF_RAM[0x3C]` is
+  `00 00 00 00`, where hardware leaves a CIC/PIF boot value.
+
+Next step for whoever picks this up: trace what the `0x80000130` loop is
+polling (`LUI r9,0xb000` points at the cart domain), and check the PIF boot
+handshake in `cpu_init()` / `gc_memory/pif.c` against the CIC-6102 sequence.
+
+Note the host stub caveat still applies: `unsigned long` is 64-bit here and
+32-bit on SH4. `interp_addr` came back sign-extended
+(`0xffffffff80000130`) — harmless on SH4, and the bring-up now prints it
+truncated, but it is a reminder that host agreement is not hardware evidence.
 
 ---
 
