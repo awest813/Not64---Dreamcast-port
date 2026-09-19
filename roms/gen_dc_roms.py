@@ -21,17 +21,22 @@ def i_type(op, rs, rt, imm):
     return (op << 26) | (rs << 21) | (rt << 16) | (imm & 0xFFFF)
 
 
-def header(name, pc=0):
+def header(name, pc=0, cart_id=b"\0\0", country=0, version=0):
     name_b = name.encode("ascii")[:20].ljust(20, b" ")
     h = bytearray(0x40)
     h[0:4] = b"\x80\x37\x12\x40"
     h[0x08:0x0C] = int(pc).to_bytes(4, "big")
     h[0x20:0x34] = name_b
+    # Byte- and halfword-addressed tail. The DC loader stores ROM words
+    # byte-reversed, so these only decode if rom_dc.c un-swaps the header.
+    h[0x3C:0x3E] = cart_id
+    h[0x3E] = country
+    h[0x3F] = version
     return bytes(h)
 
 
-def write_rom(path, name, ipl_words, size=4096):
-    blob = bytearray(header(name))
+def write_rom(path, name, ipl_words, size=4096, **hdr):
+    blob = bytearray(header(name, **hdr))
     blob.extend(be_words(*ipl_words))
     if len(blob) > size:
         raise SystemExit("IPL too large for dummy ROM")
@@ -64,6 +69,8 @@ def main():
     #   nop
     #   beq  r0, r0, -1
     #   nop
+    # cart_id 'DO' + country 'E' is a ROM_TABLE entry, so isEEPROM16k() also
+    # has to come out 1 for the header un-swap to be considered correct.
     write_rom(
         HERE / "dc_cputest.z64",
         "DC CPUTEST",
@@ -84,6 +91,9 @@ def main():
             i_type(4, 0, 0, -1),
             0,
         ],
+        cart_id=b"DO",
+        country=0x45,
+        version=0x01,
     )
 
 

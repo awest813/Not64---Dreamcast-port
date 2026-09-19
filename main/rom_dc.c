@@ -110,7 +110,7 @@ static struct {
 // cause it's cheaper to have a ID list than an entire .ini file :)
 static int isEEPROM16k()
 {
-	int i;
+	unsigned int i;
 	
 	for (i = 0; i < sizeof(ROM_TABLE) / sizeof(ROM_TABLE[0]); i++)
 	{
@@ -121,6 +121,44 @@ static int isEEPROM16k()
 
 	return 0;
 }
+
+#ifdef __DREAMCAST__
+static void reverse_word(unsigned char* p)
+{
+	unsigned char t0 = p[0], t1 = p[1];
+	p[0] = p[3];
+	p[1] = p[2];
+	p[2] = t1;
+	p[3] = t0;
+}
+
+/* The DC ROM cache stores each 32-bit word byte-reversed so the interpreter's
+ * native word fetches match MIPS encodings. That leaves the header's 32-bit
+ * fields (ClockRate, PC, CRC1/2, Manufacturer_ID) reading correctly and
+ * scrambles every byte- and halfword-addressed field. Restore those in place,
+ * so Name, Cartridge_ID and Country_code mean what the rest of the tree
+ * expects (isEEPROM16k, saveregionstr, GetVILimit). */
+static void dc_fix_header_byte_order(void)
+{
+	unsigned char* h = (unsigned char*)&ROM_HEADER;
+	unsigned int i;
+	unsigned char t;
+
+	if (rom_byte_swap != BYTE_SWAP_HALF)
+		return;
+
+	reverse_word(h + 0x00);                  /* init_PI_BSB_DOM1_* */
+	for (i = 0x20; i < 0x34; i += 4)         /* Name[20] */
+		reverse_word(h + i);
+	reverse_word(h + 0x3C);                  /* Cartridge_ID/Country/Version */
+
+	/* Cartridge_ID is big-endian in the cart; store it so a native halfword
+	 * read still matches the 'XY' literals in ROM_TABLE. */
+	t = h[0x3C];
+	h[0x3C] = h[0x3D];
+	h[0x3D] = t;
+}
+#endif
 
 /* Loads the ROM into the ROM cache */
 int rom_read(fileBrowser_file* file){
@@ -133,22 +171,13 @@ int rom_read(fileBrowser_file* file){
      ROMCache_deinit();
      return ret;
    }
-   ROMCache_read(&ROM_HEADER, 0, sizeof(rom_header));
+   ROMCache_read((unsigned char*)&ROM_HEADER, 0, sizeof(rom_header));
+#ifdef __DREAMCAST__
+   dc_fix_header_byte_order();
+#endif
 
   //Copy header name as Goodname (in the .ini we can use CRC to identify ROMS)
   memcpy(ROM_SETTINGS.goodname, ROM_HEADER.Name, 20);
-#ifdef __DREAMCAST__
-  if (rom_byte_swap == BYTE_SWAP_HALF) {
-    for (i = 0; i < 20; i += 4) {
-      unsigned char *p = (unsigned char *)ROM_SETTINGS.goodname + i;
-      unsigned char t0 = p[0], t1 = p[1];
-      p[0] = p[3];
-      p[1] = p[2];
-      p[2] = t1;
-      p[3] = t0;
-    }
-  }
-#endif
   ROM_SETTINGS.goodname[20] = '\0';
   //Maximum ROM name is 20 bytes. Lets make sure we cut off trailing spaces
   for(i = strlen(ROM_SETTINGS.goodname); i>0; i--)

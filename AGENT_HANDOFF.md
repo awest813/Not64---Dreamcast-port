@@ -10,7 +10,7 @@
 | PR | https://github.com/awest813/Not64---Dreamcast-port/pull/1 (draft) |
 | HEAD at handoff | After PIF/Maple host smoke + CPUTEST ADDI/SLTI/BNE (see git log) |
 | License | GPL v2 |
-| Cloud env | **No KallistiOS / `sh-elf-gcc`.** Host stub only. `cc` is clang and has crashed on `r4300.c`; **use GNU `gcc`.** |
+| Cloud env | **No KallistiOS / `sh-elf-gcc`.** Host stub only. The stub now builds with gcc **or** clang, on Linux and macOS; `Makefile.dc` still defaults to `gcc` because an older clang ICE'd on `r4300.c`. Override with `make -f Makefile.dc HOST=1 CC=clang`. |
 
 ---
 
@@ -27,8 +27,6 @@ make -f Makefile.dc HOST=1
 ./not64-dc-bringup                 # default: roms/dc_cputest.z64
 ./not64-dc-bringup roms/dc_dummy.z64
 ```
-
-Do **not** use `cc` / clang for this Makefile.
 
 ---
 
@@ -48,7 +46,7 @@ The Wii/GC product still builds from `Makefile.menu2_*`. Dreamcast is a **third 
 | `gc_input/controller-DC.c` | Maple `controller_t`; host inject `controller_DC_host_set` |
 | `gc_audio/audio-dc.c` | AI DMA → ring; no AICA yet |
 | `roms/gen_dc_roms.py` | Regenerates dummy + CPUTEST `.z64` |
-| `roms/dc_cputest.z64` | IPL: ORI/ADDU/XOR/ANDI/SLL/LUI/SW/LW/ADDI/SLTI/BNE + BEQ spin |
+| `roms/dc_cputest.z64` | IPL: ORI/ADDU/XOR/ANDI/SLL/LUI/SW/LW/ADDI/SLTI/BNE + BEQ spin; header carries `'DO'` / `'E'` / v1 to exercise the DC header un-swap |
 | `roms/dc_dummy.z64` | IPL: `B -1` |
 
 Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D__DREAMCAST__ -DNOASM -DUSE_TLB_CACHE`, **without** `-DPPC_DYNAREC`.
@@ -64,6 +62,7 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
 5. **Host I/O smokes** — `./saves/dc_host.txt`, injected A + analog, 64-byte AI DMA into the ring.
 6. **PIF/Maple host** — `native_ReadController` → `internal_ReadController`; `update_pif_write` status `0x05`; `update_pif_read` A + analog 72/48.
 7. **Audit polish** — DC-only KSEG1/`n64_addr`; Wii `fast_mem_access` **unchanged**; ROM cache clipped; teardown after run; no x86 assembler in DC `recomp.h`.
+8. **Second audit polish** — host stub builds under clang/macOS (`gc_input/input.c` nested functions removed, `<malloc.h>` guarded, `invalidate_func` declared); DC ROM-header byte order fixed and asserted; PIF joybus store made alignment- and LP64-safe; ROM cache bounds/LRU/NULL fixes; AI DMA clamped to RDRAM; `PC` no longer leaked per run; recursive `mkdir` for `/sd/not64/...`; `get_savespath()` correct on KOS.
 
 ---
 
@@ -83,7 +82,7 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
 
 | Symptom | Cause | Fix already in tree |
 |---------|--------|---------------------|
-| Clang ICE on `r4300.c` | Use `gcc` | `Makefile.dc` `CC = gcc` when `HOST=1` |
+| Clang ICE on `r4300.c` (older clang only) | Compiler bug | `Makefile.dc` defaults `CC = gcc` when `HOST=1`, but only overrides make's built-in default, so `CC=clang` works |
 | Immediate segfault at start | Custom `.sbss` on host ELF | `N64_SBSS` empty on `__DREAMCAST__` |
 | Crash in `SLL` / bad `rd` pointer | `prefetch_opcode` wrote every union format | One format per opcode in `platform/dc_recomp_stubs.c` |
 | Garbled ROM name then wrong opcodes | LE `*(uint32*)` magic; z64 bytes left BE | Byte-wise magic; `BYTE_SWAP_HALF` for z64 on DC |
@@ -91,6 +90,12 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
 | Boot executes RDRAM not IPL | Wii `fast_mem_access` treats only `0x8/0x9` as unmapped; `0xa4000040` TLB-misses | KSEG0+KSEG1 unmapped **on DC only** — do not change the Wii `#else` |
 | `src` undeclared in stubs | Copied `prefetch_opcode` from `recomp.c` (`src`/`dst` live there) | Stubs decode locally; no `src`/`dst` |
 | Host `.o` stale after `memory.h` change | Macros inlined into `pure_interp.c` | `Makefile.dc` lists `r4300/pure_interp.o: gc_memory/memory.h` |
+| `error: function definition is not allowed here` in `input.c` | GCC nested functions in `load_configurations` | Replaced with `read_config_pointer()` + local macros; call sites unchanged |
+| `malloc.h: file not found` on macOS | Darwin/BSD have no `<malloc.h>` | Guarded in `r4300/r4300.c` and `gc_memory/dma.c` |
+| `call to undeclared function 'invalidate_func'` | Only declared by `r4300/ppc/Wrappers.h` | Declared in `dma.c` under `__DREAMCAST__` |
+| Garbage `Cartridge_ID` / `Country_code` / region | ROM words stored byte-reversed, so the header's byte/halfword fields scramble while its 32-bit fields stay correct | `dc_fix_header_byte_order()` in `rom_dc.c`; CPUTEST asserts `'DO'`/`0x45`/`isEEPROM16k` |
+| CPUTEST "passes" after a loader regression | Checks were gated on `goodname == "DC CPUTEST"`, which a broken loader never produces | `check_cputest(path)` fails when the CPUTEST image was requested but did not decode |
+| (hardware, not yet hit) unaligned 32-bit store | `pif.c` wrote `*(unsigned long*)(Command+3)`; **SH4 faults on unaligned access** and `DWORD` is 8 bytes on an LP64 host | DC branch does a 4-byte `memcpy` |
 
 Other constraints:
 
@@ -101,6 +106,15 @@ Other constraints:
 - `BYTE_SWAP_HALF` in this tree is a **32-bit endian swap**, not 16-bit.
 - Do not grow `#ifdef __DREAMCAST__` through `glN64_GX/` until Phase 4.
 - Do not “fix” Wii MEM2 / `blocks[]` / PPC paths as part of DC work.
+
+---
+
+## Open findings (audited, deliberately not changed)
+
+1. **Maple → N64 button map is unreachable on a stock DC pad.** `controller-DC.c` defaults map N64 **Z** to `CONT_Z`, **L**/**R** to `CONT_C`/`CONT_D`, and the four **C-buttons** to `CONT_DPAD2_*`. Those bits exist in the Maple protocol but not on the standard Dreamcast controller, which has only D-pad, A/B/X/Y, Start, the analog stick, and two *analog* triggers (`st->ltrig` / `st->rtrig`, which `poll_pad()` never reads). As shipped, Z, L, R and all four C-buttons cannot be pressed. Fixing this means choosing a mapping (12 physical inputs vs the N64's 14 + stick, so some need combos) — a design call, not a mechanical one.
+2. **Analog range is unscaled.** `_GetKeys` converts Maple 0–255 straight to ±127; a real N64 stick saturates near ±80, so games will read as over-deflected. `controller-GC.c` scales; DC does not yet.
+3. **`fileBrowser_kos_readFile` does `fopen`/`fseek`/`fclose` per call.** The ROM cache streams in 64 KiB blocks, so every page-in reopens the file. Fine on a host filesystem, likely unacceptable on Dreamcast SD/GD — cache the handle before Phase 3 performance work.
+4. **Host stub is not an SH4 model.** `unsigned long` is 64-bit on an LP64 host and 32-bit on SH4, so `rdram[]`, `reg[]` and every `read_*_in_memory()` differ in width and layout. `CPUTEST PASS` on the host is a link/logic check, not evidence about hardware. The alignment and LP64 bugs found in `pif.c` are exactly the class the host stub cannot catch by itself.
 
 ---
 

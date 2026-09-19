@@ -3300,6 +3300,11 @@ void pure_interpreter()
 #endif
      }
    PC->addr = interp_addr;
+#ifdef __DREAMCAST__
+   /* go() can be re-entered per ROM; do not leak a precomp_instr each time. */
+   free(PC);
+   PC = NULL;
+#endif
 }
 
 void interprete_section(unsigned long addr)

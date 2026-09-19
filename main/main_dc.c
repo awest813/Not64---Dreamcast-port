@@ -37,6 +37,9 @@ extern void auto_assign_controllers(void);
 extern unsigned int audio_dc_buffered(void);
 extern void native_ReadController(int Control, unsigned char *Command);
 
+/* Interpreter budget for one bring-up run. */
+#define DC_BRINGUP_STEPS 10000UL
+
 static GFX_INFO gfx_info;
 static AUDIO_INFO audio_info;
 static CONTROL_INFO control_info;
@@ -158,6 +161,8 @@ static int smoke_io(void)
 		printf("audio smoke: ring did not accept AI DMA\n");
 		fail = 1;
 	}
+	/* The ROM runs next: do not leave the smoke pattern in RDRAM. */
+	memset(rdram, 0, 64);
 	return fail;
 }
 
@@ -223,13 +228,28 @@ static int smoke_pif(void)
 	return fail;
 }
 
-static int check_cputest(void)
+/* The CPUTEST checks key off the ROM's decoded name, so a loader regression
+ * used to skip them silently. When the caller asked for the CPUTEST image,
+ * a name that does not decode is itself a failure. */
+static int check_cputest(const char *path)
 {
 	int fail = 0;
 	unsigned long got;
+	const char *base = strrchr(path, '/');
+	int want_cputest;
 
-	if (strcmp(ROM_SETTINGS.goodname, "DC CPUTEST") != 0)
+	base = base ? base + 1 : path;
+	want_cputest = (strncmp(base, "dc_cputest", 10) == 0);
+
+	if (strcmp(ROM_SETTINGS.goodname, "DC CPUTEST") != 0) {
+		if (want_cputest) {
+			printf("CPUTEST FAIL: %s decoded as '%s', "
+			       "expected 'DC CPUTEST'\n",
+			       base, ROM_SETTINGS.goodname);
+			return 1;
+		}
 		return 0;
+	}
 
 #define DC_EXPECT_REG(n, v) \
 	do { \
@@ -260,6 +280,29 @@ static int check_cputest(void)
 	if (interp_addr != 0xa4000074 && interp_addr != 0xa4000078) {
 		printf("CPUTEST interp_addr=0x%08lx (expected IPL BEQ spin)\n",
 		       interp_addr);
+		fail = 1;
+	}
+
+	/* The header's byte- and halfword-addressed fields only decode if the
+	 * DC loader un-swapped them (rom_dc.c). Without that, isEEPROM16k(),
+	 * saveregionstr() and GetVILimit() all read scrambled bytes. */
+	if (ROM_HEADER.Cartridge_ID != 'DO') {
+		printf("CPUTEST Cartridge_ID=0x%04x want 0x%04x\n",
+		       (unsigned)ROM_HEADER.Cartridge_ID, (unsigned)'DO');
+		fail = 1;
+	}
+	if (ROM_HEADER.Country_code != 0x45) {
+		printf("CPUTEST Country_code=0x%02x want 0x45\n",
+		       (unsigned)ROM_HEADER.Country_code);
+		fail = 1;
+	}
+	if (ROM_HEADER.Version != 0x01) {
+		printf("CPUTEST Version=0x%02x want 0x01\n",
+		       (unsigned)ROM_HEADER.Version);
+		fail = 1;
+	}
+	if (!ROM_SETTINGS.isEEPROM16k) {
+		printf("CPUTEST isEEPROM16k=0 want 1 ('DO'/'E' is in ROM_TABLE)\n");
 		fail = 1;
 	}
 
@@ -427,7 +470,7 @@ static int load_and_step(const char *path, unsigned long steps)
 	go();
 	printf("Interpreter stopped after step limit %lu (interp_addr=0x%08lx stop=%d)\n",
 	       steps, interp_addr, stop);
-	ret = check_cputest();
+	ret = check_cputest(path);
 	cpu_deinit();
 	TLBCache_deinit();
 	ROMCache_deinit();
@@ -455,8 +498,9 @@ int main(int argc, char **argv)
 	if (argc > 1)
 		rompath = argv[1];
 
-	printf("Phase 2/3: interpreter %lu steps using %s\n", 10000UL, rompath);
-	if (load_and_step(rompath, 10000))
+	printf("Phase 2/3: interpreter %lu steps using %s\n",
+	       DC_BRINGUP_STEPS, rompath);
+	if (load_and_step(rompath, DC_BRINGUP_STEPS))
 		fail = 1;
 
 #ifndef DC_HOST_STUB

@@ -1,11 +1,16 @@
 # Not64 Dreamcast
 #
-# Host:
+# Host bring-up stub (builds with gcc or clang, Linux or macOS):
 #   make -f Makefile.dc HOST=1
+#   make -f Makefile.dc HOST=1 test      # CPUTEST PASS + pif smoke PASS, exit 0
 #   ./not64-dc-bringup [optional.z64]
 #
-# KallistiOS:
+# KallistiOS (needs KOS_BASE from environ.sh):
 #   make -f Makefile.dc
+#
+# The host stub is a link/logic check, not a faithful SH4 model: `unsigned
+# long` is 64-bit on an LP64 host and 32-bit on SH4, so word-sized state
+# differs in layout even when the tests agree.
 
 CORE_OBJS = \
 	main/rom_dc.o \
@@ -67,7 +72,12 @@ DC_DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DUSE_TLB_CACHE -DPIXEL_FORMAT=RGB
 
 ifeq ($(HOST),1)
 
-CC      = gcc
+# Only override make's built-in default so `make CC=...` still works.
+# GCC and clang both build this target; older clang has ICE'd on r4300.c,
+# so prefer gcc when the user has not chosen.
+ifeq ($(origin CC),default)
+CC = gcc
+endif
 CFLAGS  ?= -std=gnu11 -fgnu89-inline -Wall -Wextra -Wno-unused-parameter \
 	-Wno-missing-field-initializers -Wno-unused-function \
 	-Wno-unused-variable -Wno-pointer-sign -Wno-multichar -O1

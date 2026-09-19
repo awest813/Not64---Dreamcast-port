@@ -31,6 +31,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #ifndef __WIN32__
 #include "../main/winlnxdefs.h"
@@ -344,7 +345,18 @@ void internal_ReadController(int Control, BYTE *Command)
 #else
 	     getKeys(Control, &Keys);
 #endif
+#ifdef __DREAMCAST__
+	     /* Command+3 is never 4-byte aligned: SH4 raises an address error on
+	      * unaligned 32-bit access, and DWORD is 64 bits wide on the LP64
+	      * host stub (an 8-byte store would run past the joybus buffer).
+	      * Copy exactly the four controller bytes instead. */
+	     {
+		unsigned int keyval = (unsigned int)Keys.Value;
+		memcpy(Command + 3, &keyval, 4);
+	     }
+#else
 	     *((unsigned long *)(Command + 3)) = Keys.Value;
+#endif
 #ifdef COMPARE_CORE
 	     check_input_sync(Command+3);
 #endif

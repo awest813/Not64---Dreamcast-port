@@ -1,6 +1,6 @@
 # Not64 Dreamcast Port — Audit and Plan
 
-**Status:** Phase 2–3 host: interpreter CPUTEST PASS (ADDI/SLTI/BNE), Maple→PIF smoke, AI/save smokes. No KallistiOS ELF yet.  
+**Status:** Phase 2–3 host: interpreter CPUTEST PASS (ADDI/SLTI/BNE + ROM-header decode), Maple→PIF smoke, AI/save smokes. Host stub builds with gcc **or** clang, on Linux and macOS. No KallistiOS ELF yet.  
 **Handoff for the next agent:** `AGENT_HANDOFF.md`  
 **Repo:** `Not64---Dreamcast-port` (GitHub name is aspirational; the tree is Wii/GC Not64).  
 **License:** GPL v2
@@ -25,7 +25,7 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | Porting document | This file |
 | Platform types (`platform/dc_types.h`) | Started |
 | Dreamcast memory budget (`platform/dc_memory.h`) | Started (paper map) |
-| `Makefile.dc` (KOS + host stub) | Host `HOST=1` links the interpreter; KOS still needs `KOS_BASE` |
+| `Makefile.dc` (KOS + host stub) | Host `HOST=1` links the interpreter (gcc or clang, Linux/macOS); KOS still needs `KOS_BASE` |
 | Bring-up `main/main_dc.c` | Dummy + CPUTEST, 10000 interpreter steps, host I/O + PIF smokes |
 | `fileBrowser-kos` | Started |
 | Maple controller (`controller-DC.c`) | Started |
@@ -33,6 +33,8 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | Interpreter-only core link | **Host verified** (`CPUTEST PASS`) |
 | ROM stream (`main/ROM-Cache-dc.c`) | 1 MiB window; z64 words swapped to LE |
 | Host I/O smoke | Save file, injected Maple A, AI ring DMA, PIF joybus read/write |
+| ROM header decode on DC | Fixed — `dc_fix_header_byte_order()` un-swaps Name/Cartridge_ID/Country_code; asserted by CPUTEST |
+| Maple → N64 button map | **Open** — defaults point at pads the stock DC controller does not have (see below) |
 | Software / PVR renderer | Not started |
 | SH4 dynarec | Not started |
 | Cloud environment KOS toolchain | **Missing** (`sh-elf-gcc` not installed) |
