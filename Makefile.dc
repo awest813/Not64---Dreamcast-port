@@ -1,0 +1,136 @@
+# Not64 Dreamcast
+#
+# Host:
+#   make -f Makefile.dc HOST=1
+#   ./not64-dc-bringup [optional.z64]
+#
+# KallistiOS:
+#   make -f Makefile.dc
+
+CORE_OBJS = \
+	main/rom_dc.o \
+	main/ROM-Cache-dc.o \
+	platform/dc_debug.o \
+	platform/dc_timers.o \
+	platform/dc_config.o \
+	platform/dc_savestates.o \
+	platform/dc_plugins.o \
+	platform/dc_recomp_stubs.o \
+	r4300/r4300.o \
+	r4300/cop0.o \
+	r4300/special.o \
+	r4300/regimm.o \
+	r4300/exception.o \
+	r4300/Invalid_Code.o \
+	r4300/interupt.o \
+	r4300/cop1.o \
+	r4300/tlb.o \
+	r4300/cop1_w.o \
+	r4300/cop1_s.o \
+	r4300/cop1_d.o \
+	r4300/bc.o \
+	r4300/cop1_l.o \
+	r4300/pure_interp.o \
+	r4300/compare_core.o \
+	r4300/profile.o \
+	gc_memory/tlb.o \
+	gc_memory/TLB-Cache-hash.o \
+	gc_memory/memory.o \
+	gc_memory/dma.o \
+	gc_memory/pif.o \
+	gc_memory/flashram.o \
+	gc_memory/n64_cic_nus_6105.o \
+	gc_input/input.o \
+	rsp_hle/alist.o \
+	rsp_hle/alist_audio.o \
+	rsp_hle/alist_naudio.o \
+	rsp_hle/alist_nead.o \
+	rsp_hle/audio.o \
+	rsp_hle/cicx105.o \
+	rsp_hle/hle.o \
+	rsp_hle/hvqm.o \
+	rsp_hle/jpeg.o \
+	rsp_hle/memory.o \
+	rsp_hle/mp3.o \
+	rsp_hle/musyx.o \
+	rsp_hle/re2.o \
+	rsp_hle/plugin.o
+
+OBJS = main/main_dc.o \
+	fileBrowser/fileBrowser.o \
+	fileBrowser/fileBrowser-kos.o \
+	gc_input/controller-DC.o \
+	gc_audio/audio-dc.o \
+	$(CORE_OBJS)
+
+DC_DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DUSE_TLB_CACHE -DPIXEL_FORMAT=RGB565
+
+ifeq ($(HOST),1)
+
+CC      = gcc
+CFLAGS  ?= -std=gnu11 -fgnu89-inline -Wall -Wextra -Wno-unused-parameter \
+	-Wno-missing-field-initializers -Wno-unused-function \
+	-Wno-unused-variable -Wno-pointer-sign -Wno-multichar -O1
+CPPFLAGS = $(DC_DEFS) -DDC_HOST_STUB
+TARGET   = not64-dc-bringup
+LIBS     = -lm
+
+.PHONY: all clean run test roms
+
+ROMS = roms/dc_dummy.z64 roms/dc_cputest.z64
+
+all: $(ROMS) $(TARGET)
+
+$(ROMS): roms/gen_dc_roms.py
+	python3 roms/gen_dc_roms.py
+
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LIBS)
+
+gc_input/input.o: gc_input/input.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+%.o: %.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+r4300/pure_interp.o gc_memory/memory.o: gc_memory/memory.h
+r4300/r4300.o platform/dc_recomp_stubs.o: r4300/recomp.h
+
+run: $(TARGET) $(ROMS)
+	./$(TARGET)
+
+test: $(TARGET) $(ROMS)
+	./$(TARGET) roms/dc_cputest.z64
+	./$(TARGET) roms/dc_dummy.z64
+
+clean:
+	rm -f $(OBJS) $(TARGET)
+
+else
+
+ifndef KOS_BASE
+$(error KOS_BASE is not set. Source KallistiOS environ.sh, or: make -f Makefile.dc HOST=1)
+endif
+
+include $(KOS_BASE)/Makefile.rules
+
+KOS_CFLAGS += $(DC_DEFS) -I$(CURDIR)
+TARGET = not64-dc.elf
+
+.PHONY: all clean
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(KOS_CC) $(KOS_CFLAGS) $(KOS_LDFLAGS) -o $@ $(KOS_START) $(OBJS) $(OBJEXTRA) $(KOS_LIBS) -lm
+
+gc_input/input.o: gc_input/input.c
+	$(KOS_CC) $(KOS_CFLAGS) -c -o $@ $<
+
+%.o: %.c
+	$(KOS_CC) $(KOS_CFLAGS) -c -o $@ $<
+
+clean:
+	rm -f $(OBJS) $(TARGET)
+
+endif

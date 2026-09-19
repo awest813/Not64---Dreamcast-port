@@ -40,7 +40,9 @@
 #include "TLB-Cache.h"
 #include "../gui/DEBUG.h"
 #include <stdio.h>
+#ifndef __DREAMCAST__
 #include <zlib.h>
+#endif
 
 #ifdef USE_TLB_CACHE
 
@@ -52,11 +54,12 @@ static unsigned int TLB_hash_shift;
 void TLBCache_init(void){
   TLBCache_deinit();
 	unsigned int temp = TLB_NUM_SLOTS;
+	unsigned int shift = 0;
 	while(temp){
 		temp >>= 1;
-		++TLB_hash_shift;
+		++shift;
 	}
-	TLB_hash_shift = TLB_BITS_PER_PAGE_NUM - TLB_hash_shift + 1;
+	TLB_hash_shift = TLB_BITS_PER_PAGE_NUM - shift + 1;
 }
 
 void TLBCache_deinit(void){
@@ -166,6 +169,7 @@ char* TLBCache_dump(){
 	return "TLB Cache dumped to USB Gecko";
 }
 
+#ifndef __DREAMCAST__
 void TLBCache_dump_r(gzFile *f)
 {
 	int i = 0,total=0;
@@ -204,4 +208,8 @@ void TLBCache_dump_w(gzFile *f)
 		}
 	}
 }
+#else
+void TLBCache_dump_r(gzFile *f) { (void)f; }
+void TLBCache_dump_w(gzFile *f) { (void)f; }
+#endif /* !__DREAMCAST__ */
 #endif

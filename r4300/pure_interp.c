@@ -60,6 +60,10 @@ extern void update_debugger();
 unsigned long interp_addr;
 unsigned long op;
 static long skip;
+#ifdef __DREAMCAST__
+unsigned long dc_interp_step_limit;
+static unsigned long dc_interp_steps;
+#endif
 
 void prefetch();
 
@@ -166,7 +170,9 @@ static void SYNC()
 
 #define DUMP_ON_BREAK
 #ifdef DUMP_ON_BREAK
+#ifndef __DREAMCAST__
 #include <ogc/pad.h>
+#endif
 #endif
 static void BREAK(){
 #ifdef DUMP_ON_BREAK
@@ -180,8 +186,10 @@ static void BREAK(){
 		       i, (unsigned int)reg[i], i+1, (unsigned int)reg[i+1],
 		       i+2, (unsigned int)reg[i+2], i+3, (unsigned int)reg[i+3]);
 	printf("Press A to continue execution\n");
+#ifndef __DREAMCAST__
 	while(!(PAD_ButtonsHeld(0) & PAD_BUTTON_A));
 	while( (PAD_ButtonsHeld(0) & PAD_BUTTON_A));
+#endif
 #endif
 }
 
@@ -3255,11 +3263,27 @@ void pure_interpreter()
 {
    //interp_addr = 0xa4000040;
    stop=0;
+#ifdef __DREAMCAST__
+   dc_interp_steps = 0;
+#endif
    PC = malloc(sizeof(precomp_instr));
+   if (!PC) {
+      stop = 1;
+      return;
+   }
    last_addr = interp_addr;
    while (!stop)
      {
+#ifdef __DREAMCAST__
+	if (dc_interp_step_limit && ++dc_interp_steps >= dc_interp_step_limit)
+	  {
+	     stop = 1;
+	     break;
+	  }
+#endif
 	prefetch();
+	if (stop)
+	  break;
 #ifdef COMPARE_CORE
 	compare_core();
 #endif

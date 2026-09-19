@@ -44,7 +44,9 @@
 #include "../r4300/r4300.h"
 #include "../r4300/interupt.h"
 #include "../r4300/macros.h"
+#ifdef PPC_DYNAREC
 #include "../r4300/ARAM-blocks.h"
+#endif
 #include "../r4300/Invalid_Code.h"
 #include "../r4300/ops.h"
 #include "../fileBrowser/fileBrowser.h"

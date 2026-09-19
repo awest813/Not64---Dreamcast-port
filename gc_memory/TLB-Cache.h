@@ -26,7 +26,12 @@
 
 #ifdef USE_TLB_CACHE
 
+#ifdef __DREAMCAST__
+/* Savestate dump helpers are unused on the DC bring-up. */
+typedef void *gzFile;
+#else
 #include <zlib.h>
+#endif
 
 // Num Slots must be a power of 2!
 #define TLB_NUM_SLOTS 64

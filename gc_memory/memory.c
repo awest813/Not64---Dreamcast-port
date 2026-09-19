@@ -3255,8 +3255,18 @@ unsigned long *fast_mem_access(unsigned long address)
    /* This code is performance critical, specially on pure interpreter mode.
     * Removing error checking saves some time, but the emulator may crash. */
 
+#ifdef __DREAMCAST__
+   /* N64 addresses are 32-bit; a 64-bit host must not sign-extend 0x80000000.
+    * KSEG0 and KSEG1 (0x80000000–0xBFFFFFFF) are unmapped. Wii64's mask only
+    * treated 0x8/0x9 as direct, which sent boot PC 0xa4000040 through a TLB
+    * refill. */
+   address = (unsigned long)(unsigned int)address;
+   if (address < 0x80000000 || address >= 0xc0000000)
+     address = virtual_to_physical_address(address, 2);
+#else
    if ((address & 0xc0000000) != 0x80000000)
      address = virtual_to_physical_address(address, 2);
+#endif
 
    address &= 0x1ffffffc;
 

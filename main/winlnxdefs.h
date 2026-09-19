@@ -30,7 +30,11 @@
 #ifndef WINLNXDEFS_H
 #define WINLNXDEFS_H
 
+#ifdef __DREAMCAST__
+#include "../platform/dc_types.h"
+#else
 #include <gctypes.h>
+#endif
 //typedef unsigned int BOOL;
 typedef unsigned long DWORD;
 typedef unsigned short WORD;

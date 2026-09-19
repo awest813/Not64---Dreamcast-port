@@ -36,11 +36,19 @@
 #include "../main/md5.h"
 #include "../gc_memory/memory.h"
 #include "../gc_memory/TLB-Cache.h"
+#ifdef PPC_DYNAREC
 #include "ARAM-blocks.h"
-
 #include <zlib.h>
-
 uLong ZEXPORT adler32(uLong adler, const Bytef *buf, uInt len);
+#else
+typedef struct { unsigned long adler32; } PowerPC_block;
+static PowerPC_block *blocks_get(unsigned int addr)
+{
+	(void)addr;
+	return NULL;
+}
+#define adler32(a, b, c) (0UL)
+#endif
 
 void TLBR()
 {
@@ -88,9 +96,9 @@ void TLBWI()
 		  md5_finish(&state, digest);
 		  for (j=0; j<16; j++) blocks[i]->md5[j] = digest[j];*/
 #ifdef USE_TLB_CACHE
-		  temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(paddr&0x7FF000)/4], 0x1000);
+		  if (temp_block) temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(paddr&0x7FF000)/4], 0x1000);
 #else
-		  temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4], 0x1000);
+		  if (temp_block) temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4], 0x1000);
 #endif		  
 		  invalid_code_set(i, 1);
 	       }
@@ -98,7 +106,7 @@ void TLBWI()
 	       {
 		  /*int j;
 		  for (j=0; j<16; j++) blocks[i]->md5[j] = 0;*/
-		  temp_block->adler32 = 0;
+		  if (temp_block) temp_block->adler32 = 0;
 	       }
 #ifdef USE_TLB_CACHE
 		TLBCache_set_r(i, 0);
@@ -141,9 +149,9 @@ void TLBWI()
 		  for (j=0; j<16; j++) blocks[i]->md5[j] = digest[j];*/
 		  
 #ifdef USE_TLB_CACHE
-		  temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(paddr&0x7FF000)/4], 0x1000);
+		  if (temp_block) temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(paddr&0x7FF000)/4], 0x1000);
 #else
-		  temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4], 0x1000);
+		  if (temp_block) temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4], 0x1000);
 #endif		  
 		  invalid_code_set(i, 1);
 	       }
@@ -151,7 +159,7 @@ void TLBWI()
 	       {
 		  /*int j;
 		  for (j=0; j<16; j++) blocks[i]->md5[j] = 0;*/
-		  temp_block->adler32 = 0;
+		  if (temp_block) temp_block->adler32 = 0;
 	       }
 #ifdef USE_TLB_CACHE
 		TLBCache_set_r(i, 0);
@@ -237,9 +245,9 @@ void TLBWI()
 	       {
 #ifdef USE_TLB_CACHE
 		  unsigned long paddr = TLBCache_get_r(i);
-		  if(temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(paddr&0x7FF000)/4],0x1000))
+		  if(temp_block && temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(paddr&0x7FF000)/4],0x1000))
 #else
-		  if(temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4],0x1000))
+		  if(temp_block && temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4],0x1000))
 #endif
 		    invalid_code_set(i, 0);
 	       }
@@ -299,9 +307,9 @@ void TLBWI()
 	     if(temp_block && temp_block->adler32)
 	       {
 #ifdef USE_TLB_CACHE
-		  if(temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(TLBCache_get_r(i)&0x7FF000)/4],0x1000))
+		  if(temp_block && temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(TLBCache_get_r(i)&0x7FF000)/4],0x1000))
 #else
-		  if(temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4],0x1000))
+		  if(temp_block && temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4],0x1000))
 #endif
 		    invalid_code_set(i, 0);
 	       }
@@ -343,9 +351,9 @@ void TLBWR()
 		  md5_finish(&state, digest);
 		  for (j=0; j<16; j++) blocks[i]->md5[j] = digest[j];*/
 #ifdef USE_TLB_CACHE
-		  temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(paddr&0x7FF000)/4], 0x1000);
+		  if (temp_block) temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(paddr&0x7FF000)/4], 0x1000);
 #else
-		  temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4], 0x1000);
+		  if (temp_block) temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4], 0x1000);
 #endif	  
 		  invalid_code_set(i, 1);
 	       }
@@ -353,7 +361,7 @@ void TLBWR()
 	       {
 		  /*int j;
 		  for (j=0; j<16; j++) blocks[i]->md5[j] = 0;*/
-		  temp_block->adler32 = 0;
+		  if (temp_block) temp_block->adler32 = 0;
 	       }
 #ifdef USE_TLB_CACHE
 	TLBCache_set_r(i, 0);
@@ -395,9 +403,9 @@ void TLBWR()
 		  md5_finish(&state, digest);
 		  for (j=0; j<16; j++) blocks[i]->md5[j] = digest[j];*/
 #ifdef USE_TLB_CACHE
-		  temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(paddr&0x7FF000)/4], 0x1000);
+		  if (temp_block) temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(paddr&0x7FF000)/4], 0x1000);
 #else	  
-		  temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4], 0x1000);
+		  if (temp_block) temp_block->adler32 = adler32(0, (const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4], 0x1000);
 #endif
 		  
 		  invalid_code_set(i, 1);
@@ -406,7 +414,7 @@ void TLBWR()
 	       {
 		  /*int j;
 		  for (j=0; j<16; j++) blocks[i]->md5[j] = 0;*/
-		  temp_block->adler32 = 0;
+		  if (temp_block) temp_block->adler32 = 0;
 	       }
 #ifdef USE_TLB_CACHE
 		TLBCache_set_r(i, 0);
@@ -490,9 +498,9 @@ void TLBWR()
 	     if(temp_block && temp_block->adler32)
 	       {
 #ifdef USE_TLB_CACHE
-		  if(temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(TLBCache_get_r(i)&0x7FF000)/4],0x1000))
+		  if(temp_block && temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(TLBCache_get_r(i)&0x7FF000)/4],0x1000))
 #else
-		  if(temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4],0x1000))
+		  if(temp_block && temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4],0x1000))
 #endif
 		     invalid_code_set(i, 0);
 	       }
@@ -552,9 +560,9 @@ void TLBWR()
 	     if(temp_block && temp_block->adler32)
 	       {
 #ifdef USE_TLB_CACHE
-		  if(temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(TLBCache_get_r(i)&0x7FF000)/4],0x1000))
+		  if(temp_block && temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(TLBCache_get_r(i)&0x7FF000)/4],0x1000))
 #else
-		  if(temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4],0x1000))
+		  if(temp_block && temp_block->adler32 == adler32(0,(const Bytef*)&rdram[(tlb_LUT_r[i]&0x7FF000)/4],0x1000))
 #endif
 		    invalid_code_set(i, 0);
 	       }

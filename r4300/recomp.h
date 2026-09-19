@@ -30,7 +30,18 @@
 #ifndef RECOMP_H
 #define RECOMP_H
 
+#ifdef __DREAMCAST__
+/* Interpreter-only: do not pull the x86 assembler. */
+typedef struct _reg_cache_struct
+{
+   int need_map;
+   void *needed_registers[8];
+   unsigned char jump_wrapper[62];
+   int need_cop1_check;
+} reg_cache_struct;
+#else
 #include "x86/assemble.h"
+#endif
 
 typedef struct _precomp_instr
 {
