@@ -155,10 +155,11 @@ held during C-presses.
 1. **KallistiOS ELF** — install `sh-elf-gcc` + KOS (`KOS_BASE`, `environ.sh`). `make -f Makefile.dc` → `not64-dc.elf`. Same bring-up on lxdream/redream or hardware. Cloud image does not have this yet (`environment.json` when someone can install it).
 2. **AICA** — `audio-dc.c` only fills a ring. Host smoke is enough; hardware needs `snd_stream` (or equivalent) draining that ring.
 3. **Real CPU test / homebrew** — CPUTEST is still a handful of IPL ops, not a full IPL3/PIF/RSP boot. A tiny homebrew `.z64` is the next correctness bar. Host PIF joybus is wired; a booting ROM has not used it yet.
-4. **Software first frame** (Phase 4) — only after a ROM actually hits RDP/VI. Start from `mupen64_soft_gfx/` / `GX_gfx/`, not glN64.
-5. **SH4 dynarec** — last. New `r4300/sh4/`. PPC JIT is not a template you search-replace.
+4. **Menu step 8a** — ROM browser over `/sd/not64/roms` on KOS `bfont`. Needs no renderer, so it can land right after the KOS ELF and replaces the argv path. Design (screens, which `dc_config.c` settings survive on DC, why `libgui/` does not port) is **Phase 8 in `PORTING.md`** — read it before writing menu code.
+5. **Software first frame** (Phase 4) — only after a ROM actually hits RDP/VI. Start from `mupen64_soft_gfx/` / `GX_gfx/`, not glN64.
+6. **SH4 dynarec** — last. New `r4300/sh4/`. PPC JIT is not a template you search-replace.
 
-Skip 4–5 until 1–3 have a ROM that is more than a BEQ spin.
+Skip 5–6 until 1–3 have a ROM that is more than a BEQ spin. 8a (step 4) is independent of all of them once the KOS ELF exists.
 
 ---
 
