@@ -166,7 +166,9 @@ static void SYNC()
 
 #define DUMP_ON_BREAK
 #ifdef DUMP_ON_BREAK
+#ifndef __DREAMCAST__
 #include <ogc/pad.h>
+#endif
 #endif
 static void BREAK(){
 #ifdef DUMP_ON_BREAK
@@ -180,8 +182,10 @@ static void BREAK(){
 		       i, (unsigned int)reg[i], i+1, (unsigned int)reg[i+1],
 		       i+2, (unsigned int)reg[i+2], i+3, (unsigned int)reg[i+3]);
 	printf("Press A to continue execution\n");
+#ifndef __DREAMCAST__
 	while(!(PAD_ButtonsHeld(0) & PAD_BUTTON_A));
 	while( (PAD_ButtonsHeld(0) & PAD_BUTTON_A));
+#endif
 #endif
 }
 

@@ -1,0 +1,4 @@
+# Dreamcast bring-up artifacts
+/not64-dc-bringup
+/not64-dc.elf
+*.o

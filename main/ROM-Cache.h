@@ -26,7 +26,11 @@
 #define ROM_CACHE_H
 
 #include "../fileBrowser/fileBrowser.h"
+#ifdef __DREAMCAST__
+#include "../platform/dc_types.h"
+#else
 #include <gctypes.h>
+#endif
 
 /* Rom Cache stuff */
 // Note: All length/size/offsets are in bytes

@@ -1,0 +1,61 @@
+# Not64 Dreamcast — Phase 1 bring-up
+#
+# Host stub (no KOS, for CI / this environment):
+#   make -f Makefile.dc HOST=1
+#   ./not64-dc-bringup
+#
+# KallistiOS (source environ.sh first so KOS_BASE is set):
+#   make -f Makefile.dc
+#   # produces not64-dc.elf
+
+OBJS = main/main_dc.o \
+	fileBrowser/fileBrowser.o \
+	fileBrowser/fileBrowser-kos.o \
+	gc_input/controller-DC.o \
+	gc_audio/audio-dc.o
+
+ifeq ($(HOST),1)
+
+CC      ?= gcc
+CFLAGS  ?= -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -O2
+CPPFLAGS = -D__DREAMCAST__ -DDC_HOST_STUB -D__LINUX__
+TARGET   = not64-dc-bringup
+
+.PHONY: all clean run
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $(OBJS)
+
+%.o: %.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+run: $(TARGET)
+	./$(TARGET)
+
+clean:
+	rm -f $(OBJS) $(TARGET)
+
+else
+
+ifndef KOS_BASE
+$(error KOS_BASE is not set. Source KallistiOS environ.sh, or: make -f Makefile.dc HOST=1)
+endif
+
+include $(KOS_BASE)/Makefile.rules
+
+KOS_CFLAGS += -D__DREAMCAST__ -D__LINUX__ -DNOASM -I$(CURDIR)
+TARGET = not64-dc.elf
+
+.PHONY: all clean
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(KOS_CC) $(KOS_CFLAGS) $(KOS_LDFLAGS) -o $@ $(KOS_START) $(OBJS) $(OBJEXTRA) $(KOS_LIBS)
+
+clean:
+	rm -f $(OBJS) $(TARGET)
+
+endif

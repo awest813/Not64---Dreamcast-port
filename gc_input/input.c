@@ -41,7 +41,10 @@ static BOOL lastData[4];
 virtualControllers_t virtualControllers[4];
 
 controller_t* controller_ts[num_controller_t] =
-#if defined(WII) && !defined(NO_BT)
+#if defined(__DREAMCAST__)
+	{ &controller_DC,
+	 };
+#elif defined(WII) && !defined(NO_BT)
 	{ &controller_GC,
 	  &controller_ExtenmoteGC,
 	  &controller_ExtenmoteN64,
