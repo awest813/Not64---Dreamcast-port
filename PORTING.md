@@ -1,6 +1,6 @@
 # Not64 Dreamcast Port — Audit and Plan
 
-**Status:** Phase 1 bring-up started. No Dreamcast emulator core is running yet.  
+**Status:** Phase 2 host interpreter bring-up works (`make -f Makefile.dc HOST=1`). No KallistiOS ELF yet.  
 **Repo:** `Not64---Dreamcast-port` (GitHub name is aspirational; the tree is Wii/GC Not64).  
 **License:** GPL v2
 
@@ -20,16 +20,17 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 
 | Item | Status |
 |------|--------|
-| Dreamcast / KOS / SH4 code (pre-port) | None |
+| Dreamcast / KOS / SH4 code (pre-port) | None in original tree; port files under `platform/`, `Makefile.dc` |
 | Porting document | This file |
 | Platform types (`platform/dc_types.h`) | Started |
 | Dreamcast memory budget (`platform/dc_memory.h`) | Started (paper map) |
-| `Makefile.dc` (KOS + host stub) | Started |
-| Bring-up `main/main_dc.c` | Started (no N64 boot yet) |
+| `Makefile.dc` (KOS + host stub) | Host `HOST=1` links the interpreter; KOS still needs `KOS_BASE` |
+| Bring-up `main/main_dc.c` | Loads a dummy `.z64` and runs 10000 interpreter steps |
 | `fileBrowser-kos` | Started |
 | Maple controller (`controller-DC.c`) | Started |
 | AICA audio stub (`audio-dc.c`) | Started |
-| Interpreter-only core link | Not started |
+| Interpreter-only core link | **Host verified** (`./not64-dc-bringup`) |
+| ROM stream (`main/ROM-Cache-dc.c`) | 1 MiB window; z64 words swapped to LE |
 | Software / PVR renderer | Not started |
 | SH4 dynarec | Not started |
 | Cloud environment KOS toolchain | **Missing** (`sh-elf-gcc` not installed) |
@@ -135,10 +136,10 @@ There is no unified HAL. Boot, video, and threading live in `main/main_gc-menu2.
 ## Phased plan
 
 ```
-Phase 0  Decisions + environment     (decisions locked above; KOS still missing here)
-Phase 1  KOS / host bring-up         (in progress — this change)
-Phase 2  Interpreter core links      (next)
-Phase 3  I/O wired into emulator     (FAT + Maple + AICA)
+Phase 0  Decisions + environment     (decisions locked; KOS still missing here)
+Phase 1  KOS / host bring-up         (done on host stub)
+Phase 2  Interpreter core links      (done on host: dummy ROM, 10000 steps)
+Phase 3  I/O wired into emulator     (next: FAT + Maple + AICA into the running core)
 Phase 4  First emulated frame        (software renderer)
 Phase 5  Memory map hardening        (ROM stream, cache sizes)
 Phase 6  SH4 dynarec                 (performance)
@@ -155,7 +156,7 @@ Phase 8  Menu, saves, .cdi           (polish)
 - [ ] Define test ROM set (homebrew + 1–2 titles) once ROM loading exists
 - [ ] Cloud `environment.json` with KOS when the toolchain is available
 
-### Phase 1 — Bring-up (current)
+### Phase 1 — Bring-up
 
 - [x] `Makefile.dc`
 - [x] `main/main_dc.c` — video/console, Maple probe, list `/sd/not64/roms`
@@ -164,17 +165,36 @@ Phase 8  Menu, saves, .cdi           (polish)
 - [x] AICA-facing audio stub (ring buffer, no DSP yet)
 - [ ] Boot the same binary on lxdream/redream or hardware (needs KOS)
 
-### Phase 2 — Interpreter core (next)
+### Phase 2 — Interpreter core (host)
 
-- [ ] Compile `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D__DREAMCAST__ -DNOASM` and **without** `-DPPC_DYNAREC`
-- [ ] Guard remaining `gccore.h` / `ogc/` includes
-- [ ] ROM cache that streams (do not allocate 16 MB ROM cache)
-- [ ] Hardcoded ROM path, no menu
-- [ ] Host or DC unit test: load a tiny test ROM header
+- [x] Compile `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D__DREAMCAST__ -DNOASM` and **without** `-DPPC_DYNAREC`
+- [x] Guard remaining `gccore.h` / `ogc/` includes on the DC path
+- [x] ROM cache that streams (`main/ROM-Cache-dc.c`, 1 MiB)
+- [x] Hardcoded ROM path, no menu (`roms/dc_dummy.z64` or argv)
+- [x] Host unit run: load dummy header **DC BRINGUP TEST**, execute 10000 steps
+- [ ] Same run on a KOS `not64-dc.elf`
 
-### Phase 3–8
+Host command:
 
-See the tables in the executive summary. Do not start SH4 dynarec or PVR until Phase 2 produces a correct interpreter run on a test ROM.
+```sh
+make -f Makefile.dc HOST=1
+./not64-dc-bringup              # uses roms/dc_dummy.z64
+./not64-dc-bringup /path/game.z64
+```
+
+Expect `Interpreter stopped after step limit 10000`. Use GNU `gcc` (clang in this environment crashed on `r4300.c`).
+
+Dummy ROM: z64 magic `80 37 12 40`, internal name `DC BRINGUP TEST`, IPL3 at 0x40 is `B -1` (spin in SP DMEM). On Dreamcast/host LE, z64 32-bit words are swapped on load so `unsigned long` fetches match MIPS encodings.
+
+Known interpreter glue (not a full decode-recompiler):
+
+- `platform/dc_recomp_stubs.c` — `prefetch_opcode` fills **one** union format per opcode (I-type immediate must not overwrite R-type `rd`)
+- `fast_mem_access` treats KSEG0 **and** KSEG1 as unmapped (boot PC `0xa4000040`)
+- `dynacore = 2` → `pure_interpreter()`; no `blocks[]` table
+- `USE_TLB_CACHE` hash map, not an 8 MiB LUT
+- Compact `invalid_code` bit table (GameCube-sized), not Wii MEM2
+
+Do not start SH4 dynarec or PVR until a **real** test ROM (homebrew CPU test) retires correctly, not just the dummy spin loop.
 
 ---
 
@@ -198,14 +218,14 @@ If this does not fit, drop ROM window or RDRAM features before adding a texture 
 
 ## How to build
 
-### Host stub (no KOS) — verifies Phase 1 C files
+### Host stub (no KOS) — Phase 1 diagnostics + Phase 2 interpreter
 
 ```sh
 make -f Makefile.dc HOST=1
 ./not64-dc-bringup
 ```
 
-Uses `-DDC_HOST_STUB`. Exercises the file browser against the working directory and prints the memory budget.
+Uses `-DDC_HOST_STUB`. GNU `gcc` required. Exercises the file browser, Maple stub, dummy ROM load, and a bounded `pure_interpreter()` run.
 
 ### KallistiOS (when toolchain is installed)
 
@@ -231,6 +251,9 @@ Requires `KOS_BASE`. Load with dcload, or convert to `.cdi` later.
 | FAT/POSIX I/O | `fileBrowser/fileBrowser-kos.c` |
 | Maple pad | `gc_input/controller-DC.c` |
 | Audio stub | `gc_audio/audio-dc.c` |
+| ROM load / cache | `main/rom_dc.c`, `main/ROM-Cache-dc.c` |
+| Interpreter stubs | `platform/dc_recomp_stubs.c` |
+| Dummy ROM | `roms/dc_dummy.z64` |
 | Wii boot (reference) | `main/main_gc-menu2.cpp` |
 | Wii Makefile (reference) | `Makefile.menu2_wii` |
 | CPU interpreter | `r4300/pure_interp.c` |
@@ -243,7 +266,8 @@ Requires `KOS_BASE`. Load with dcload, or convert to `.cdi` later.
 
 | ROM | Why |
 |-----|-----|
-| Tiny homebrew / CPU test | Interpreter correctness |
+| `roms/dc_dummy.z64` | Header + IPL spin; host step-limit smoke test |
+| Tiny homebrew / CPU test | Interpreter correctness (next) |
 | Simple 2D commercial (TBD) | First-frame renderer |
 | Audio-heavy (TBD) | AICA |
 
@@ -251,4 +275,4 @@ Requires `KOS_BASE`. Load with dcload, or convert to `.cdi` later.
 
 ## Bottom line
 
-The portable core is real. The Dreamcast port is **new OS/GPU/audio/input/memory/packaging work**. Phase 1 is a **bring-up ELF** plus I/O stubs. Phase 2 is linking the interpreter without GX or PPC dynarec.
+The portable core is real. Phase 1 is a **bring-up ELF** plus I/O stubs. Phase 2 **links and runs** the pure interpreter on a dummy ROM on the host. Next is a real CPU-test ROM and KOS hardware/emulator, then a software renderer.

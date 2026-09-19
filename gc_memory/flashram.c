@@ -29,6 +29,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "../main/winlnxdefs.h"
 
 #ifdef USE_GUI
 #include "../gui/GUI.h"
@@ -43,7 +44,9 @@
 #include "../fileBrowser/fileBrowser.h"
 
 
+#ifndef __DREAMCAST__
 #include <ogc/card.h>
+#endif
 #include "Saves.h"
 
 int use_flashram;

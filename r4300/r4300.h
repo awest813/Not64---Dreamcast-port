@@ -36,6 +36,12 @@
 #include "../gc_memory/tlb.h"
 #include "recomp.h"
 
+#ifdef __DREAMCAST__
+#define N64_SBSS
+#else
+#define N64_SBSS __attribute__((section(".sbss")))
+#endif
+
 extern precomp_instr *PC;
 #ifdef PPC_DYNAREC
 #include "ppc/Recompile.h"
@@ -45,20 +51,23 @@ extern PowerPC_block **const blocks;
 extern PowerPC_block *blocks[0x100000];
 #endif
 extern PowerPC_block *actual;
+#elif defined(__DREAMCAST__)
+/* Pure interpreter: do not reserve a 4 MiB block table. */
+extern precomp_block *actual;
 #else
 extern precomp_block *blocks[0x100000], *actual;
 #endif
 extern int stop, llbit;
-extern long long int reg[34] __attribute__((section(".sbss")));
+extern long long int reg[34] N64_SBSS;
 #define hi (reg[32])
 #define lo (reg[33])
 extern long long int local_rs, local_rt;
-extern unsigned long reg_cop0[32] __attribute__((section(".sbss")));
+extern unsigned long reg_cop0[32] N64_SBSS;
 extern long local_rs32, local_rt32;
 extern unsigned long jump_target;
-extern double *reg_cop1_double[32] __attribute__((section(".sbss")));
-extern float *reg_cop1_simple[32] __attribute__((section(".sbss")));
-extern long long int reg_cop1_fgr_64[32] __attribute__((section(".sbss")));
+extern double *reg_cop1_double[32] N64_SBSS;
+extern float *reg_cop1_simple[32] N64_SBSS;
+extern long long int reg_cop1_fgr_64[32] N64_SBSS;
 extern unsigned long FCR0, FCR31;
 extern tlb tlb_e[32];
 extern unsigned long delay_slot, skip_jump, dyna_interp;

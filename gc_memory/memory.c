@@ -3255,8 +3255,16 @@ unsigned long *fast_mem_access(unsigned long address)
    /* This code is performance critical, specially on pure interpreter mode.
     * Removing error checking saves some time, but the emulator may crash. */
 
+#ifdef __DREAMCAST__
+   /* KSEG0 and KSEG1 (0x80000000–0xBFFFFFFF) are unmapped. The Wii64
+    * mask only treats 0x8/0x9 as direct; that sends boot PC 0xa4000040
+    * through a TLB refill and executes RDRAM instead of SP DMEM. */
+   if (address < 0x80000000 || address >= 0xc0000000)
+     address = virtual_to_physical_address(address, 2);
+#else
    if ((address & 0xc0000000) != 0x80000000)
      address = virtual_to_physical_address(address, 2);
+#endif
 
    address &= 0x1ffffffc;
 

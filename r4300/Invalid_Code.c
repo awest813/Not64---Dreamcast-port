@@ -3,7 +3,8 @@
  */
 
 #include "Invalid_Code.h"
-#ifndef HW_RVL  //GC use bit version
+#ifndef HW_RVL  //GC / Dreamcast: compact bit table
+
 
 static unsigned char invalid_code[0x100000/8];
 

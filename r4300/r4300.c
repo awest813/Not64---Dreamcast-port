@@ -38,8 +38,10 @@
 #include "recomp.h"
 #include "recomph.h"
 #include "Invalid_Code.h"
+#ifdef PPC_DYNAREC
 #include "Recomp-Cache.h"
 #include "ARAM-blocks.h"
+#endif
 #include <malloc.h>
 
 #ifdef DBG
@@ -47,19 +49,23 @@ extern int debugger_mode;
 extern void update_debugger();
 #endif
 
+#ifdef __DREAMCAST__
+unsigned long i, dynacore = 2, interpcore = 1;
+#else
 unsigned long i, dynacore = 0, interpcore = 0;
+#endif
 int no_audio_delay = 0;
 int no_compiled_jump = 0;
 unsigned long count_per_op = 2;
 int stop, llbit;
-long long int reg[34] __attribute__((section(".sbss")));
+long long int reg[34] N64_SBSS;
 long long int local_rs, local_rt;
-unsigned long reg_cop0[32] __attribute__((section(".sbss")));
+unsigned long reg_cop0[32] N64_SBSS;
 long local_rs32, local_rt32;
 unsigned long jump_target;
-float *reg_cop1_simple[32] __attribute__((section(".sbss")));
-double *reg_cop1_double[32] __attribute__((section(".sbss")));
-long long int reg_cop1_fgr_64[32] __attribute__((section(".sbss")));
+float *reg_cop1_simple[32] N64_SBSS;
+double *reg_cop1_double[32] N64_SBSS;
+long long int reg_cop1_fgr_64[32] N64_SBSS;
 unsigned long FCR0, FCR31;
 tlb tlb_e[32];
 unsigned long delay_slot, skip_jump = 0, dyna_interp = 0, last_addr;
@@ -78,6 +84,8 @@ PowerPC_block *blocks[0x100000];
 #endif
 #endif
 PowerPC_block *actual;
+#elif defined(__DREAMCAST__)
+precomp_block *actual;
 #else
 precomp_block *blocks[0x100000], *actual;
 #endif
@@ -91,6 +99,8 @@ void (*code)();
 
 #ifdef PPC_DYNAREC
 #define check_memory() invalid_code_set(address>>12, 1);
+#elif defined(__DREAMCAST__)
+#define check_memory()
 #else
 #define check_memory() \
    if (!invalid_code_get(address>>12)) \
@@ -1362,7 +1372,7 @@ void NOTCOMPILED()
    if ((PC->addr>>16) == 0xa400){
 #ifdef PPC_DYNAREC
      //recompile_block(blocks[0xa4000000>>12]);
-#else
+#elif !defined(__DREAMCAST__)
      recompile_block(SP_DMEM, blocks[0xa4000000>>12], PC->addr);
 #endif
    } else
@@ -1379,7 +1389,7 @@ void NOTCOMPILED()
 #ifdef PPC_DYNAREC
 		  // FIXME: We need to read from the romcache into a buffer and recompile the buffer
 		  //recompile_block(blocks[PC->addr>>12]);
-#else
+#elif !defined(__DREAMCAST__)
 		  recompile_block((unsigned long*)rom+((((paddr-(PC->addr-blocks[PC->addr>>12]->start)) & 0x1FFFFFFF) - 0x10000000)>>2),
 				  blocks[PC->addr>>12], PC->addr);
 #endif
@@ -1387,7 +1397,7 @@ void NOTCOMPILED()
 	     else {
 #ifdef PPC_DYNAREC
 		//recompile_block(blocks[PC->addr>>12]);
-#else
+#elif !defined(__DREAMCAST__)
 	       recompile_block(rdram+(((paddr-(PC->addr-blocks[PC->addr>>12]->start)) & 0x1FFFFFFF)>>2),
 			       blocks[PC->addr>>12], PC->addr);
 #endif
@@ -1440,6 +1450,11 @@ inline unsigned long update_invalid_addr(unsigned long addr)
 unsigned long jump_to_address;
 #ifdef PPC_DYNAREC
 #define jump_to_func() jump_to(addr)
+#elif defined(__DREAMCAST__)
+inline void jump_to_func()
+{
+	(void)jump_to_address;
+}
 #else
 inline void jump_to_func()
 {
@@ -1548,6 +1563,12 @@ void update_count()
 
 void init_blocks()
 {
+#ifdef __DREAMCAST__
+	int i;
+	for (i=0; i<0x100000; i++)
+		invalid_code_set(i, 1);
+	PC = malloc(sizeof(precomp_instr));
+#else
    int i;
    for (i=0; i<0x100000; i++)
      {
@@ -1561,19 +1582,22 @@ void init_blocks()
    blocks[0xa4000000>>12]->jumps_table = NULL;
    blocks[0xa4000000>>12]->start = 0xa4000000;
    blocks[0xa4000000>>12]->end = 0xa4001000;
+   actual = blocks[0xa4000000>>12];
+   init_block((long*)SP_DMEM, actual);
 #else
    PowerPC_block* temp_block = calloc(1, sizeof(PowerPC_block));
    blocks_set(0xa4000000>>12, temp_block);
    temp_block->start_address = 0xa4000000;
    temp_block->end_address = 0xa4001000;
-#endif
    actual=temp_block;
    init_block(temp_block);
+#endif
 #ifdef PPC_DYNAREC
 	PC = malloc(sizeof(precomp_instr));
 #else
    PC=actual->block+(0x40/4);
 #endif
+#endif /* __DREAMCAST__ */
 
 #ifdef DBG
    if (debugger_mode) // debugger shows initial state (before 1st instruction).
@@ -1655,14 +1679,16 @@ void go()
 	dynacore = 1;
 	//printf("dynamic recompiler\n");
 	if(cpu_inited){
+#ifdef PPC_DYNAREC
 		RecompCache_Init();
+#endif
 		init_blocks();
 		cpu_inited = 0;
 	}
 #ifdef PPC_DYNAREC
 	//jump_to(0xa4000040);
 	dynarec(interp_addr);
-#else
+#elif !defined(__DREAMCAST__)
 	code = (void *)(actual->code+(actual->block[0x40/4].local_addr));
 	dyna_start(code);
 #endif
@@ -1902,6 +1928,16 @@ void cpu_init(void){
    init_interupt();
    interpcore = 0;
 
+#ifdef __DREAMCAST__
+   /* Interpreter never calls init_blocks(); mark all pages invalid so
+    * TLB helpers do not chase a NULL dynarec block table. */
+   {
+      unsigned long ic;
+      for (ic = 0; ic < 0x100000; ic++)
+         invalid_code_set((int)ic, 1);
+   }
+#endif
+
    // I'm adding this from pure_interpreter()
    interp_addr = 0xa4000040;
    // Hack for the interpreter
@@ -1910,35 +1946,18 @@ void cpu_init(void){
 
 void cpu_deinit(void){
 	// No need to check these if we were in the pure interp
+#ifdef PPC_DYNAREC
 	if(dynacore != 2 && !cpu_inited){
 		for (i=0; i<0x100000; i++) {
   		PowerPC_block* temp_block = blocks_get(i);
 		if (temp_block) {
-#ifdef PPC_DYNAREC
 			deinit_block(temp_block);
-#else
-			if (temp_block->block) {
-#ifdef USE_RECOMP_CACHE
-				invalidate_block(temp_block);
-#else
-				free(temp_block->block);
-#endif
-				temp_block->block = NULL;
-			}
-			if (temp_block->code) {
-				free(temp_block->code);
-				temp_block->code = NULL;
-			}
-			if (temp_block->jumps_table) {
-				free(temp_block->jumps_table);
-				temp_block->jumps_table = NULL;
-			}
-#endif
 			free(temp_block);
 			blocks_set(i, NULL);
 		}
 		}
 	}
+#endif
    // tehpola: modified condition from !dynacore && interpcore
    if (dynacore) { free(PC); PC = NULL; }
 }

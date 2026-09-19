@@ -414,7 +414,8 @@ void auto_assign_controllers(void){
 			if(w == 4) continue;
 
 			assign_controller(i, type, w);
-			padType[i] = type == &controller_GC ? PADTYPE_GAMECUBE : PADTYPE_WII;
+			padType[i] = (type->identifier == 'G' || type->identifier == 'D')
+				? PADTYPE_GAMECUBE : PADTYPE_WII;
 			padAssign[i] = w;
 
 			// Don't assign the next type over this one or the same controller
@@ -431,6 +432,10 @@ void auto_assign_controllers(void){
 #ifdef HW_RVL
 			assign_controller(i, &controller_Wiimote, i);
 			padType[i] = PADTYPE_WII;
+			padAssign[i] = i;
+#elif defined(__DREAMCAST__)
+			assign_controller(i, &controller_DC, i);
+			padType[i] = PADTYPE_GAMECUBE;
 			padAssign[i] = i;
 #else
 			assign_controller(i, &controller_GC, i);

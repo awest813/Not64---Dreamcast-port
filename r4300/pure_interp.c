@@ -60,6 +60,10 @@ extern void update_debugger();
 unsigned long interp_addr;
 unsigned long op;
 static long skip;
+#ifdef __DREAMCAST__
+unsigned long dc_interp_step_limit;
+static unsigned long dc_interp_steps;
+#endif
 
 void prefetch();
 
@@ -3259,11 +3263,23 @@ void pure_interpreter()
 {
    //interp_addr = 0xa4000040;
    stop=0;
+#ifdef __DREAMCAST__
+   dc_interp_steps = 0;
+#endif
    PC = malloc(sizeof(precomp_instr));
    last_addr = interp_addr;
    while (!stop)
      {
+#ifdef __DREAMCAST__
+	if (dc_interp_step_limit && ++dc_interp_steps >= dc_interp_step_limit)
+	  {
+	     stop = 1;
+	     break;
+	  }
+#endif
 	prefetch();
+	if (stop)
+	  break;
 #ifdef COMPARE_CORE
 	compare_core();
 #endif
