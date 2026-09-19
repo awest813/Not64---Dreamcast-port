@@ -35,6 +35,7 @@ extern BOOL hasLoadedROM;
 extern void init_controller_ts(void);
 extern void auto_assign_controllers(void);
 extern unsigned int audio_dc_buffered(void);
+extern void native_ReadController(int Control, unsigned char *Command);
 
 static GFX_INFO gfx_info;
 static AUDIO_INFO audio_info;
@@ -160,6 +161,68 @@ static int smoke_io(void)
 	return fail;
 }
 
+static int smoke_pif(void)
+{
+	int fail = 0;
+	unsigned char native_cmd[8];
+	unsigned char status_type = 0;
+
+#ifdef DC_HOST_STUB
+	controller_DC_host_set(0, DC_CONT_A, 200, 80);
+#endif
+
+	if (!Controls[0].Present) {
+		printf("pif smoke: pad 0 not Present\n");
+		return 1;
+	}
+
+	memset(PIF_RAMb, 0, 0x40);
+	PIF_RAMb[0] = 0x01;
+	PIF_RAMb[1] = 0x03;
+	PIF_RAMb[2] = 0x00;
+	update_pif_write();
+	status_type = PIF_RAMb[3];
+	if (status_type != 0x05) {
+		printf("pif smoke: status type=0x%02x want 0x05\n", status_type);
+		fail = 1;
+	}
+
+	memset(PIF_RAMb, 0, 0x40);
+	PIF_RAMb[0] = 0x01;
+	PIF_RAMb[1] = 0x04;
+	PIF_RAMb[2] = 0x01;
+	update_pif_read();
+	if (!(PIF_RAMb[3] & 1u)) {
+		printf("pif smoke: buttons %02x %02x %02x %02x missing A\n",
+		       PIF_RAMb[3], PIF_RAMb[4], PIF_RAMb[5], PIF_RAMb[6]);
+		fail = 1;
+	}
+	if ((signed char)PIF_RAMb[5] != 72 || (signed char)PIF_RAMb[6] != 48) {
+		printf("pif smoke: analog X=%d Y=%d want 72,48\n",
+		       (int)(signed char)PIF_RAMb[5],
+		       (int)(signed char)PIF_RAMb[6]);
+		fail = 1;
+	}
+
+	memset(native_cmd, 0, sizeof(native_cmd));
+	native_cmd[0] = 0x01;
+	native_cmd[1] = 0x04;
+	native_cmd[2] = 0x01;
+	native_ReadController(0, native_cmd);
+	if (!(native_cmd[3] & 1u)) {
+		printf("pif smoke: native_ReadController missing A\n");
+		fail = 1;
+	}
+
+	printf("pif smoke %s (status=0x%02x A=%u X=%d Y=%d)\n",
+	       fail ? "FAIL" : "PASS",
+	       status_type,
+	       (unsigned)(PIF_RAMb[3] & 1u),
+	       (int)(signed char)PIF_RAMb[5],
+	       (int)(signed char)PIF_RAMb[6]);
+	return fail;
+}
+
 static int check_cputest(void)
 {
 	int fail = 0;
@@ -185,6 +248,8 @@ static int check_cputest(void)
 	DC_EXPECT_REG(6, 0x1333);
 	DC_EXPECT_REG(7, 0xFF00);
 	DC_EXPECT_REG(9, 0x0030);
+	DC_EXPECT_REG(10, 0x1334);
+	DC_EXPECT_REG(11, 0x0001);
 #undef DC_EXPECT_REG
 
 	got = (unsigned long)(rdram[0] & 0xffffffffu);
@@ -192,7 +257,7 @@ static int check_cputest(void)
 		printf("CPUTEST rdram[0]=0x%lx want 0x1333\n", got);
 		fail = 1;
 	}
-	if (interp_addr != 0xa4000064 && interp_addr != 0xa4000068) {
+	if (interp_addr != 0xa4000074 && interp_addr != 0xa4000078) {
 		printf("CPUTEST interp_addr=0x%08lx (expected IPL BEQ spin)\n",
 		       interp_addr);
 		fail = 1;
@@ -351,7 +416,7 @@ static int load_and_step(const char *path, unsigned long steps)
 	printf("Header name: '%s'  country=0x%02x  CIC_Chip=%lu  PC=0x%08x\n",
 	       ROM_SETTINGS.goodname, ROM_HEADER.Country_code, CIC_Chip, ROM_HEADER.PC);
 
-	if (smoke_io()) {
+	if (smoke_io() || smoke_pif()) {
 		cpu_deinit();
 		TLBCache_deinit();
 		ROMCache_deinit();

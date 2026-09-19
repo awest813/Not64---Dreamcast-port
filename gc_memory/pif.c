@@ -307,11 +307,13 @@ int saveMempak(fileBrowser_file* savepath){
 	return 1;
 }
 
+void internal_ReadController(int Control, BYTE *Command);
+
 void native_ReadController(int Control, BYTE *Command)
 {
 #ifdef __DREAMCAST__
-	(void)Control;
-	(void)Command;
+	/* Maple uses the same getKeys / BUTTONS path as the GC plugin. */
+	internal_ReadController(Control, Command);
 #else
 	u32 level;
 	_CPU_ISR_Disable(level);

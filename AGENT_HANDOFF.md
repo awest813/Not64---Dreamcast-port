@@ -8,7 +8,7 @@
 | Branch | `cursor/dreamcast-port-plan-fc3a` |
 | Base | `master` |
 | PR | https://github.com/awest813/Not64---Dreamcast-port/pull/1 (draft) |
-| HEAD at handoff | `db0b364` — *Polish Dreamcast host bring-up after audit.* |
+| HEAD at handoff | After PIF/Maple host smoke + CPUTEST ADDI/SLTI/BNE (see git log) |
 | License | GPL v2 |
 | Cloud env | **No KallistiOS / `sh-elf-gcc`.** Host stub only. `cc` is clang and has crashed on `r4300.c`; **use GNU `gcc`.** |
 
@@ -20,7 +20,7 @@
 make -f Makefile.dc HOST=1 test
 ```
 
-Must print **`CPUTEST PASS`** and exit 0. Second process is `roms/dc_dummy.z64` (IPL spin at `0xa4000040`).
+Must print **`CPUTEST PASS`** and **`pif smoke PASS`**, then exit 0. Second process is `roms/dc_dummy.z64` (IPL spin at `0xa4000040`).
 
 ```sh
 make -f Makefile.dc HOST=1
@@ -40,7 +40,7 @@ The Wii/GC product still builds from `Makefile.menu2_*`. Dreamcast is a **third 
 |------|------|
 | `PORTING.md` | Plan, phase checklist, memory budget |
 | `Makefile.dc` | `HOST=1` → `not64-dc-bringup`; else KOS `not64-dc.elf` |
-| `main/main_dc.c` | Bring-up: budget, ROM dir, Maple, saves, load, 10000 interp steps, CPUTEST |
+| `main/main_dc.c` | Bring-up: budget, ROM dir, Maple, saves, PIF smoke, load, 10000 interp steps, CPUTEST |
 | `main/rom_dc.c` | Header + **LE z64 word swap** (`BYTE_SWAP_HALF` for magic `0x80371240`) |
 | `main/ROM-Cache-dc.c` | 1 MiB stream window |
 | `platform/dc_*.c`, `dc_types.h`, `dc_memory.h` | Types, budget, plugins/savestate/timer stubs, `prefetch_opcode` |
@@ -48,7 +48,7 @@ The Wii/GC product still builds from `Makefile.menu2_*`. Dreamcast is a **third 
 | `gc_input/controller-DC.c` | Maple `controller_t`; host inject `controller_DC_host_set` |
 | `gc_audio/audio-dc.c` | AI DMA → ring; no AICA yet |
 | `roms/gen_dc_roms.py` | Regenerates dummy + CPUTEST `.z64` |
-| `roms/dc_cputest.z64` | IPL: ORI/ADDU/XOR/ANDI/SLL/LUI/SW/LW + BEQ spin |
+| `roms/dc_cputest.z64` | IPL: ORI/ADDU/XOR/ANDI/SLL/LUI/SW/LW/ADDI/SLTI/BNE + BEQ spin |
 | `roms/dc_dummy.z64` | IPL: `B -1` |
 
 Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D__DREAMCAST__ -DNOASM -DUSE_TLB_CACHE`, **without** `-DPPC_DYNAREC`.
@@ -60,9 +60,10 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
 1. **Phase 0 decisions** — interpreter first, no Expansion Pak, no menu, software gfx later, `/sd/not64/` paths. See table in `PORTING.md`.
 2. **Phase 1 host bring-up** — console diagnostics, file browser, Maple probe, audio ring stub.
 3. **Phase 2 host interpreter** — dummy ROM load + 10000 steps.
-4. **CPUTEST** — GPRs + `rdram[0]==0x1333`, PC in `{0xa4000064, 0xa4000068}`.
+4. **CPUTEST** — GPRs including r10=`0x1334` r11=`1` + `rdram[0]==0x1333`, PC in `{0xa4000074, 0xa4000078}`.
 5. **Host I/O smokes** — `./saves/dc_host.txt`, injected A + analog, 64-byte AI DMA into the ring.
-6. **Audit polish** — DC-only KSEG1/`n64_addr`; Wii `fast_mem_access` **unchanged**; ROM cache clipped; teardown after run; no x86 assembler in DC `recomp.h`.
+6. **PIF/Maple host** — `native_ReadController` → `internal_ReadController`; `update_pif_write` status `0x05`; `update_pif_read` A + analog 72/48.
+7. **Audit polish** — DC-only KSEG1/`n64_addr`; Wii `fast_mem_access` **unchanged**; ROM cache clipped; teardown after run; no x86 assembler in DC `recomp.h`.
 
 ---
 
@@ -106,13 +107,12 @@ Other constraints:
 ## Next work (in order)
 
 1. **KallistiOS ELF** — install `sh-elf-gcc` + KOS (`KOS_BASE`, `environ.sh`). `make -f Makefile.dc` → `not64-dc.elf`. Same bring-up on lxdream/redream or hardware. Cloud image does not have this yet (`environment.json` when someone can install it).
-2. **PIF / SI** — `native_ReadController` is a no-op on DC. Wire Maple through the existing `getKeys` / PIF command path so a real boot can see a pad.
-3. **AICA** — `audio-dc.c` only fills a ring. Host smoke is enough; hardware needs `snd_stream` (or equivalent) draining that ring.
-4. **Real CPU test / homebrew** — CPUTEST is a handful of IPL ops, not a full IPL3/PIF/RSP boot. A tiny homebrew `.z64` is the next correctness bar.
-5. **Software first frame** (Phase 4) — only after a ROM actually hits RDP/VI. Start from `mupen64_soft_gfx/` / `GX_gfx/`, not glN64.
-6. **SH4 dynarec** — last. New `r4300/sh4/`. PPC JIT is not a template you search-replace.
+2. **AICA** — `audio-dc.c` only fills a ring. Host smoke is enough; hardware needs `snd_stream` (or equivalent) draining that ring.
+3. **Real CPU test / homebrew** — CPUTEST is still a handful of IPL ops, not a full IPL3/PIF/RSP boot. A tiny homebrew `.z64` is the next correctness bar. Host PIF joybus is wired; a booting ROM has not used it yet.
+4. **Software first frame** (Phase 4) — only after a ROM actually hits RDP/VI. Start from `mupen64_soft_gfx/` / `GX_gfx/`, not glN64.
+5. **SH4 dynarec** — last. New `r4300/sh4/`. PPC JIT is not a template you search-replace.
 
-Skip 5–6 until 1–4 have a ROM that is more than a BEQ spin.
+Skip 4–5 until 1–3 have a ROM that is more than a BEQ spin.
 
 ---
 
@@ -132,7 +132,10 @@ CPUTEST encodings (BE in the file; loader swaps to LE on DC/host):
 - `andi r9, r1, 0x00F0` → `0x0030`
 - `sll r7, r2, 8` → `0xFF00`
 - `lui r5, 0x8000` / `sw r3, 0(r5)` / `lw r6, 0(r5)` → `rdram[0]` and `r6` = `0x1333`
-- `beq r0, r0, -1` at `0xa4000064`, nop delay at `0xa4000068`
+- `addi r10, r3, 1` → `0x1334`
+- `slti r11, r10, 0x2000` → `1`
+- `bne r1, r1, +1` not taken (delay nop)
+- `beq r0, r0, -1` at `0xa4000074`, nop delay at `0xa4000078`
 
 Checks live in `check_cputest()` in `main/main_dc.c`. Keep them if you change the IPL.
 
@@ -149,6 +152,6 @@ Checks live in `check_cputest()` in `main/main_dc.c`. Keep them if you change th
 
 ## Suggested first message for the next agent
 
-> Continue the Not64 Dreamcast port from `AGENT_HANDOFF.md`. Run `make -f Makefile.dc HOST=1 test` first. Do not start PVR or SH4 dynarec. If KOS is available, produce `not64-dc.elf`; otherwise wire PIF/Maple into a real boot or add a software renderer only after a non-dummy ROM executes past IPL.
+> Continue the Not64 Dreamcast port from `AGENT_HANDOFF.md`. Run `make -f Makefile.dc HOST=1 test` first. Do not start PVR or SH4 dynarec. If KOS is available, produce `not64-dc.elf`; otherwise add a tiny homebrew `.z64` past IPL, or AICA drain. Software renderer only after a ROM hits RDP/VI.
 
 Update **this file** and `PORTING.md` current-status when a phase actually finishes.

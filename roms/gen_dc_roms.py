@@ -58,6 +58,10 @@ def main():
     #   lui  r5, 0x8000
     #   sw   r3, 0(r5)
     #   lw   r6, 0(r5)           -> 0x1333
+    #   addi r10, r3, 1          -> 0x1334
+    #   slti r11, r10, 0x2000    -> 1
+    #   bne  r1, r1, +1          not taken; delay nop
+    #   nop
     #   beq  r0, r0, -1
     #   nop
     write_rom(
@@ -73,6 +77,10 @@ def main():
             i_type(15, 0, 5, 0x8000),
             i_type(43, 5, 3, 0),
             i_type(35, 5, 6, 0),
+            i_type(8, 3, 10, 1),
+            i_type(10, 10, 11, 0x2000),
+            i_type(5, 1, 1, 1),
+            0,
             i_type(4, 0, 0, -1),
             0,
         ],
