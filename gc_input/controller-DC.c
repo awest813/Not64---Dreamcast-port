@@ -66,14 +66,27 @@ static button_t menu_combos[] = {
 static unsigned int last_buttons[4];
 static int last_joyx[4];
 static int last_joyy[4];
+#ifdef DC_HOST_STUB
+static unsigned int host_buttons[4];
+static int host_joyx[4] = {128, 128, 128, 128};
+static int host_joyy[4] = {128, 128, 128, 128};
+
+void controller_DC_host_set(int Control, unsigned int buttons, int jx, int jy)
+{
+	if (Control < 0 || Control > 3)
+		return;
+	host_buttons[Control] = buttons;
+	host_joyx[Control] = jx;
+	host_joyy[Control] = jy;
+}
+#endif
 
 static int poll_pad(int Control, unsigned int *buttons_out, int *jx, int *jy)
 {
 #ifdef DC_HOST_STUB
-	(void)Control;
-	*buttons_out = 0;
-	*jx = 0;
-	*jy = 0;
+	*buttons_out = host_buttons[Control];
+	*jx = host_joyx[Control];
+	*jy = host_joyy[Control];
 	return 1;
 #else
 	maple_device_t *dev;

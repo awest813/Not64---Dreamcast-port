@@ -2,3 +2,4 @@
 /not64-dc-bringup
 /not64-dc.elf
 *.o
+/saves/dc_host.txt

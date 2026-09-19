@@ -108,6 +108,9 @@ extern virtualControllers_t virtualControllers[4];
 
 #define num_controller_t 1
 extern controller_t controller_DC;
+#ifdef DC_HOST_STUB
+void controller_DC_host_set(int Control, unsigned int buttons, int jx, int jy);
+#endif
 extern controller_t* controller_ts[num_controller_t];
 
 #elif defined(WII) && !defined(NO_BT)

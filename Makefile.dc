@@ -75,9 +75,14 @@ CPPFLAGS = $(DC_DEFS) -DDC_HOST_STUB
 TARGET   = not64-dc-bringup
 LIBS     = -lm
 
-.PHONY: all clean run
+.PHONY: all clean run test roms
 
-all: $(TARGET)
+ROMS = roms/dc_dummy.z64 roms/dc_cputest.z64
+
+all: $(ROMS) $(TARGET)
+
+$(ROMS): roms/gen_dc_roms.py
+	python3 roms/gen_dc_roms.py
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LIBS)
@@ -88,8 +93,14 @@ gc_input/input.o: gc_input/input.c
 %.o: %.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
-run: $(TARGET)
+r4300/pure_interp.o: gc_memory/memory.h
+
+run: $(TARGET) $(ROMS)
 	./$(TARGET)
+
+test: $(TARGET) $(ROMS)
+	./$(TARGET) roms/dc_cputest.z64
+	./$(TARGET) roms/dc_dummy.z64
 
 clean:
 	rm -f $(OBJS) $(TARGET)

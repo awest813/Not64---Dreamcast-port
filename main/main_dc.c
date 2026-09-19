@@ -1,5 +1,5 @@
 /**
- * Dreamcast / host entry: Phase 1 diagnostics + Phase 2 interpreter bring-up.
+ * Dreamcast / host entry: diagnostics, interpreter, CPU test, I/O smoke.
  */
 
 #include <stdio.h>
@@ -34,6 +34,7 @@ extern unsigned long dc_interp_step_limit;
 extern BOOL hasLoadedROM;
 extern void init_controller_ts(void);
 extern void auto_assign_controllers(void);
+extern unsigned int audio_dc_buffered(void);
 
 static GFX_INFO gfx_info;
 static AUDIO_INFO audio_info;
@@ -86,6 +87,109 @@ static void probe_controllers(void)
 	for (i = 0; i < 4; ++i)
 		printf("Maple %d: %s\n", i,
 		       controller_DC.available[i] ? "present" : "empty");
+}
+
+static int probe_saves(void)
+{
+	fileBrowser_file marker;
+	char buf[32];
+	const char *msg = "not64-dc-host\n";
+	int n;
+
+	fileBrowser_kos_bind();
+	if (saveFile_init(saveFile_dir) != 0) {
+		printf("save dir init failed: %s\n", saveFile_dir->name);
+		return -1;
+	}
+
+	memset(&marker, 0, sizeof(marker));
+	strncpy(marker.name, saveFile_dir->name, FILE_BROWSER_MAX_PATH_LEN - 16);
+	marker.name[FILE_BROWSER_MAX_PATH_LEN - 16] = '\0';
+	strcat(marker.name, "/dc_host.txt");
+	n = saveFile_writeFile(&marker, (void *)msg, (unsigned int)strlen(msg));
+	if (n < (int)strlen(msg)) {
+		printf("save write failed (%d)\n", n);
+		return -1;
+	}
+	marker.offset = 0;
+	memset(buf, 0, sizeof(buf));
+	n = saveFile_readFile(&marker, buf, sizeof(buf) - 1);
+	printf("save %s (%d bytes): %s", marker.name, n, buf);
+	saveFile_deinit(saveFile_dir);
+	return n > 0 ? 0 : -1;
+}
+
+static int smoke_io(void)
+{
+	BUTTONS keys;
+	int fail = 0;
+
+#ifdef DC_HOST_STUB
+	controller_DC_host_set(0, 1u << 2, 200, 80); /* A + analog */
+#endif
+	memset(&keys, 0, sizeof(keys));
+	getKeys(0, &keys);
+	printf("input0 A=%u X=%d Y=%d\n",
+	       (unsigned)keys.A_BUTTON, (int)keys.X_AXIS, (int)keys.Y_AXIS);
+#ifdef DC_HOST_STUB
+	if (!keys.A_BUTTON) {
+		printf("input smoke: expected A held on host inject\n");
+		fail = 1;
+	}
+#endif
+
+	ai_register.ai_dram_addr = 0;
+	ai_register.ai_len = 64;
+	memset(rdram, 0x5A, 64);
+	aiLenChanged();
+	printf("audio ring buffered %u bytes\n", audio_dc_buffered());
+	if (audio_dc_buffered() < 64) {
+		printf("audio smoke: ring did not accept AI DMA\n");
+		fail = 1;
+	}
+	return fail;
+}
+
+static int check_cputest(void)
+{
+	int fail = 0;
+	unsigned long got;
+
+	if (strcmp(ROM_SETTINGS.goodname, "DC CPUTEST") != 0)
+		return 0;
+
+#define DC_EXPECT_REG(n, v) \
+	do { \
+		got = (unsigned long)(reg[(n)] & 0xffffffffu); \
+		if (got != (unsigned long)(v)) { \
+			printf("CPUTEST r%d=0x%lx want 0x%x\n", (n), got, (v)); \
+			fail = 1; \
+		} \
+	} while (0)
+
+	DC_EXPECT_REG(1, 0x1234);
+	DC_EXPECT_REG(2, 0x00FF);
+	DC_EXPECT_REG(3, 0x1333);
+	DC_EXPECT_REG(4, 0x12CB);
+	DC_EXPECT_REG(5, 0x80000000u);
+	DC_EXPECT_REG(6, 0x1333);
+	DC_EXPECT_REG(7, 0xFF00);
+	DC_EXPECT_REG(9, 0x0030);
+#undef DC_EXPECT_REG
+
+	got = (unsigned long)(rdram[0] & 0xffffffffu);
+	if (got != 0x1333u) {
+		printf("CPUTEST rdram[0]=0x%lx want 0x1333\n", got);
+		fail = 1;
+	}
+	if (interp_addr != 0xa4000064 && interp_addr != 0xa4000068) {
+		printf("CPUTEST interp_addr=0x%08lx (expected IPL BEQ spin)\n",
+		       interp_addr);
+		fail = 1;
+	}
+
+	printf("CPUTEST %s\n", fail ? "FAIL" : "PASS");
+	return fail;
 }
 
 static void gfx_info_init(void)
@@ -233,16 +337,22 @@ static int load_and_step(const char *path, unsigned long steps)
 	printf("Header name: '%s'  country=0x%02x  CIC_Chip=%lu  PC=0x%08x\n",
 	       ROM_SETTINGS.goodname, ROM_HEADER.Country_code, CIC_Chip, ROM_HEADER.PC);
 
+	if (smoke_io())
+		return 1;
+
 	dc_interp_step_limit = steps;
 	go();
 	printf("Interpreter stopped after step limit %lu (interp_addr=0x%08lx stop=%d)\n",
 	       steps, interp_addr, stop);
+	if (check_cputest())
+		return 1;
 	return 0;
 }
 
 int main(int argc, char **argv)
 {
-	const char *rompath = "roms/dc_dummy.z64";
+	const char *rompath = "roms/dc_cputest.z64";
+	int fail = 0;
 
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stderr, NULL, _IONBF, 0);
@@ -254,12 +364,15 @@ int main(int argc, char **argv)
 	print_budget();
 	list_rom_dir();
 	probe_controllers();
+	if (probe_saves())
+		fail = 1;
 
 	if (argc > 1)
 		rompath = argv[1];
 
-	printf("Phase 2: interpreter %lu steps using %s\n", 10000UL, rompath);
-	load_and_step(rompath, 10000);
+	printf("Phase 2/3: interpreter %lu steps using %s\n", 10000UL, rompath);
+	if (load_and_step(rompath, 10000))
+		fail = 1;
 
 #ifndef DC_HOST_STUB
 	{
@@ -268,5 +381,5 @@ int main(int argc, char **argv)
 			thd_sleep(16);
 	}
 #endif
-	return 0;
+	return fail;
 }
