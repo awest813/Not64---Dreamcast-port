@@ -25,7 +25,7 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | Platform types (`platform/dc_types.h`) | Started |
 | Dreamcast memory budget (`platform/dc_memory.h`) | Started (paper map) |
 | `Makefile.dc` (KOS + host stub) | Host `HOST=1` links the interpreter; KOS still needs `KOS_BASE` |
-| Bring-up `main/main_dc.c` | Loads a dummy `.z64` and runs 10000 interpreter steps |
+| Bring-up `main/main_dc.c` | Dummy + CPUTEST, 10000 interpreter steps, host I/O smokes |
 | `fileBrowser-kos` | Started |
 | Maple controller (`controller-DC.c`) | Started |
 | AICA audio stub (`audio-dc.c`) | Started |
@@ -209,6 +209,14 @@ Known interpreter glue (not a full decode-recompiler):
 - Compact `invalid_code` bit table (GameCube-sized), not Wii MEM2
 
 Do not start SH4 dynarec or PVR until more of a real boot (PIF + RSP) works; CPUTEST is the gate that was blocking that.
+
+### Audit notes (host)
+
+- `n64_addr()` / KSEG1 unmapped fetch are **Dreamcast-only**; Wii/GC `fast_mem_access` is unchanged.
+- `r4300/recomp.h` does not include the x86 assembler on `__DREAMCAST__`.
+- ROM cache clips reads/writes to `rom_length`; LRU eviction no longer dereferences a NULL window.
+- Bring-up calls `cpu_deinit` / `TLBCache_deinit` / `ROMCache_deinit` after a run.
+- `make -f Makefile.dc HOST=1 test` is the regression gate.
 
 ---
 

@@ -77,7 +77,7 @@ int fileBrowser_kos_readDir(fileBrowser_file *file, fileBrowser_file **dir)
 		char full[FILE_BROWSER_MAX_PATH_LEN];
 		struct stat st;
 
-		if (strcmp(de->d_name, ".") == 0)
+		if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
 			continue;
 
 		tmp = realloc(out, sizeof(fileBrowser_file) * (count + 1));

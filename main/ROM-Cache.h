@@ -44,7 +44,8 @@ int ROMCache_load(fileBrowser_file* file);
 void* ROMCache_pointer(u32 rom_offset);
 
 /* Byteswapping stuff */
-extern int ROM_byte_swap;
+extern int rom_byte_swap;
+#define ROM_byte_swap rom_byte_swap
 void byte_swap(char* buffer, unsigned int length);
 #define BYTE_SWAP_BAD -1
 #define BYTE_SWAP_NONE 0

@@ -46,3 +46,15 @@ void warn_savestate_from_another_rom(void) {}
 void warn_savestate_not_exist(void) {}
 char *get_currentpath(void) { return "."; }
 char *get_savespath(void) { return "./saves"; }
+
+void keyDown(WPARAM wParam, LPARAM lParam)
+{
+	(void)wParam;
+	(void)lParam;
+}
+
+void keyUp(WPARAM wParam, LPARAM lParam)
+{
+	(void)wParam;
+	(void)lParam;
+}

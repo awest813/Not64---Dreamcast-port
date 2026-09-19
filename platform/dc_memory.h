@@ -5,8 +5,8 @@
  * regions before optional ROM-cache expansion. Those sizes must not be
  * copied here.
  *
- * This header is the paper map for Phase 1–2. Allocations are not yet
- * wired into gc_memory/; do not include this from MEM2.h.
+ * This header is the paper map for Phase 1–3. RDRAM and the ROM window
+ * are live allocations; do not include this from MEM2.h.
  */
 
 #ifndef PLATFORM_DC_MEMORY_H

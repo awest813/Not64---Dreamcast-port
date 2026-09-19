@@ -29,15 +29,22 @@ static void reset_buffer(void)
 
 EXPORT void CALL AiDacrateChanged(int SystemType)
 {
+	unsigned int rate = 1;
+
+	if (AudioInfo.AI_DACRATE_REG)
+		rate = *AudioInfo.AI_DACRATE_REG + 1;
+	if (rate == 0)
+		rate = 1;
+
 	switch (SystemType) {
 	case SYSTEM_NTSC:
-		freq = 48681812 / (*AudioInfo.AI_DACRATE_REG + 1);
+		freq = 48681812 / rate;
 		break;
 	case SYSTEM_PAL:
-		freq = 49656530 / (*AudioInfo.AI_DACRATE_REG + 1);
+		freq = 49656530 / rate;
 		break;
 	case SYSTEM_MPAL:
-		freq = 48628316 / (*AudioInfo.AI_DACRATE_REG + 1);
+		freq = 48628316 / rate;
 		break;
 	default:
 		freq = 33600;

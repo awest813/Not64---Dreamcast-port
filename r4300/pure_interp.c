@@ -3267,6 +3267,10 @@ void pure_interpreter()
    dc_interp_steps = 0;
 #endif
    PC = malloc(sizeof(precomp_instr));
+   if (!PC) {
+      stop = 1;
+      return;
+   }
    last_addr = interp_addr;
    while (!stop)
      {

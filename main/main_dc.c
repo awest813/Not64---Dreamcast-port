@@ -71,9 +71,19 @@ static void list_rom_dir(void)
 		printf("  (create this folder and add .z64/.n64 dumps later)\n");
 		return;
 	}
-	for (i = 0; i < n && i < 16; ++i)
+	for (i = 0; i < n && i < 16; ++i) {
+		const char *base = strrchr(entries[i].name, '/');
+		base = base ? base + 1 : entries[i].name;
+		if (base[0] == '.')
+			continue;
+		{
+			const char *ext = strrchr(base, '.');
+			if (ext && strcmp(ext, ".py") == 0)
+				continue;
+		}
 		printf("  %s%s\n", entries[i].name,
 		       (entries[i].attr & FILE_BROWSER_ATTR_DIR) ? "/" : "");
+	}
 	if (n > 16)
 		printf("  ... %d more\n", n - 16);
 	free(entries);
@@ -125,7 +135,7 @@ static int smoke_io(void)
 	int fail = 0;
 
 #ifdef DC_HOST_STUB
-	controller_DC_host_set(0, 1u << 2, 200, 80); /* A + analog */
+	controller_DC_host_set(0, DC_CONT_A, 200, 80); /* A + analog */
 #endif
 	memset(&keys, 0, sizeof(keys));
 	getKeys(0, &keys);
@@ -295,6 +305,8 @@ static int load_and_step(const char *path, unsigned long steps)
 		fclose(fp);
 	}
 
+	fileBrowser_kos_bind();
+
 	format_mempacks();
 	reset_flashram();
 	init_eeprom();
@@ -303,11 +315,13 @@ static int load_and_step(const char *path, unsigned long steps)
 	ret = rom_read(&romfile);
 	if (ret) {
 		printf("rom_read failed (%d)\n", ret);
+		TLBCache_deinit();
+		ROMCache_deinit();
 		return ret;
 	}
 
 	hasLoadedROM = TRUE;
-	printf("Loaded '%s' (%d bytes) CIC guess after cpu_init\n",
+	printf("Loaded '%s' (%d bytes)\n",
 	       ROM_SETTINGS.goodname, rom_length);
 
 	init_memory();
@@ -337,16 +351,22 @@ static int load_and_step(const char *path, unsigned long steps)
 	printf("Header name: '%s'  country=0x%02x  CIC_Chip=%lu  PC=0x%08x\n",
 	       ROM_SETTINGS.goodname, ROM_HEADER.Country_code, CIC_Chip, ROM_HEADER.PC);
 
-	if (smoke_io())
+	if (smoke_io()) {
+		cpu_deinit();
+		TLBCache_deinit();
+		ROMCache_deinit();
 		return 1;
+	}
 
 	dc_interp_step_limit = steps;
 	go();
 	printf("Interpreter stopped after step limit %lu (interp_addr=0x%08lx stop=%d)\n",
 	       steps, interp_addr, stop);
-	if (check_cputest())
-		return 1;
-	return 0;
+	ret = check_cputest();
+	cpu_deinit();
+	TLBCache_deinit();
+	ROMCache_deinit();
+	return ret;
 }
 
 int main(int argc, char **argv)

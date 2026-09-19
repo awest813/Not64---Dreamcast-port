@@ -1,6 +1,5 @@
 #include "../r4300/r4300.h"
 #include "../r4300/recomp.h"
-#include "../r4300/recomph.h"
 
 int fast_memory;
 
@@ -24,6 +23,9 @@ void prefetch_opcode(unsigned long instr)
 	unsigned int rd = (instr >> 11) & 31;
 	unsigned int sa = (instr >> 6) & 31;
 	short imm = (short)(instr & 0xFFFF);
+
+	if (!PC)
+		return;
 
 	PC->addr = interp_addr;
 

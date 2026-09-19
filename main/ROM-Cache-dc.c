@@ -42,53 +42,90 @@ static void ensure_block(u32 block);
 void ROMCache_init(fileBrowser_file* f){
 	readBefore = 0;
 	ROMFile = f;
-	ROMSize = f->size;
+	ROMSize = f ? f->size : 0;
 	ROMCACHE_BYTES = DC_ROM_STREAM_SIZE;
 	if (!ROMCACHE_LO)
 		ROMCACHE_LO = malloc(ROMCACHE_BYTES);
 	ROMTooBig = ROMSize > ROMCACHE_BYTES;
 	rom_length = (int)ROMSize;
-	romFile_seekFile(f, 0, FILE_BROWSER_SEEK_SET);
+	if (f)
+		romFile_seekFile(f, 0, FILE_BROWSER_SEEK_SET);
 }
 
 void ROMCache_deinit(){
 	free(ROMCACHE_LO);
 	ROMCACHE_LO = NULL;
+	memset(ROMBlocks, 0, sizeof(ROMBlocks));
+	memset(ROMBlocksLRU, 0, sizeof(ROMBlocksLRU));
+	ROMFile = NULL;
+	ROMSize = 0;
+	ROMTooBig = 0;
+	readBefore = 0;
 }
 
 void* ROMCache_pointer(u32 rom_offset){
+	if (!ROMCACHE_LO || ROMSize == 0)
+		return NULL;
+	if (rom_offset >= ROMSize)
+		rom_offset = ROMSize - 1;
 	if(ROMTooBig){
 		u32 block = rom_offset >> BLOCK_SHIFT;
 		u32 block_offset = rom_offset & BLOCK_MASK;
 		ensure_block(block);
+		if (!ROMBlocks[block])
+			return NULL;
 		return ROMBlocks[block] + block_offset;
 	}
 	return ROMCACHE_LO + rom_offset;
 }
 
 static void ROMCache_load_block(char* dst, u32 rom_offset){
-	u32 want = (rom_offset + BLOCK_SIZE > ROMSize) ? (ROMSize-rom_offset) : BLOCK_SIZE;
+	u32 want;
+
+	if (!dst || !ROMFile)
+		return;
+	want = (rom_offset + BLOCK_SIZE > ROMSize) ? (ROMSize-rom_offset) : BLOCK_SIZE;
 	romFile_seekFile(ROMFile, rom_offset, FILE_BROWSER_SEEK_SET);
-	u32 bytes_read = (u32)romFile_readFile(ROMFile, dst, want);
-	byte_swap(dst, bytes_read);
+	{
+		u32 bytes_read = (u32)romFile_readFile(ROMFile, dst, want);
+		byte_swap(dst, bytes_read);
+	}
 }
 
 static void ensure_block(u32 block){
-	if(!ROMBlocks[block]){
-		int i, max_i = 0, max_lru = 0;
+	if(ROMBlocks[block])
+		return;
+	{
+		int i, max_i = -1, max_lru = -1;
 		for(i=0; i<NUM_BLOCKS; ++i) {
 			if(ROMBlocks[i] && ROMBlocksLRU[i] > max_lru) {
 				max_i = i;
 				max_lru = ROMBlocksLRU[i];
 			}
 		}
+		if (max_i < 0 || !ROMBlocks[max_i])
+			return;
 		ROMBlocks[block] = ROMBlocks[max_i];
 		ROMCache_load_block(ROMBlocks[block], block << BLOCK_SHIFT);
 		ROMBlocks[max_i] = 0;
 	}
 }
 
+static u32 clip_rom_len(u32 offset, u32 length)
+{
+	if (offset >= ROMSize)
+		return 0;
+	if (offset + length > ROMSize)
+		return ROMSize - offset;
+	return length;
+}
+
 void ROMCache_read(u8* dest, u32 offset, u32 length){
+	if (!dest || !ROMCACHE_LO)
+		return;
+	length = clip_rom_len(offset, length);
+	if (!length)
+		return;
 	if(ROMTooBig){
 		u32 block = offset>>BLOCK_SHIFT;
 		u32 length2 = length;
@@ -106,6 +143,8 @@ void ROMCache_read(u8* dest, u32 offset, u32 length){
 					++ROMBlocksLRU[i];
 			}
 			ROMBlocksLRU[block] = 0;
+			if (!ROMBlocks[block])
+				return;
 			memcpy(dest, ROMBlocks[block] + offset2, length);
 			++block; length2 -= length; offset2 = 0; dest += length; offset += length;
 		}
@@ -115,6 +154,11 @@ void ROMCache_read(u8* dest, u32 offset, u32 length){
 }
 
 void ROMCache_write(u8* src, u32 offset, u32 length){
+	if (!src || !ROMCACHE_LO)
+		return;
+	length = clip_rom_len(offset, length);
+	if (!length)
+		return;
 	if(ROMTooBig){
 		u32 block = offset>>BLOCK_SHIFT;
 		u32 length2 = length;
@@ -155,7 +199,7 @@ int ROMCache_load(fileBrowser_file* f){
 	while(offset < sizeToLoad){
 		u32 chunk = (offset + BLOCK_SIZE > ROMSize) ? (ROMSize-offset) : BLOCK_SIZE;
 		bytes_read = romFile_readFile(ROMFile, ROMCACHE_LO + offset, chunk);
-		if(bytes_read < 0)
+		if(bytes_read <= 0)
 			return -1;
 		if(!readBefore) {
 			unsigned char *p = (unsigned char *)ROMCACHE_LO;

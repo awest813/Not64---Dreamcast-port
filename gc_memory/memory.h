@@ -42,9 +42,13 @@ void free_memory();
 enum { MEM_READ_WORD,  MEM_READ_BYTE,  MEM_READ_HALF,  MEM_READ_LONG,
        MEM_WRITE_WORD, MEM_WRITE_BYTE, MEM_WRITE_HALF, MEM_WRITE_LONG };
 
+#ifdef __DREAMCAST__
 /* N64 addresses are 32-bit. Truncate before indexing the 64k-page table so a
  * 64-bit host does not sign-extend 0x80000000 into rwmem[0xffffffff8000]. */
 #define n64_addr(a) ((unsigned int)(a))
+#else
+#define n64_addr(a) (a)
+#endif
 
 #define read_word_in_memory()   rwmem[n64_addr(address)>>16][MEM_READ_WORD]()
 #define read_byte_in_memory()   rwmem[n64_addr(address)>>16][MEM_READ_BYTE]()

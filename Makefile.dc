@@ -93,7 +93,8 @@ gc_input/input.o: gc_input/input.c
 %.o: %.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
-r4300/pure_interp.o: gc_memory/memory.h
+r4300/pure_interp.o gc_memory/memory.o: gc_memory/memory.h
+r4300/r4300.o platform/dc_recomp_stubs.o: r4300/recomp.h
 
 run: $(TARGET) $(ROMS)
 	./$(TARGET)
@@ -124,6 +125,9 @@ $(TARGET): $(OBJS)
 	$(KOS_CC) $(KOS_CFLAGS) $(KOS_LDFLAGS) -o $@ $(KOS_START) $(OBJS) $(OBJEXTRA) $(KOS_LIBS) -lm
 
 gc_input/input.o: gc_input/input.c
+	$(KOS_CC) $(KOS_CFLAGS) -c -o $@ $<
+
+%.o: %.c
 	$(KOS_CC) $(KOS_CFLAGS) -c -o $@ $<
 
 clean:
