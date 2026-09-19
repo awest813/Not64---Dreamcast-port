@@ -109,8 +109,14 @@ extern virtualControllers_t virtualControllers[4];
 #define num_controller_t 1
 extern controller_t controller_DC;
 #ifdef DC_HOST_STUB
-#define DC_CONT_A (1u << 2)
+#define DC_CONT_A          (1u << 2)
+#define DC_CONT_DPAD_UP    (1u << 4)
+#define DC_CONT_DPAD_DOWN  (1u << 5)
+#define DC_CONT_DPAD_LEFT  (1u << 6)
+#define DC_CONT_DPAD_RIGHT (1u << 7)
+#define DC_CONT_Y          (1u << 9)
 void controller_DC_host_set(int Control, unsigned int buttons, int jx, int jy);
+void controller_DC_host_set_triggers(int Control, int ltrig, int rtrig);
 #endif
 extern controller_t* controller_ts[num_controller_t];
 

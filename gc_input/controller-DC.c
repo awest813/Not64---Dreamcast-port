@@ -14,6 +14,28 @@ enum {
 	DPAD_AS_ANALOG = 2,
 };
 
+/*
+ * A retail Dreamcast pad has no C, Z or D buttons and no second D-pad, so the
+ * N64's Z, L, R and four C-buttons have nowhere to sit. The two analog
+ * triggers and two shift gestures cover them:
+ *
+ *   left trigger              -> N64 Z
+ *   right trigger             -> N64 R
+ *   Y + left trigger          -> N64 L
+ *   both triggers + D-pad     -> N64 C-buttons
+ *
+ * The triggers are analog, so they are folded into the Maple button word as
+ * virtual bits and mapped through the ordinary button_t table. Bits 24+ are
+ * well clear of every CONT_* KallistiOS defines (highest is bit 15).
+ */
+#define DC_VB_LTRIG     (1u << 24)  /* left trigger, unshifted  -> Z  */
+#define DC_VB_RTRIG     (1u << 25)  /* right trigger            -> R  */
+#define DC_VB_LTRIG_ALT (1u << 26)  /* left trigger while Y held -> L */
+
+/* Maple triggers report 0-255. Past roughly a fifth of travel counts as a
+ * press, which keeps a resting finger from latching a shift. */
+#define DC_TRIG_THRESHOLD 48
+
 #ifdef DC_HOST_STUB
 #define CONT_C          (1u << 0)
 #define CONT_B          (1u << 1)
@@ -51,6 +73,9 @@ static button_t buttons[] = {
 	{ 14, CONT_DPAD2_LEFT, "C-Left" },
 	{ 15, CONT_DPAD2_RIGHT,"C-Right" },
 	{ 16, CONT_DPAD2_DOWN, "C-Down" },
+	{ 17, DC_VB_LTRIG,     "L-Trigger" },
+	{ 18, DC_VB_RTRIG,     "R-Trigger" },
+	{ 19, DC_VB_LTRIG_ALT, "Y+L-Trigger" },
 };
 
 static button_t analog_sources[] = {
@@ -70,6 +95,8 @@ static int last_joyy[4];
 static unsigned int host_buttons[4];
 static int host_joyx[4] = {128, 128, 128, 128};
 static int host_joyy[4] = {128, 128, 128, 128};
+static int host_ltrig[4];
+static int host_rtrig[4];
 
 void controller_DC_host_set(int Control, unsigned int buttons, int jx, int jy)
 {
@@ -79,14 +106,25 @@ void controller_DC_host_set(int Control, unsigned int buttons, int jx, int jy)
 	host_joyx[Control] = jx;
 	host_joyy[Control] = jy;
 }
+
+void controller_DC_host_set_triggers(int Control, int ltrig, int rtrig)
+{
+	if (Control < 0 || Control > 3)
+		return;
+	host_ltrig[Control] = ltrig;
+	host_rtrig[Control] = rtrig;
+}
 #endif
 
-static int poll_pad(int Control, unsigned int *buttons_out, int *jx, int *jy)
+static int poll_pad(int Control, unsigned int *buttons_out, int *jx, int *jy,
+		    int *ltrig, int *rtrig)
 {
 #ifdef DC_HOST_STUB
 	*buttons_out = host_buttons[Control];
 	*jx = host_joyx[Control];
 	*jy = host_joyy[Control];
+	*ltrig = host_ltrig[Control];
+	*rtrig = host_rtrig[Control];
 	return 1;
 #else
 	maple_device_t *dev;
@@ -101,20 +139,59 @@ static int poll_pad(int Control, unsigned int *buttons_out, int *jx, int *jy)
 	*buttons_out = (unsigned int)st->buttons;
 	*jx = st->joyx;
 	*jy = st->joyy;
+	*ltrig = st->ltrig;
+	*rtrig = st->rtrig;
 	return 1;
 #endif
+}
+
+#define DC_DPAD_MASK \
+	(CONT_DPAD_UP | CONT_DPAD_DOWN | CONT_DPAD_LEFT | CONT_DPAD_RIGHT)
+
+/*
+ * Fold the analog triggers into the button word and apply the two shifts.
+ * Everything downstream then works through the ordinary button_t masks.
+ */
+static unsigned int dc_virtual_buttons(unsigned int b, int ltrig, int rtrig)
+{
+	int lheld = ltrig >= DC_TRIG_THRESHOLD;
+	int rheld = rtrig >= DC_TRIG_THRESHOLD;
+
+	if (lheld && rheld) {
+		/* Both triggers: the D-pad becomes the C-buttons. The triggers'
+		 * own bindings are withheld for the duration, so reaching for a
+		 * C-button does not also mash Z and R. */
+		if (b & CONT_DPAD_UP)
+			b |= CONT_DPAD2_UP;
+		if (b & CONT_DPAD_DOWN)
+			b |= CONT_DPAD2_DOWN;
+		if (b & CONT_DPAD_LEFT)
+			b |= CONT_DPAD2_LEFT;
+		if (b & CONT_DPAD_RIGHT)
+			b |= CONT_DPAD2_RIGHT;
+		return b & ~DC_DPAD_MASK;
+	}
+
+	if (lheld)
+		b |= (b & CONT_Y) ? DC_VB_LTRIG_ALT : DC_VB_LTRIG;
+	if (rheld)
+		b |= DC_VB_RTRIG;
+	return b;
 }
 
 static int _GetKeys(int Control, BUTTONS *Keys, controller_config_t *config)
 {
 	BUTTONS *c = Keys;
 	unsigned int b;
-	int jx, jy;
+	int jx, jy, ltrig = 0, rtrig = 0;
 
 	memset(c, 0, sizeof(BUTTONS));
-	if (!poll_pad(Control, &b, &jx, &jy))
+	if (!poll_pad(Control, &b, &jx, &jy, &ltrig, &rtrig))
 		return 0;
 
+	b = dc_virtual_buttons(b, ltrig, rtrig);
+
+	/* Post-shift, so callers see what the mapping actually saw. */
 	last_buttons[Control] = b;
 	last_joyx[Control] = jx;
 	last_joyy[Control] = jy;
@@ -212,12 +289,13 @@ controller_t controller_DC = {
 		.DL       = &buttons[2],
 		.DR       = &buttons[3],
 		.DD       = &buttons[4],
-		.Z        = &buttons[11],
-		.L        = &buttons[10],
-		.R        = &buttons[12],
+		.Z        = &buttons[17],   /* left trigger              */
+		.L        = &buttons[19],   /* Y + left trigger          */
+		.R        = &buttons[18],   /* right trigger             */
 		.A        = &buttons[5],
 		.B        = &buttons[6],
 		.START    = &buttons[9],
+		/* Reached by holding both triggers; see dc_virtual_buttons(). */
 		.CU       = &buttons[13],
 		.CL       = &buttons[14],
 		.CR       = &buttons[15],

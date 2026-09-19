@@ -166,6 +166,73 @@ static int smoke_io(void)
 	return fail;
 }
 
+#ifdef DC_HOST_STUB
+/*
+ * The Dreamcast pad cannot reach N64 Z, L, R or the C-buttons directly, so
+ * controller-DC.c shifts them onto the analog triggers. Exercise every branch:
+ * a mis-shift is silent in-game but obvious here.
+ */
+struct dc_map_case {
+	const char *what;
+	unsigned int buttons;
+	int ltrig, rtrig;
+	unsigned int want_z, want_l, want_r;
+	unsigned int want_cu, want_cd, want_cl, want_cr;
+	unsigned int want_du;
+};
+
+static const struct dc_map_case dc_map_cases[] = {
+	/*                        btns                 lt  rt   Z  L  R  CU CD CL CR DU */
+	{ "idle",                 0,                    0,  0,  0, 0, 0,  0, 0, 0, 0, 0 },
+	{ "L-trigger -> Z",       0,                  200,  0,  1, 0, 0,  0, 0, 0, 0, 0 },
+	{ "R-trigger -> R",       0,                    0,200,  0, 0, 1,  0, 0, 0, 0, 0 },
+	{ "Y+L-trigger -> L",     DC_CONT_Y,          200,  0,  0, 1, 0,  0, 0, 0, 0, 0 },
+	{ "D-pad unshifted",      DC_CONT_DPAD_UP,      0,  0,  0, 0, 0,  0, 0, 0, 0, 1 },
+	{ "both+Up -> C-Up",      DC_CONT_DPAD_UP,    200,200,  0, 0, 0,  1, 0, 0, 0, 0 },
+	{ "both+Down -> C-Down",  DC_CONT_DPAD_DOWN,  200,200,  0, 0, 0,  0, 1, 0, 0, 0 },
+	{ "both+Left -> C-Left",  DC_CONT_DPAD_LEFT,  200,200,  0, 0, 0,  0, 0, 1, 0, 0 },
+	{ "both+Right -> C-Right",DC_CONT_DPAD_RIGHT, 200,200,  0, 0, 0,  0, 0, 0, 1, 0 },
+	/* A resting finger must not latch a shift. */
+	{ "below threshold",      0,                   20, 20,  0, 0, 0,  0, 0, 0, 0, 0 },
+};
+
+static int smoke_map(void)
+{
+	unsigned int i;
+	int fail = 0;
+
+	for (i = 0; i < sizeof(dc_map_cases) / sizeof(dc_map_cases[0]); ++i) {
+		const struct dc_map_case *t = &dc_map_cases[i];
+		BUTTONS k;
+
+		controller_DC_host_set(0, t->buttons, 128, 128);
+		controller_DC_host_set_triggers(0, t->ltrig, t->rtrig);
+		memset(&k, 0, sizeof(k));
+		getKeys(0, &k);
+
+		if (k.Z_TRIG != t->want_z || k.L_TRIG != t->want_l ||
+		    k.R_TRIG != t->want_r ||
+		    k.U_CBUTTON != t->want_cu || k.D_CBUTTON != t->want_cd ||
+		    k.L_CBUTTON != t->want_cl || k.R_CBUTTON != t->want_cr ||
+		    k.U_DPAD != t->want_du) {
+			printf("map smoke: %s -> Z=%u L=%u R=%u C(u%u d%u l%u r%u) DU=%u\n",
+			       t->what, (unsigned)k.Z_TRIG, (unsigned)k.L_TRIG,
+			       (unsigned)k.R_TRIG, (unsigned)k.U_CBUTTON,
+			       (unsigned)k.D_CBUTTON, (unsigned)k.L_CBUTTON,
+			       (unsigned)k.R_CBUTTON, (unsigned)k.U_DPAD);
+			fail = 1;
+		}
+	}
+
+	/* Leave pad 0 as the other smokes expect to find it. */
+	controller_DC_host_set_triggers(0, 0, 0);
+	controller_DC_host_set(0, DC_CONT_A, 200, 80);
+	printf("map smoke %s (%u cases)\n", fail ? "FAIL" : "PASS",
+	       (unsigned)(sizeof(dc_map_cases) / sizeof(dc_map_cases[0])));
+	return fail;
+}
+#endif /* DC_HOST_STUB */
+
 static int smoke_pif(void)
 {
 	int fail = 0;
@@ -459,6 +526,14 @@ static int load_and_step(const char *path, unsigned long steps)
 	printf("Header name: '%s'  country=0x%02x  CIC_Chip=%lu  PC=0x%08x\n",
 	       ROM_SETTINGS.goodname, ROM_HEADER.Country_code, CIC_Chip, ROM_HEADER.PC);
 
+#ifdef DC_HOST_STUB
+	if (smoke_map()) {
+		cpu_deinit();
+		TLBCache_deinit();
+		ROMCache_deinit();
+		return 1;
+	}
+#endif
 	if (smoke_io() || smoke_pif()) {
 		cpu_deinit();
 		TLBCache_deinit();
