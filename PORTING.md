@@ -1,6 +1,7 @@
 # Not64 Dreamcast Port — Audit and Plan
 
 **Status:** Phase 2–3 host: interpreter CPUTEST PASS, Maple/AI/save smokes. No KallistiOS ELF yet.  
+**Handoff for the next agent:** `AGENT_HANDOFF.md`  
 **Repo:** `Not64---Dreamcast-port` (GitHub name is aspirational; the tree is Wii/GC Not64).  
 **License:** GPL v2
 
@@ -264,6 +265,7 @@ Requires `KOS_BASE`. Load with dcload, or convert to `.cdi` later.
 
 | Purpose | Path |
 |---------|------|
+| Next-agent handoff | `AGENT_HANDOFF.md` |
 | This plan | `PORTING.md` |
 | DC types | `platform/dc_types.h` |
 | DC memory map | `platform/dc_memory.h` |
