@@ -102,6 +102,8 @@ int dc_menu_list_load(dc_menu_list *list, fileBrowser_file *dir)
 
 	list->items = NULL;
 	list->count = 0;
+	list->dir[0] = '\0';
+	strncpy(list->dir, dir->name, sizeof(list->dir) - 1);
 
 	if (romFile_init)
 		romFile_init(dir);
@@ -316,7 +318,11 @@ void dc_menu_draw(const dc_menu_state *st, const char *title)
 
 	if (!st->list || st->list->count == 0) {
 		dc_draw_text(cw, ch * 2, COL_TEXT, "No ROMs found.");
-		dc_draw_text(cw, ch * 3, COL_HINT, "Put .z64/.n64/.v64 files in the roms folder.");
+		snprintf(line, sizeof(line), "Put .z64/.n64/.v64 files in %s",
+			 (st->list && st->list->dir[0]) ? st->list->dir : "the ROM folder");
+		dc_draw_text(cw, ch * 3, COL_HINT, line);
+		/* Still say how to leave: B is the only thing that works here. */
+		dc_draw_text(cw, dc_draw_height() - ch, COL_HINT, "B exit");
 		dc_draw_end();
 		return;
 	}
@@ -360,6 +366,7 @@ int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out)
 	dc_menu_list  list;
 	dc_menu_state st;
 	int found, rows, result = 0;
+	int frames = 0;
 
 	if (!out)
 		return FILE_BROWSER_ERROR;
@@ -373,18 +380,12 @@ int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out)
 		return FILE_BROWSER_ERROR;
 	}
 
+	(void)frames;	/* only the host stub counts them */
+
 	/* Two rows of chrome at the top, one hint row at the bottom. */
 	rows = dc_draw_height() / dc_draw_char_h() - 3;
 	dc_menu_state_init(&st, &list, rows);
 
-#ifdef DC_HOST_STUB
-	/* The host stub has no pad: only controller_DC_host_set() can move this
-	 * loop, and dc_draw_end() does not wait for a vblank. Cap the spin so an
-	 * un-driven `--menu` reports instead of hanging a terminal. Hardware
-	 * blocks on vblank and waits for the player, as it should. */
-	{
-	int frames = 0;
-#endif
 	for (;;) {
 		BUTTONS keys;
 		dc_menu_action act;
@@ -405,7 +406,9 @@ int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out)
 			break;
 		}
 #ifdef DC_HOST_STUB
-		if (++frames > 3600) {
+		/* Hardware blocks on vblank and waits for the player, as it
+		 * should; the host stub has nothing to wait for. */
+		if (++frames > DC_MENU_HOST_FRAME_CAP) {
 			printf("menu: no host input after %d frames, cancelling\n",
 			       frames);
 			result = 0;
@@ -413,9 +416,6 @@ int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out)
 		}
 #endif
 	}
-#ifdef DC_HOST_STUB
-	}
-#endif
 
 	/* Phase 8 constraint: the menu frees everything before go() runs. */
 	dc_draw_shutdown();

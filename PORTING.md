@@ -31,7 +31,7 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | Maple controller (`controller-DC.c`) | Started |
 | AICA audio stub (`audio-dc.c`) | Started |
 | Interpreter-only core link | **Host verified** (`CPUTEST PASS`) |
-| ROM stream (`main/ROM-Cache-dc.c`) | 1 MiB window; z64 words swapped to LE; O(1) LRU, covered by `smoke_romcache()` |
+| ROM stream (`main/ROM-Cache-dc.c`) | 1 MiB window; z64 words swapped to LE; O(1) LRU, covered by `smoke_romcache()` (host stub only — the sweep reads the whole cart) |
 | Host I/O smoke | Save file, injected Maple A, AI ring DMA, PIF joybus read/write |
 | ROM header decode on DC | Fixed — `dc_fix_header_byte_order()` un-swaps Name/Cartridge_ID/Country_code; asserted by CPUTEST |
 | Maple → N64 button map | Done — triggers carry Z/R, `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons |

@@ -39,9 +39,6 @@ typedef void *gzFile;
 // the lookup that saved is on the path of every TLB-mapped load and store.
 #define TLB_NUM_SLOTS 1024
 
-// The amount of bits required to represent a page number.
-#define TLB_BITS_PER_PAGE_NUM 20
-
 typedef struct node {
 	unsigned int value;
 	unsigned int page;

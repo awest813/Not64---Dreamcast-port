@@ -31,7 +31,11 @@ static char* ROMBlocks[NUM_BLOCKS];
  * ROMCache_read/write bumped for all NUM_BLOCKS entries on every call, so a
  * four-byte cart read wrote 4 KiB of ages. A monotonic clock makes marking a
  * block O(1); only the eviction scan still walks the array, and that happens
- * on a miss, next to a 64 KiB read off the card. */
+ * on a miss, next to a 64 KiB read off the card.
+ *
+ * 64-bit because it ticks once per block access and must never wrap: a 32-bit
+ * counter would, and a wrapped timestamp reads as the oldest block in the
+ * window, so the cache would evict whatever it just paged in. */
 static u64   ROMBlocksLRU[NUM_BLOCKS];
 static u64   ROMBlocksClock;
 static fileBrowser_file* ROMFile;
@@ -64,6 +68,10 @@ void ROMCache_init(fileBrowser_file* f){
 }
 
 void ROMCache_deinit(){
+	/* readFile holds its handle open now, so somebody has to let go of it.
+	 * Every teardown path in main_dc.c comes through here. */
+	if (ROMFile && romFile_deinit)
+		romFile_deinit(ROMFile);
 	free(ROMCACHE_LO);
 	ROMCACHE_LO = NULL;
 	memset(ROMBlocks, 0, sizeof(ROMBlocks));

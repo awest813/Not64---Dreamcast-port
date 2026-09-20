@@ -211,6 +211,14 @@ int fileBrowser_kos_readFile(fileBrowser_file *file, void *buffer, unsigned int 
 	n = fread(buffer, 1, length, fp);
 	open_pos += (unsigned int)n;
 	file->offset += (unsigned int)n;
+
+	/* A short read at the end of the file is normal. A short read with the
+	 * error flag set is not, and the flag is sticky -- the old open-per-call
+	 * code healed from a transient card error simply by opening again, so
+	 * drop the handle and let the next call do that. */
+	if (n < length && ferror(fp))
+		kos_cache_close();
+
 	return (int)n;
 }
 

@@ -36,8 +36,10 @@
      HEAP:
      	TLB hash nodes: one per *mapped* page, recycled through a free list.
      	Storing 0 unlinks the node instead of leaving a tombstone behind,
-     	so the heap tracks the live mapping rather than growing to
-     	O( 2^20 ) nodes over a session.
+     	so the heap tracks the live mapping rather than accumulating one
+     	node per page ever touched. A node is 12 bytes on SH4, and the page
+     	number is 20 bits, so that worst case was 12 MiB per table and 24
+     	MiB across both -- against 16 MiB of Dreamcast main RAM.
  */
 
 #include <stdlib.h>

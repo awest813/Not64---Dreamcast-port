@@ -32,6 +32,9 @@ typedef struct {
 typedef struct {
 	dc_menu_entry *items;
 	int            count;
+	/* Where the entries came from. Worth showing: when the list is empty,
+	 * the path is the one thing the player needs to know. */
+	char           dir[FILE_BROWSER_MAX_PATH_LEN];
 } dc_menu_list;
 
 /* What one polled frame of input decided. */
@@ -62,6 +65,11 @@ typedef struct {
 /* Analog deflection, out of the N64 range (+/-80), that counts as a push. */
 #define DC_MENU_STICK_ON  40
 #define DC_MENU_STICK_OFF 20
+
+/* Host stub only: nothing but controller_DC_host_set() can drive the browser
+ * there and dc_draw_end() does not wait for a vblank, so an un-driven menu
+ * would spin. Give up after this many iterations and report instead. */
+#define DC_MENU_HOST_FRAME_CAP 3600
 
 /* Reads dir, keeps .z64/.n64/.v64, sorts by name. Returns the entry count,
  * 0 for an empty directory, or a negative fileBrowser error. */

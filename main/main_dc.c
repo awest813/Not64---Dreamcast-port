@@ -344,7 +344,9 @@ static int smoke_tlbcache(void)
 		}
 	}
 	if (TLBCache_longest_chain() != 0) {
-		printf("tlb cache smoke: %u tombstones left after clear\n",
+		/* longest_chain is a bucket depth, not a total: one tombstone per
+		 * bucket still reports 1, which is the point -- it should be 0. */
+		printf("tlb cache smoke: cleared table still has a chain of %u\n",
 		       TLBCache_longest_chain());
 		fail = 1;
 	}
@@ -377,7 +379,12 @@ static int smoke_tlbcache(void)
 /* The ROM cache pages 64 KiB blocks in and out of a 1 MiB window for the whole
  * run, so its eviction has to hand back the right bytes and has to keep the
  * blocks the game is actually using. Only a ROM bigger than the window
- * exercises it; the 4 KiB bring-up images do not. */
+ * exercises it; the 4 KiB bring-up images do not.
+ *
+ * Host stub only, deliberately. The sweep below reads the whole cart, which
+ * costs nothing from a host filesystem and would mean pulling 32 MiB off the
+ * card before every single boot on hardware. */
+#ifdef DC_HOST_STUB
 static int smoke_romcache(void)
 {
 	enum { BLOCK = 64 * 1024, PROBE = 32 };
@@ -448,6 +455,7 @@ static int smoke_romcache(void)
 	       fileBrowser_kos_open_count());
 	return fail;
 }
+#endif /* DC_HOST_STUB */
 
 #ifdef DC_HOST_STUB
 /* ---- menu (Phase 8a) ----------------------------------------------------
@@ -503,6 +511,7 @@ static int smoke_menu(void)
 		snprintf(items[i].path, sizeof(items[i].path), "./roms/rom%02d.z64", i);
 		items[i].size = (unsigned int)(i + 1) * 1024u * 1024u;
 	}
+	memset(&synth, 0, sizeof(synth));
 	synth.items = items;
 	synth.count = 20;
 	dc_menu_state_init(&st, &synth, 5);
@@ -594,8 +603,7 @@ static int smoke_menu(void)
 	/* An empty list must not pick anything or move. */
 	{
 		dc_menu_list empty;
-		empty.items = NULL;
-		empty.count = 0;
+		memset(&empty, 0, sizeof(empty));
 		dc_menu_state_init(&st, &empty, 5);
 		if (menu_frame(&st, 0, 0, 1, 0, 0, 0, 0) != DC_MENU_NONE) {
 			printf("menu smoke: empty list picked\n");
@@ -1086,7 +1094,11 @@ static int load_and_step(const char *path, unsigned long steps)
 		return 1;
 	}
 #endif
-	if (smoke_tlbcache() || smoke_romcache() || smoke_io() || smoke_pif()) {
+	if (smoke_tlbcache() ||
+#ifdef DC_HOST_STUB
+	    smoke_romcache() ||
+#endif
+	    smoke_io() || smoke_pif()) {
 		cpu_deinit();
 		TLBCache_deinit();
 		ROMCache_deinit();

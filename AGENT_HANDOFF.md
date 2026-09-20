@@ -24,9 +24,14 @@ Must print **`CPUTEST PASS`** and, per process, **`map smoke PASS`**,
 **`menu smoke PASS`**, **`tlb cache smoke PASS`** and **`pif smoke PASS`**,
 then exit 0. Second process is `roms/dc_dummy.z64` (IPL spin at `0xa4000040`).
 
-`rom cache smoke` reports **SKIP** on the 4 KiB bring-up images — it needs a
-ROM larger than the 1 MiB stream window. Drop a real dump in `./roms` to run
-it for real; it then reports the sweep, the page-ins and the file opens.
+`rom cache smoke` is **host stub only**, and reports **SKIP** on the 4 KiB
+bring-up images — it needs a ROM larger than the 1 MiB stream window. Drop a
+real dump in `./roms` to run it for real; it then reports the sweep, the
+page-ins and the file opens. It stays off the KOS build on purpose: the sweep
+reads the whole cart, which is free from a host filesystem and would mean
+pulling 32 MiB off the card before every boot on hardware. `smoke_tlbcache()`
+does run on KOS — it is a few thousand operations, and it is worth checking
+the structure where `unsigned long` is 32-bit.
 
 ```sh
 make -f Makefile.dc HOST=1
@@ -86,7 +91,7 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
     - `TLB-Cache-hash.c` hashed the page by its **top** bits, so 16,384 consecutive pages shared a bucket; storing 0 left a tombstone node forever (heap heading for ~16 MB). Now keyed on mixed low bits over 1024 slots, stores of 0 unlink, re-maps update in place, freed nodes recycle. Lookup 260.2 ns -> 1.5 ns, full re-map 633.3 us -> 2.65 us, both versions returning an identical checksum over 20M lookups.
     - `ROMCache_read`/`_write` bumped an age counter for all 1024 blocks **per call** — 4 KiB of writes for a four-byte cart read. Now an O(1) monotonic clock.
     - `fileBrowser_kos_readFile` did `fopen`/`fseek`/`fclose` per call, one per 64 KiB page-in. Read handle now held open: sweeping a 32 MiB ROM went 514 opens -> 2 for the same 496 page-ins. Writes still open and close, so saves are unchanged.
-    `smoke_tlbcache()` and `smoke_romcache()` cover both; each was verified to fail when the behaviour is reverted.
+    `smoke_tlbcache()` (host and KOS) and `smoke_romcache()` (host only — see above) cover both; each was verified to fail when the behaviour is reverted. Note `ROMCache_deinit()` now closes the cached handle: holding it open across calls means something has to let go of it.
 12. **Phase 8a ROM browser** — `platform/dc_menu/`. Lists the ROM dir, pad picks, boots. Optional and never load-bearing: `skipMenu` is 1 on the host, an explicit ROM argument forces it, and `make ... test` never enters it. `smoke_menu()` covers the filter, sort, edge detection, auto-repeat, wrap, scroll window, paging, pick/cancel, empty list and `dc_menu_run()` end to end. `./not64-dc-bringup --menu` prints the screen it drew. See Phase 8 in `PORTING.md`.
 
 ---
