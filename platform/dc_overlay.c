@@ -5,9 +5,9 @@
  * mupen64plus: CurrentStateSlot 0–9, pause from the front-end.
  * Flycast: Start opens a small in-game menu over the current frame.
  *
- * Savestate files are not written yet; Save/Load stay on this screen with
- * an honest status line. Reset and Return-to-menu stop the interpreter so
- * main() can reload or show the ROM browser.
+ * Save/Load write and restore `saves/not64.stN` (Phase 8d). Reset and
+ * Return-to-menu stop the interpreter so main() can reload or show the
+ * ROM browser.
  */
 
 #include "dc_overlay.h"
@@ -112,9 +112,13 @@ int dc_overlay_step(const BUTTONS *keys)
 		case OV_SAVE:
 			savestates_job = SAVESTATE;
 			savestates_save();
-			snprintf(status, sizeof(status),
-				 "Save slot %u: not implemented (no CPU dump yet)",
-				 savestates_get_slot());
+			if (savestates_ok())
+				snprintf(status, sizeof(status),
+					 "Slot %u saved", savestates_get_slot());
+			else
+				snprintf(status, sizeof(status),
+					 "Save slot %u failed",
+					 savestates_get_slot());
 			dc_log(DC_LOG_INFO, "%s", status);
 			break;
 		case OV_LOAD:
@@ -125,9 +129,14 @@ int dc_overlay_step(const BUTTONS *keys)
 			else {
 				savestates_job = LOADSTATE;
 				savestates_load();
-				snprintf(status, sizeof(status),
-					 "Load slot %u: not implemented (no CPU dump yet)",
-					 savestates_get_slot());
+				if (savestates_ok())
+					snprintf(status, sizeof(status),
+						 "Slot %u restored",
+						 savestates_get_slot());
+				else
+					snprintf(status, sizeof(status),
+						 "Load slot %u failed",
+						 savestates_get_slot());
 			}
 			dc_log(DC_LOG_INFO, "%s", status);
 			break;
@@ -243,14 +252,20 @@ int dc_overlay_selftest(void)
 	dc_overlay_step(&k);
 	k.A_BUTTON = 1;
 	dc_overlay_step(&k);
-	if (!strstr(status, "not implemented")) {
-		printf("overlay FAIL: save should stay on overlay (%s)\n", status);
+	if (!strstr(status, "saved") || strstr(status, "failed")) {
+		printf("overlay FAIL: save status '%s'\n", status);
 		fails++;
 	}
 	if (stop) {
 		printf("overlay FAIL: save must not stop the interpreter\n");
 		fails++;
 	}
+	if (!savestates_exists(SAVESTATE)) {
+		printf("overlay FAIL: save did not create %s\n",
+		       savestates_filename());
+		fails++;
+	}
+	remove(savestates_filename());
 	dc_overlay_enter();
 	memset(&k, 0, sizeof(k));
 	k.A_BUTTON = 1;

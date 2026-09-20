@@ -30,6 +30,7 @@
 #include "../platform/dc_menu/dc_draw.h"
 #include "../platform/dc_settings.h"
 #include "../platform/dc_overlay.h"
+#include "../main/savestates.h"
 #include "../gc_memory/pif.h"
 #include "../gc_memory/flashram.h"
 
@@ -691,6 +692,8 @@ static int smoke_menu(void)
 	}
 
 	if (dc_settings_selftest())
+		fail = 1;
+	if (savestates_selftest())
 		fail = 1;
 	if (dc_overlay_selftest())
 		fail = 1;

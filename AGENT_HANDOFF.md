@@ -318,13 +318,12 @@ held during C-presses.
    Full evidence in **Phase 3.5 of `PORTING.md`**. Read the byte-view landmine
    before dumping any N64 memory to check this.
 
-4. ~~**Menu step 8a**~~ — **done** (item 12 above). `platform/dc_menu/` lists
-   the ROM dir and boots the pick, tested on the host stub. Two things remain:
-   `dc_draw_kos.c` has never been compiled, so expect to fix the `bfont` call
-   on the first KOS build; and **8b** pause overlay is in `platform/dc_overlay.c`
-   (Start+A+B). Savestate CPU dumps are still stubs (`saves/not64.stN`).
-   INI / controls legend live in `platform/dc_settings.c`. Y opens Settings and X
-   opens Controls from the ROM browser (unshifted Maple). skipMenu stays file-only.
+4. ~~**Menu step 8a–8d**~~ — **done**. `platform/dc_menu/` lists the ROM dir;
+   Y/X open Settings/Controls; Start+A+B is the pause overlay; savestates write
+   `saves/not64.stN` (`NOT64ST` little-endian via `rdramb`). `dc_draw_kos.c` has
+   never been compiled (fix `bfont` on the first KOS build). skipMenu is
+   file-only. EEPROM/SRAM native files are still separate; VMU layout is a
+   human call.
 
 5. **Software first frame** (Phase 4) — only after a ROM actually hits RDP/VI. Start from `mupen64_soft_gfx/` (27 files, least GX coupling — 4 files touch `GX_*`), not `glN64_GX/` (73 files, 41 touching `GX_*`). Hardware PVR presentation is in `platform/dc_pvr.c` when `VIDEO=pvr`.
 6. **SH4 dynarec** — last. New `r4300/sh4/`. PPC JIT is not a template you search-replace.

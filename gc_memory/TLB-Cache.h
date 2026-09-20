@@ -27,8 +27,9 @@
 #ifdef USE_TLB_CACHE
 
 #ifdef __DREAMCAST__
-/* Savestate dump helpers are unused on the DC bring-up. */
+/* gzFile dump helpers stay as no-ops; FILE dumps are used by dc_savestates.c. */
 typedef void *gzFile;
+#include <stdio.h>
 #else
 #include <zlib.h>
 #endif
@@ -60,6 +61,10 @@ unsigned int TLBCache_longest_chain(void);
 // for savestates
 void TLBCache_dump_r(gzFile *f);
 void TLBCache_dump_w(gzFile *f);
+#ifdef __DREAMCAST__
+int TLBCache_fwrite(FILE *f);
+int TLBCache_fread(FILE *f);
+#endif
 
 void ARAM_ReadTLBBlock(unsigned int addr, int type);
 void ARAM_WriteTLBBlock(unsigned int addr, int type);

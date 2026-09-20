@@ -8,6 +8,7 @@
 /saves/dc_host.txt
 /saves/settings.cfg
 /saves/not64.log
+/saves/not64.st*
 
 __pycache__/
 *.pyc

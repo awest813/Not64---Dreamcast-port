@@ -248,5 +248,68 @@ void TLBCache_dump_w(gzFile *f)
 #else
 void TLBCache_dump_r(gzFile *f) { (void)f; }
 void TLBCache_dump_w(gzFile *f) { (void)f; }
+
+#define TLB_SAVE_MAX_NODES 65536
+
+static int tlb_fwrite_table(FILE *f, TLB_hash_node **table)
+{
+	int i;
+	unsigned int total = 0;
+	TLB_hash_node *node;
+
+	for (i = 0; i < TLB_NUM_SLOTS; ++i)
+		for (node = table[i]; node != NULL; node = node->next)
+			total++;
+	if (total > TLB_SAVE_MAX_NODES)
+		return -1;
+	if (fwrite(&total, 4, 1, f) != 1)
+		return -1;
+	for (i = 0; i < TLB_NUM_SLOTS; ++i) {
+		for (node = table[i]; node != NULL; node = node->next) {
+			if (fwrite(&node->page, 4, 1, f) != 1)
+				return -1;
+			if (fwrite(&node->value, 4, 1, f) != 1)
+				return -1;
+		}
+	}
+	return 0;
+}
+
+static int tlb_fread_table(FILE *f, int write)
+{
+	unsigned int total = 0, i, page, value;
+
+	if (fread(&total, 4, 1, f) != 1)
+		return -1;
+	if (total > TLB_SAVE_MAX_NODES)
+		return -1;
+	for (i = 0; i < total; ++i) {
+		if (fread(&page, 4, 1, f) != 1)
+			return -1;
+		if (fread(&value, 4, 1, f) != 1)
+			return -1;
+		if (write)
+			TLBCache_set_w(page, value);
+		else
+			TLBCache_set_r(page, value);
+	}
+	return 0;
+}
+
+int TLBCache_fwrite(FILE *f)
+{
+	if (tlb_fwrite_table(f, TLB_LUT_r))
+		return -1;
+	return tlb_fwrite_table(f, TLB_LUT_w);
+}
+
+int TLBCache_fread(FILE *f)
+{
+	TLBCache_deinit();
+	TLBCache_init();
+	if (tlb_fread_table(f, 0))
+		return -1;
+	return tlb_fread_table(f, 1);
+}
 #endif /* !__DREAMCAST__ */
 #endif

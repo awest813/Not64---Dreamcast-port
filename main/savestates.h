@@ -42,3 +42,9 @@ void savestates_select_slot(unsigned int s);
 void savestates_select_filename();
 unsigned savestates_get_slot(void);
 const char *savestates_filename(void);
+#ifdef __DREAMCAST__
+int savestates_ok(void);
+#ifdef DC_HOST_STUB
+int savestates_selftest(void);
+#endif
+#endif
