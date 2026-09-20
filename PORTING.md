@@ -68,7 +68,7 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | Analog stick | Done — scaled to the N64 ±80 range with a 10-count deadzone; 10 button + 8 analog cases in `smoke_map()` |
 | Rumble / VMU pak | **Not started** — `rumble_ctl()` is a no-op; Jump Pack and VMU are the natural N64 Rumble/Controller Pak analogues. Needs KOS to write |
 | First commercial ROM (host) | **Passes the CIC boot checksum and runs game code**; dies on an `ERET` to `0x400`, still no VI. **Not a TLB bug** — see Phase 3.5 |
-| Software / PVR renderer | Not started. **No PVR code exists**; DC gfx plugin is empty stubs. Blocked behind Phase 4 and a ROM reaching VI — see Phase 7 |
+| Software / PVR renderer | **VI presenter shipped** (`VIDEO=software` CPU blit, `VIDEO=pvr` textured quad). `GFX=soft` rasterizes F3DEX2 into RDRAM then uses the same presenter. Raw RDP / TA geometry is not started — see Phase 7 |
 | Dreamcast menu | **8a shipped** — ROM browser in `platform/dc_menu/`, tested on the host. Controls map (X=L) is in `controller-DC.c`. 8b overlay waits on savestates. `libgui/` does not port |
 | TLB hash cache (`gc_memory/TLB-Cache-hash.c`) | Rehashed and de-tombstoned; ~173x faster lookup, covered by `smoke_tlbcache()` |
 | SH4 dynarec | Not started |
@@ -153,7 +153,8 @@ There is no unified HAL. Boot, video, and threading live in `main/main_gc-menu2.
 ### Graphics
 
 Detailed source audit and staged PVR implementation gates: [PVR_PLAN.md](PVR_PLAN.md).
-This is planning work; software/PVR implementation remains not started.
+Stages 0–2 (host contract, VI scanout, software + PVR presenters) are in tree.
+Stages 3+ (raw RDP, TA geometry) are still planning.
 
 `glN64_GX` has `__GX__` vs desktop OpenGL/SDL (`#ifndef __GX__`). KOS KGL is not desktop OpenGL. Options later:
 
@@ -399,41 +400,43 @@ disagreed with the source.
 
 ---
 
-### Phase 7 — PVR graphics (audit: nothing exists yet, and it is not next)
+### Phase 7 — PVR graphics (presenter shipped; TA/RDP backend is not)
 
-**Current state: there is still no PVR renderer.** `platform/dc_pvr.c`
-exports `dc_pvr_available() == 0` so the menu and Makefile can name the
-slot without pretending TA lists exist. Flycast/Reicast (the production
-Dreamcast emulators) still keep a **software fallback for framebuffer
+**Current state: `VIDEO=pvr` is a VI framebuffer presenter, not an N64
+geometry backend.** `platform/dc_pvr.c` implements `dc_video_*`: one
+512×256 linear RGB565 texture, blocking `pvr_txr_load` of used rows, and
+one opaque 2×-centered quad. It waits for TA then render-done before
+reusing or freeing that texture. Menu drawing is still `dc_draw_*` into
+`vram_s`, not TA lists. There is no `dc_pvr_available()`.
+
+Flycast/Reicast still keep a **software fallback for framebuffer
 read-back**; N64 games that sample the colour buffer mid-frame need that
-class of path, which PVR2 does not give cheaply. Do not start a PVR rewrite
-until Phase 4 has a ROM that reaches VI.
+class of path, which PVR2 does not give cheaply. Do not start a TA/RDP
+rewrite just because scanout works.
 
-`grep` for `pvr_`/`PVR_`/`glKos`/`KGL` in the Wii tree still returns nothing
-usable. The DC graphics plugin remains empty stubs in `platform/dc_plugins.c`.
+`GFX=none` still has empty `processDList` / `processRDPList` in
+`platform/dc_gfx.c`. `GFX=soft` rasterizes F3DEX2 into RDRAM and hands
+the same VI frame to this presenter. Graphics plugin symbols live in
+`dc_gfx.c`, not the old `dc_plugins.c` stubs.
 
 ```c
-void processDList(void) {}
-void processRDPList(void) {}
-void updateScreen(void) {}
-BOOL initiateGFX(GFX_INFO Gfx_Info) { (void)Gfx_Info; return TRUE; }
+/* GFX=none: lists unsupported; updateScreen converts VI and presents. */
+void processDList(void);   /* diagnostic only unless GFX=soft */
+void processRDPList(void); /* still empty: core owns DP interrupt */
+void updateScreen(void);   /* dc_vi_convert + dc_video_present */
 ```
 
-The empty plugin is the honest state. Starting PVR now would still be a
-mistake; this section records why, and what it will involve when it is time.
+#### Why not a TA renderer next
 
-#### Why not now
-
-1. **No ROM has reached VI.** Phase 3.5: the one real ROM tested sits in a TLB
-   refill loop with `VI origin = 0`. A renderer would have nothing to draw and
-   no way to tell right from wrong. The first display list has to arrive
-   before a display-list backend can be judged.
-2. **Phase 4 is the locked decision.** First frame is the software path
-   (`mupen64_soft_gfx/` / `GX_gfx/`), because it is testable and does not
-   depend on getting PVR's tile-based pipeline right at the same time as the
-   RDP semantics.
-3. **There is no KallistiOS toolchain here.** PVR code cannot even be compiled,
-   let alone run. Phase 1 (`sh-elf-gcc` + KOS) still gates everything.
+1. **Scanout is proven; RDP is not.** Color-bar VI and optional software
+   F3DEX2 already reach this presenter. A display-list TA path would mix
+   tile-based submission with RDP semantics that are still software-only.
+2. **Phase 4 remains the locked first-frame path.** Keep `mupen64_soft_gfx`
+   as the reference image to diff against. PVR2 is for displaying that
+   image until a later stage owns geometry.
+3. **KOS PVR compiles in Docker (`tools/dc/README.md`), not in this cloud
+   VM.** Hardware remains unverified. Presenter polish belongs in
+   `dc_pvr.c`; do not invent TA triangles here.
 
 #### What the existing renderers are, measured
 
@@ -471,8 +474,9 @@ Recorded now so it is not rediscovered later:
 
 #### Order
 
-Phase 4 software renderer -> a ROM that reaches VI -> then Phase 7 PVR as an
-optional upgrade, with the software path kept as the reference to diff against.
+Phase 4 software renderer (optional `GFX=soft`) feeds VI; `VIDEO=pvr` is the
+scanout upgrade. A later TA/RDP backend stays optional, with the software
+path kept as the reference to diff against.
 
 ---
 
@@ -694,7 +698,7 @@ Requires `KOS_BASE`. Load with dcload, or convert to `.cdi` later.
 | DC Makefile | `Makefile.dc` |
 | ROM browser (8a) | `platform/dc_menu/` |
 | Settings INI (8c) | `platform/dc_settings.c` |
-| PVR slot (empty) | `platform/dc_pvr.c` |
+| PVR VI presenter | `platform/dc_pvr.c` (`VIDEO=pvr`) |
 | FAT/POSIX I/O | `fileBrowser/fileBrowser-kos.c` |
 | Maple pad | `gc_input/controller-DC.c` |
 | Audio stub | `gc_audio/audio-dc.c` |

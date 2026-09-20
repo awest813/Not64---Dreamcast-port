@@ -144,10 +144,11 @@ are rejected. Output is a centered 2× nearest-neighbor preview; VI filtering,
 gamma, AA, divot, and accurate analog viewport reconstruction are not implemented.
 
 The software backend expands RGB565 into a double-buffered 640×480 display.
-The PVR backend uses one opaque quad and a 512×256 linear RGB565 texture with
-blocking uploads. It drains queued TA work, then rendering, before texture reuse
-or release. Both temporarily move framebuffer console output to serial and restore
-the prior display/logging state on shutdown.
+The PVR backend uses one opaque quad and a 512×256 linear RGB565 texture.
+Uploads cover used 512-wide rows (`height × 1024` bytes for a 240-line
+frame), not the unused padding. It drains queued TA work, then rendering,
+before texture reuse or release. Both temporarily move framebuffer console
+output to serial and restore the prior display/logging state on shutdown.
 
 With default `GFX=none`, raw RDP/display lists emit unsupported diagnostics.
 `GFX=soft` adds the experimental game path described below; raw DPC remains
@@ -189,6 +190,10 @@ Measured means from the emulated KOS clock:
 | Software conversion + presentation call, 128 steady stress frames | 33,441 us |
 | PVR full 256 KiB texture upload, stress-cycle means | approximately 659–661 us |
 | PVR scene submission, stress-cycle means | approximately 15 us |
+
+Used-row uploads now DMA `height × 1024` bytes (245,760 for 240 lines) instead of
+the full 262,144-byte texture. The table above is the earlier full-texture
+baseline; re-measure on Flycast before quoting a new upload mean.
 
 The combined call includes CPU conversion, scheduling, and display/render waits.
 The scene submission time is CPU enqueue cost, not GPU completion latency.

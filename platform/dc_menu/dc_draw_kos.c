@@ -22,7 +22,7 @@
  *    Phase 8 means by the menu releasing everything before go().
  *  - bfont_draw_str() takes a non-const char *, so the string has to be cast.
  *
- * Phase 7 can put a PVR surface behind the same three calls.
+ * Game VI scanout can use VIDEO=pvr; this menu stays on vram_s.
  */
 
 #include <stdlib.h>

@@ -59,6 +59,13 @@ int main(void)
     CHECK(!frame.width && !frame.height);
     CHECK(dc_video_expand_2x(&frame, output, 640 * 480));
     for (x = 0; x < 640 * 480; ++x) CHECK(output[x] == 0);
+    CHECK(dc_video_pvr_upload_bytes(0, 240) == 0);
+    CHECK(dc_video_pvr_upload_bytes(320, 0) == 0);
+    CHECK(dc_video_pvr_upload_bytes(321, 240) == 0);
+    CHECK(dc_video_pvr_upload_bytes(320, 241) == 0);
+    CHECK(dc_video_pvr_upload_bytes(320, 240) == 240u * DC_VI_TEXTURE_WIDTH * 2u);
+    CHECK(dc_video_pvr_upload_bytes(4, 2) == 2u * DC_VI_TEXTURE_WIDTH * 2u);
+    CHECK(dc_video_pvr_upload_bytes(320, 240) < DC_VI_TEXTURE_BYTES);
     bad.v_start = 2; bad.status = 3; bad.origin = sizeof(memory) - 4;
     pixel32(sizeof(memory) - 4, 0x12345678);
     CHECK(dc_vi_convert(&bad, memory, sizeof(memory), &frame) == DC_VI_READY);

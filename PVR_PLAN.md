@@ -3,6 +3,16 @@
 Audit date: 2026-09-19. Repository revision: `2998833`.
 Scope: source audit, implementation plan, and foundation progress; no renderer performance claim.
 
+## Presenter polish — 2026-09-20
+
+`platform/dc_pvr.c` remains a **VI textured-quad presenter**. It does not
+decode RDP or submit game geometry to the TA. `dc_pvr.h` documents that
+split; the unused `dc_pvr_available()` stub is gone. Used-row uploads
+(`dc_video_pvr_upload_bytes`) replace a full 256 KiB DMA when the frame is
+shorter than 256 texels. Shutdown frees the user texture even if the
+completion wait fails, then calls `pvr_shutdown()`. Serial `PVR:` /
+`PVR timing:` lines are unchanged for `tests/dc/check_target_log.py`.
+
 ## Implementation progress — 2026-09-19
 
 Stages 0 and 1 now have host and Flycast evidence: isolated builds, enforced
@@ -90,7 +100,7 @@ Suggested new files, not existing implementations:
 | `platform/dc_gfx.c` / `.h` | Own `GFX_INFO`, lifecycle, counters, backend selection, and callback dispatch. Exactly one definition of each plugin symbol. |
 | `platform/dc_vi.c` | Read validated VI state and bounded emulated memory; convert RGBA5551/RGBA8888 into a documented output format. Headless image output for tests. |
 | `platform/dc_video_kos.c` | Initial software framebuffer presentation and display ownership. |
-| `platform/dc_pvr.c` | PVR initialization, scene/list submission, texture upload, resource lifetime, and presentation. No N64 command decoding. |
+| `platform/dc_pvr.c` / `.h` | PVR initialization, scene/list submission, used-row texture upload, resource lifetime, and presentation. No N64 command decoding. |
 | `platform/dc_gfx/` | Extracted portable state/decoder, bounded draw packets, texture conversion/cache, and a small software reference path. Choose C/C++ consistently with the build. |
 
 There are three independent input paths:

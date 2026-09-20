@@ -1,4 +1,6 @@
 #include "dc_video.h"
+#include "dc_pvr.h"
+#include "dc_debug.h"
 #include <kos.h>
 #include <stdio.h>
 
@@ -9,6 +11,12 @@ static pvr_poly_hdr_t header;
 static uint64_t wait_us, upload_us, submit_us;
 static unsigned samples, uploads;
 #endif
+
+/* Drain TA work, then the render that still owns this texture. */
+static int pvr_idle(void)
+{
+    return pvr_wait_ready() >= 0 && pvr_wait_render_done() >= 0;
+}
 
 int dc_video_init(void)
 {
@@ -21,6 +29,7 @@ int dc_video_init(void)
     pvr_poly_cxt_t context;
     if (!dc_video_claim_display()) return 0;
     if (pvr_init(&params) < 0) {
+        dc_log(DC_LOG_ERROR, "PVR: pvr_init failed");
         dc_video_release_display();
         return 0;
     }
@@ -30,7 +39,11 @@ int dc_video_init(void)
     samples = uploads = 0;
 #endif
     texture = pvr_mem_malloc(DC_VI_TEXTURE_BYTES);
-    if (!texture) { dc_video_shutdown(); return 0; }
+    if (!texture) {
+        dc_log(DC_LOG_ERROR, "PVR: texture alloc %u failed", (unsigned)DC_VI_TEXTURE_BYTES);
+        dc_video_shutdown();
+        return 0;
+    }
     pvr_poly_cxt_txr(&context, PVR_LIST_OP_POLY,
                     PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED,
                     DC_VI_TEXTURE_WIDTH, DC_VI_TEXTURE_HEIGHT, texture, PVR_FILTER_NONE);
@@ -40,6 +53,7 @@ int dc_video_init(void)
     context.txr.env = PVR_TXRENV_REPLACE;
     pvr_poly_compile(&header, &context);
     pvr_set_bg_color(0, 0, 0);
+    /* Exact serial line: tests/dc/check_target_log.py */
     printf("PVR: staging=%u texture=%u VRAM-free=%lu bytes\n",
            (unsigned)DC_VI_TEXTURE_BYTES, (unsigned)DC_VI_TEXTURE_BYTES,
            (unsigned long)pvr_mem_available());
@@ -49,24 +63,30 @@ int dc_video_init(void)
 int dc_video_present(const dc_vi_frame *frame)
 {
     int result = 1;
+    size_t upload;
 #ifdef DC_EMBED_VITEST
     uint64_t begin = timer_us_gettime64(), ready, uploaded;
 #endif
-    if (!initialized || !frame || frame->width > DC_VI_MAX_WIDTH ||
-        frame->height > DC_VI_MAX_HEIGHT) return 0;
+    if (!initialized || !texture || !frame ||
+        frame->width > DC_VI_MAX_WIDTH || frame->height > DC_VI_MAX_HEIGHT)
+        return 0;
     /* Readiness for another scene does not release textures from the previous
      * scene. Wait for rendering before overwriting this single texture. */
     /* First drain queued TA work, which can still start a render; then wait
      * for that render. Reversing these waits can overwrite a queued texture. */
-    if (pvr_wait_ready() < 0 || pvr_wait_render_done() < 0) return 0;
+    if (!pvr_idle()) {
+        dc_log(DC_LOG_ERROR, "PVR: wait failed before present");
+        return 0;
+    }
 #ifdef DC_EMBED_VITEST
     ready = timer_us_gettime64();
 #endif
-    if (frame->width && frame->height)
-        pvr_txr_load(frame->pixels, texture, DC_VI_TEXTURE_BYTES);
+    upload = dc_video_pvr_upload_bytes(frame->width, frame->height);
+    if (upload)
+        pvr_txr_load(frame->pixels, texture, upload);
 #ifdef DC_EMBED_VITEST
     uploaded = timer_us_gettime64();
-    if (frame->width && frame->height) {
+    if (upload) {
         upload_us += uploaded - ready;
         ++uploads;
     }
@@ -76,7 +96,7 @@ int dc_video_present(const dc_vi_frame *frame)
         pvr_scene_finish();
         return 0;
     }
-    if (frame->width && frame->height) {
+    if (upload) {
         float left = (640.0f - frame->width * 2.0f) / 2.0f;
         float top = (480.0f - frame->height * 2.0f) / 2.0f;
         float right = left + frame->width * 2.0f;
@@ -112,9 +132,12 @@ void dc_video_shutdown(void)
                    (unsigned long)(uploads ? upload_us / uploads : 0),
                    (unsigned long)(submit_us / samples));
 #endif
-        if (pvr_wait_ready() == 0 && pvr_wait_render_done() == 0 && texture)
-            pvr_mem_free(texture);
-        /* Shutdown disables rendering even if the completion wait failed. */
+        if (!pvr_idle())
+            dc_log(DC_LOG_ERROR, "PVR: wait failed; freeing texture before shutdown");
+        /* pvr_shutdown tears down the allocator; free user VRAM first even if
+         * the wait failed — GPU work is abandoned on shutdown. */
+        if (texture) pvr_mem_free(texture);
+        texture = NULL;
         pvr_shutdown();
     }
     initialized = 0;

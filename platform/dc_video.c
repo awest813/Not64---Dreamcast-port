@@ -17,6 +17,13 @@ int dc_video_expand_2x(const dc_vi_frame *frame, uint16_t *out, size_t count)
     return 1;
 }
 
+size_t dc_video_pvr_upload_bytes(unsigned width, unsigned height)
+{
+    if (!width || !height || width > DC_VI_MAX_WIDTH || height > DC_VI_MAX_HEIGHT)
+        return 0;
+    return (size_t)height * DC_VI_TEXTURE_WIDTH * sizeof(uint16_t);
+}
+
 #ifdef DC_HOST_STUB
 int dc_video_init(void) { return 1; }
 int dc_video_present(const dc_vi_frame *frame) { return frame != NULL; }

@@ -3,8 +3,8 @@
  *
  * Phase 8 in PORTING.md: the menu draws through exactly three calls so it
  * stays renderer-agnostic. v1 backs them with the KOS BIOS font straight into
- * the framebuffer, which needs no font asset and no renderer; Phase 7 can
- * repoint the same calls at PVR without touching menu logic.
+ * the framebuffer, which needs no font asset and no renderer. `VIDEO=pvr`
+ * presents emulated VI frames, not this menu; keep menu drawing off the TA.
  *
  * Two backends exist:
  *   dc_draw_kos.c    KallistiOS bfont + vram_s. Built only for not64-dc.elf.
