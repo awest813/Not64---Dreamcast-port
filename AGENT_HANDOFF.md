@@ -194,6 +194,23 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
     `smoke_tlbcache()` (host and KOS) and `smoke_romcache()` (host only — see above) cover both; each was verified to fail when the behaviour is reverted. Note `ROMCache_deinit()` now closes the cached handle: holding it open across calls means something has to let go of it.
 12. **Phase 8a ROM browser** — `platform/dc_menu/`. Lists the ROM dir, pad picks, boots. Optional and never load-bearing: `skipMenu` is 1 on the host, an explicit ROM argument forces it, and `make ... test` never enters it. `smoke_menu()` covers the filter, sort, edge detection, auto-repeat, wrap, scroll window, paging, pick/cancel, empty list and `dc_menu_run()` end to end. `./not64-dc-bringup --menu` prints the screen it drew. See Phase 8 in `PORTING.md`.
 13. **Controls + session log** — X is L (including during C-shift); Y+LT is L without Z. Overlay and `saves/not64.log` are independent (`dc_log()`). Host poll is port 0 only.
+14. **VI/present kernel polish (performance audit).** `dc_vi_convert` re-cleared
+    the whole 256 KiB texture and did a byte-split halfword read per pixel on
+    every VI interrupt; `dc_video_expand_2x` did four scalar stores per pixel.
+    Now the 16-bit converter takes two pixels per aligned word load (odd-row
+    starts keep the per-pixel path; an odd-width tail reads the word's high
+    half), clears only the padding the row loop will not overwrite, and the 2x
+    presenter writes one aligned 32-bit pair per pixel plus one row copy per
+    scanline pair. Also audited and deliberately left alone: the interpreter
+    loop and `prefetch_opcode` (locked pure-interpreter design), the soft-gfx
+    rasterizer (upstream per-span math, no test harness for pixel regressions),
+    DMA/PIF/audio (event-driven, not per-instruction), and the ROM-cache
+    eviction scan (runs next to a 64 KiB card read). Byte-exactness evidence:
+    `test_vi.c` gained an odd-width aligned-row vector and an aligned fast-path
+    expand vector, the exact-capture SHA-256 is unchanged, and a 200k-state
+    differential fuzz of the new converter against the pre-polish version
+    (scratch harness, not committed) reported identical textures on ~80k READY
+    frames per seed.
 
 ---
 

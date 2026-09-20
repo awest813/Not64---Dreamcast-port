@@ -7,6 +7,7 @@
 static uint8_t memory[256];
 static dc_vi_frame frame;
 static uint16_t output[640 * 480 + 2];
+static uint16_t output_aligned[640 * 480] __attribute__((aligned(32)));
 static void pixel16(unsigned addr, uint16_t value) { memcpy(memory + (addr ^ 2u), &value, 2); }
 static void pixel32(unsigned addr, uint32_t value) { memcpy(memory + addr, &value, 4); }
 
@@ -34,6 +35,22 @@ int main(void)
     for (y = 0; y < 4; ++y) for (x = 0; x < 8; ++x)
         CHECK(output[1 + (238 + y) * 640 + 316 + x] == rgb565[(y / 2) * 4 + x / 2]);
     CHECK(!dc_video_expand_2x(&frame, output, 640 * 480 - 1));
+
+    /* Same frame through the 32-bit-aligned fast path. */
+    CHECK(dc_video_expand_2x(&frame, output_aligned, 640 * 480));
+    for (y = 0; y < 4; ++y) for (x = 0; x < 8; ++x)
+        CHECK(output_aligned[(238 + y) * 640 + 316 + x] == rgb565[(y / 2) * 4 + x / 2]);
+    CHECK(output_aligned[0] == 0 && output_aligned[640 * 480 - 1] == 0);
+
+    /* Odd width on 4-aligned rows: pair loop plus the high-half tail read. */
+    bad = state; bad.h_start = (10u << 16) | 16u;
+    CHECK(dc_vi_convert(&bad, memory, sizeof(memory), &frame) == DC_VI_READY);
+    CHECK(frame.width == 3 && frame.height == 2);
+    for (y = 0; y < 2; ++y) {
+        for (x = 0; x < 3; ++x)
+            CHECK(frame.pixels[y * DC_VI_TEXTURE_WIDTH + x] == rgb565[y * 4 + x]);
+        CHECK(frame.pixels[y * DC_VI_TEXTURE_WIDTH + 3] == 0);
+    }
 
     /* Integer source crop uses both offsets and the source row stride. */
     bad = state; bad.x_scale |= 1024u << 16; bad.y_scale |= 1024u << 16;

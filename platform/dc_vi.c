@@ -1,6 +1,14 @@
 #include "dc_vi.h"
 #include <string.h>
 
+/* RGBA5551 (already byte-order corrected) to RGB565. */
+static uint16_t vi_rgba16_to_rgb565(uint32_t n64)
+{
+    uint32_t green = (n64 >> 6) & 31u;
+    return (uint16_t)((n64 & 0xf800u) | ((green * 2u + (green >> 4)) << 5) |
+                      ((n64 >> 1) & 31u));
+}
+
 dc_vi_result dc_vi_convert(const dc_vi_state *s, const uint8_t *mem,
                           size_t size, dc_vi_frame *frame)
 {
@@ -39,25 +47,61 @@ dc_vi_result dc_vi_convert(const dc_vi_state *s, const uint8_t *mem,
     end = (uint64_t)origin + ((uint64_t)(yo + height - 1) * stride + xo + width) * bytes;
     if (end > size) return DC_VI_INVALID;
 
-    memset(frame->pixels, 0, sizeof(frame->pixels));
+    /* The contract is "512-pixel stride, zeroed unused padding". Zero only the
+     * padding this frame's row loop will not overwrite — the row tails and the
+     * rows below height — instead of re-clearing all 256 KiB every VI update. */
+    memset(frame->pixels + height * DC_VI_TEXTURE_WIDTH, 0,
+           (DC_VI_TEXTURE_HEIGHT - height) * DC_VI_TEXTURE_WIDTH * sizeof(uint16_t));
+    for (y = 0; y < height; ++y) {
+        memset(frame->pixels + y * DC_VI_TEXTURE_WIDTH + width, 0,
+               (DC_VI_TEXTURE_WIDTH - width) * sizeof(uint16_t));
+    }
     for (y = 0; y < height; ++y) {
         uint32_t row = origin + ((yo + y) * stride + xo) * bytes;
-        for (x = 0; x < width; ++x) {
-            uint16_t color;
-            if (type == 2) {
-                uint16_t n64;
-                unsigned green;
-                memcpy(&n64, mem + ((row + x * 2) ^ 2u), 2);
-                green = (n64 >> 6) & 31u;
-                color = (n64 & 0xf800u) | ((green * 2u + (green >> 4)) << 5) |
-                        ((n64 >> 1) & 31u);
+        uint16_t *dst = frame->pixels + y * DC_VI_TEXTURE_WIDTH;
+        if (type == 2) {
+            if (!(row & 3u) && !((uintptr_t)(mem + row) & 3u)) {
+                /* Aligned rows: both pixels of a pair live in one word, even
+                 * pixel in the high half, odd in the low (the ^2 quirk). One
+                 * aligned load replaces two halfword reads per pair. */
+                const uint8_t *src = mem + row;
+                unsigned pairs = width >> 1;
+                while (pairs--) {
+                    uint32_t w, even, odd;
+                    memcpy(&w, src, 4);
+                    src += 4;
+                    even = w >> 16;
+                    odd = w & 0xffffu;
+                    dst[0] = vi_rgba16_to_rgb565(even);
+                    dst[1] = vi_rgba16_to_rgb565(odd);
+                    dst += 2;
+                }
+                if (width & 1u) {
+                    uint32_t tail;
+                    /* Tail pixel is even, so the ^2 quirk reads the high
+                     * half of its word (src+2), exactly like the pair loop. */
+                    memcpy(&tail, src + 2, 2);
+                    dst[0] = vi_rgba16_to_rgb565(tail);
+                }
             } else {
-                uint32_t n64;
-                memcpy(&n64, mem + row + x * 4, 4);
-                color = ((n64 >> 16) & 0xf800u) | ((n64 >> 13) & 0x07e0u) |
-                        ((n64 >> 11) & 0x001fu);
+                /* Odd row start: pairs straddle words, so keep the per-pixel
+                 * halfword reads (they stay two-byte aligned either way). */
+                for (x = 0; x < width; ++x) {
+                    uint32_t n64;
+                    memcpy(&n64, mem + ((row + x * 2) ^ 2u), 2);
+                    dst[x] = vi_rgba16_to_rgb565(n64);
+                }
             }
-            frame->pixels[y * DC_VI_TEXTURE_WIDTH + x] = color;
+        } else {
+            const uint8_t *src = mem + row;
+            for (x = 0; x < width; ++x) {
+                uint32_t n64;
+                memcpy(&n64, src, 4);
+                src += 4;
+                dst[x] = (uint16_t)(((n64 >> 16) & 0xf800u) |
+                                    ((n64 >> 13) & 0x07e0u) |
+                                    ((n64 >> 11) & 0x001fu));
+            }
         }
     }
     frame->width = width; frame->height = height;
