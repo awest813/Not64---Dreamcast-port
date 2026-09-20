@@ -194,10 +194,23 @@ EXPORT void CALL GetDllInfo ( PLUGIN_INFO * PluginInfo )
   output:   none
 *******************************************************************/
 extern int stop;
+#ifdef __DREAMCAST__
+#include "../platform/dc_overlay.h"
+#endif
 EXPORT void CALL GetKeys(int Control, BUTTONS * Keys )
 {
-	if(DO_CONTROL(Control, GetKeys, Keys, virtualControllers[Control].config))
+	int exit_combo = DO_CONTROL(Control, GetKeys, Keys, virtualControllers[Control].config);
+#ifdef __DREAMCAST__
+	static int combo_held;
+	if (exit_combo && !combo_held) {
+		combo_held = 1;
+		dc_overlay_run();
+	} else if (!exit_combo)
+		combo_held = 0;
+#else
+	if (exit_combo)
 		stop = 1;
+#endif
 #if defined(WII) && !defined(NO_BT)
 	// Need to switch between Classic and WiimoteNunchuck if user swapped extensions
 	if(!virtualControllers[Control].control->available[virtualControllers[Control].number]){

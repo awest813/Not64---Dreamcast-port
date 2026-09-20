@@ -40,3 +40,5 @@ int  savestates_exists(int mode);
 
 void savestates_select_slot(unsigned int s);
 void savestates_select_filename();
+unsigned savestates_get_slot(void);
+const char *savestates_filename(void);

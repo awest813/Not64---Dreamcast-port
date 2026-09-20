@@ -38,6 +38,7 @@ CORE_OBJS = \
 	platform/dc_config.o \
 	platform/dc_settings.o \
 	platform/dc_savestates.o \
+	platform/dc_overlay.o \
 	platform/dc_plugins.o \
 	platform/dc_gfx.o \
 	platform/dc_vi.o \

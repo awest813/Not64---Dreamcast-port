@@ -29,6 +29,7 @@
 #include "../platform/dc_menu/dc_menu.h"
 #include "../platform/dc_menu/dc_draw.h"
 #include "../platform/dc_settings.h"
+#include "../platform/dc_overlay.h"
 #include "../gc_memory/pif.h"
 #include "../gc_memory/flashram.h"
 
@@ -690,6 +691,8 @@ static int smoke_menu(void)
 	}
 
 	if (dc_settings_selftest())
+		fail = 1;
+	if (dc_overlay_selftest())
 		fail = 1;
 
 	/* --- the whole browser, through the real getKeys() path --- */
@@ -1357,17 +1360,17 @@ int main(int argc, char **argv)
 #if !defined(DC_EMBED_VITEST) && !defined(DC_GAME_DISC)
     if (probe_saves()) fail = 1;
 #endif
+    for (;;) {
+	int overlay_act;
+
 	if (!skipMenu) {
 		int picked;
 
 		fileBrowser_kos_bind();
-		/* No ROM yet, so no header; load_and_step() redoes this with one. */
 		init_controllers(NULL);
 
 		picked = dc_menu_run(romFile_topLevel, &choice);
 #ifdef DC_HOST_STUB
-		/* No framebuffer here, so print the last screen the browser drew.
-		 * It is the only way to see the menu without a Dreamcast. */
 		{
 			int row;
 			printf("--- menu screen (%dx%d chars) ---\n",
@@ -1392,8 +1395,17 @@ int main(int argc, char **argv)
 		rompath = choice.path;
 	}
 
-    printf("Dreamcast interpreter: %lu steps using %s\n", steps, rompath);
-    if (load_and_step(rompath, steps)) fail = 1;
+	printf("Dreamcast interpreter: %lu steps using %s\n", steps, rompath);
+	if (load_and_step(rompath, steps)) fail = 1;
+	overlay_act = dc_overlay_take_action();
+	if (overlay_act == DC_OVERLAY_RESET) {
+		printf("overlay: reset %s\n", rompath);
+		continue;
+	}
+	if (overlay_act == DC_OVERLAY_MENU && !skipMenu)
+		continue;
+	break;
+    }
 #ifndef DC_HOST_STUB
 #if defined(DC_EMBED_VITEST) || defined(DC_GAME_DISC)
     /* ReIOS boots a mounted disc again when asked for the BIOS menu. All

@@ -69,7 +69,7 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | Rumble / VMU pak | **Not started** — `rumble_ctl()` is a no-op; Jump Pack and VMU are the natural N64 Rumble/Controller Pak analogues. Needs KOS to write |
 | First commercial ROM (host) | **Passes the CIC boot checksum and runs game code**; dies on an `ERET` to `0x400`, still no VI. **Not a TLB bug** — see Phase 3.5 |
 | Software / PVR renderer | **VI presenter shipped** (`VIDEO=software` CPU blit, `VIDEO=pvr` textured quad). `GFX=soft` rasterizes F3DEX2 into RDRAM then uses the same presenter. Raw RDP / TA geometry is not started — see Phase 7 |
-| Dreamcast menu | **8a shipped** — ROM browser in `platform/dc_menu/`, tested on the host. Controls map (X=L) is in `controller-DC.c`. 8b overlay waits on savestates. `libgui/` does not port |
+| Dreamcast menu | **8a/8b/8c shipped** — ROM browser, pause overlay (Start+A+B), mupen64plus-style settings. Savestate dumps still stub. `libgui/` does not port |
 | TLB hash cache (`gc_memory/TLB-Cache-hash.c`) | Rehashed and de-tombstoned; ~173x faster lookup, covered by `smoke_tlbcache()` |
 | SH4 dynarec | Not started |
 | Cloud environment KOS toolchain | **Missing** (`sh-elf-gcc` not installed) |
@@ -188,7 +188,7 @@ Phase 4  First emulated frame        (next: software renderer)
 Phase 5  Memory map hardening        (ROM stream, cache sizes)
 Phase 6  SH4 dynarec                 (performance)
 Phase 7  PVR/KGL renderer            (optional upgrade)
-Phase 8  Menu, saves, .cdi           (8a ROM browser on host; 8b/8c not started)
+Phase 8  Menu, saves, .cdi           (8a browser, 8b pause overlay, 8c settings)
 ```
 
 ### Phase 0 — Pre-work
@@ -585,7 +585,7 @@ Each step is independently useful; none blocks the emulator core.
 | Step | Scope | Depends on | State |
 |------|-------|-----------|-------|
 | **8a** | ROM browser only: list `/sd/not64/roms`, pick, boot. Replaces the argv path. | KOS ELF (Phase 1) + `bfont`. **Not** the software renderer. | **Shipped** — see below |
-| **8b** | In-game overlay: return to menu, reset, save/load state. | Phase 4 framebuffer; `platform/dc_savestates.c` is still a stub | Not started |
+| **8b** | In-game overlay: return to menu, reset, save/load state. | Phase 4 framebuffer; `platform/dc_savestates.c` is still a stub | **Shipped (UI)** — Start+A+B pause overlay; slots 0–9 named; CPU dump not implemented |
 | **8c** | Settings INI / controls legend (`platform/dc_settings.c`). | 8a | **Shipped** — mupen64plus.cfg layout, Y/X screens from the ROM browser, skipMenu file-only |
 
 8a is the one worth doing early — it is the difference between a demo that

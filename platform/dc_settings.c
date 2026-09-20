@@ -374,8 +374,9 @@ static const struct dc_ctrl_row controls[] = {
 	{ "Y + left trigger",  "L  (no Z)" },
 	{ "X",                 "L  (Z still available on LT)" },
 	{ "Both triggers + D-pad", "C-Up / C-Down / C-Left / C-Right" },
-	{ "Y (in menu)",       "Settings (this screen is X)" },
+	{ "Y (in menu)",       "Settings" },
 	{ "X (in menu)",       "Controls" },
+	{ "Start+A+B (in game)", "Pause overlay (reset / menu / slots)" },
 };
 
 int dc_controls_row_count(void)
