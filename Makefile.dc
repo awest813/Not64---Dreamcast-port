@@ -1,12 +1,14 @@
 # Not64 Dreamcast
 #
-# Host:
+# Host bring-up stub (supported ILP32 toolchain):
 #   make -f Makefile.dc HOST=1
 #   make -f Makefile.dc HOST=1 run
 #   See tools/dc/README.md for the supported ILP32 Docker host.
 #
-# KallistiOS:
+# KallistiOS (needs KOS_BASE from environ.sh):
 #   make -f Makefile.dc
+#
+# The host and SH4 builds enforce the same ILP32 memory contract.
 
 .DEFAULT_GOAL := all
 GFX ?= none
@@ -74,6 +76,7 @@ SOURCE_OBJS = main/main_dc.o \
 	fileBrowser/fileBrowser-kos.o \
 	gc_input/controller-DC.o \
 	gc_audio/audio-dc.o \
+	$(MENU_OBJS) \
 	$(CORE_OBJS)
 
 ifeq ($(GFX),soft)
@@ -95,6 +98,7 @@ CC = gcc
 CFLAGS ?= -std=gnu11 -fgnu89-inline -Wall -Wextra -Wno-unused-parameter \
     -Wno-missing-field-initializers -Wno-unused-function \
     -Wno-unused-variable -Wno-pointer-sign -Wno-multichar -O1 -g
+MENU_OBJS = platform/dc_menu/dc_menu.o platform/dc_menu/dc_draw_host.o
 CPPFLAGS += $(DC_DEFS) -DDC_HOST_STUB
 BUILD_DIR ?= build/dc/host-$(shell $(CC) -dumpmachine)$(GFX_SUFFIX)
 TARGET = $(BUILD_DIR)/not64-dc-bringup
@@ -113,6 +117,7 @@ VIDEO ?= software
 ifeq ($(filter $(VIDEO),software pvr),)
 $(error VIDEO must be software or pvr)
 endif
+MENU_OBJS = platform/dc_menu/dc_menu.o platform/dc_menu/dc_draw_kos.o
 SOURCE_OBJS += platform/dc_video_kos.o
 ifeq ($(VIDEO),pvr)
 SOURCE_OBJS += platform/dc_pvr.o

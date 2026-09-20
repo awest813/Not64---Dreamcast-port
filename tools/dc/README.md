@@ -318,3 +318,24 @@ Stopping-checkpoint update (2026-09-20): the complete serial log later records a
 second KOS startup and `Fatal: SH4 exception when blocked`, after the successful
 600-frame run and display-mode restoration. This exit/restart failure is unresolved;
 do not interpret the zero in-run error counters as proof of clean disc shutdown.
+
+
+### Branch integration — 2026-09-20
+
+The graphics work and performance/menu branch are combined on `master`. The
+ROM browser runs by default on ordinary Dreamcast builds, or with `--menu` on
+the host; explicit ROM paths and the demo/game-disc presets bypass it. Its
+buffer is released before graphics starts. Controller input uses KOS's centered
+stick coordinates, N64 scaling, and explicit Joybus packet serialization.
+All dump formats share the same header decoding after cache normalization.
+
+Host validation includes the combined CPU/PIF/menu/TLB/VI suite, exact pixel
+capture, all three dump formats, an optimized SDK-endian regression, and the
+software renderer tests. A generated 3 MiB fixture also exercises ROM-cache
+replacement and persistent file handling without a commercial game dump.
+
+Target exit now explicitly requests `ARCH_EXIT_MENU`. KOS otherwise defaults to
+returning to a loader, which is unsuitable for a standalone disc and was followed
+by a second startup and crash in the prior game log. The target log checker now
+rejects fatal errors and repeated startup and requires successful process exit
+and the BIOS-menu transition, as well as the existing presentation checks.

@@ -30,7 +30,10 @@
 #ifndef MACROS_H
 #define MACROS_H
 
-#define sign_extended(a) a = (long long)((signed long)a)
+/* `long` is 32 bits on SH4 and PPC32 but 64 on an LP64 host, where these
+ * would stop truncating MIPS 32-bit results. `int` is 32 bits on all three,
+ * so this is identical codegen for GC/Wii and correct for the host stub. */
+#define sign_extended(a) a = (long long)((signed int)a)
 #define sign_extendedb(a) a = (long long)((signed char)a)
 #define sign_extendedh(a) a = (long long)((signed short)a)
 
@@ -58,17 +61,17 @@
 
 // 32 bits macros
 #if !defined(_BIG_ENDIAN) || defined(__DREAMCAST__)
-#define rrt32 *((long*)PC->f.r.rt)
-#define rrd32 *((long*)PC->f.r.rd)
-#define rrs32 *((long*)PC->f.r.rs)
-#define irs32 *((long*)PC->f.i.rs)
-#define irt32 *((long*)PC->f.i.rt)
+#define rrt32 *((int*)PC->f.r.rt)
+#define rrd32 *((int*)PC->f.r.rd)
+#define rrs32 *((int*)PC->f.r.rs)
+#define irs32 *((int*)PC->f.i.rs)
+#define irt32 *((int*)PC->f.i.rt)
 #else
-#define rrt32 *((long*)PC->f.r.rt+1)
-#define rrd32 *((long*)PC->f.r.rd+1)
-#define rrs32 *((long*)PC->f.r.rs+1)
-#define irs32 *((long*)PC->f.i.rs+1)
-#define irt32 *((long*)PC->f.i.rt+1)
+#define rrt32 *((int*)PC->f.r.rt+1)
+#define rrd32 *((int*)PC->f.r.rd+1)
+#define rrs32 *((int*)PC->f.r.rs+1)
+#define irs32 *((int*)PC->f.i.rs+1)
+#define irt32 *((int*)PC->f.i.rt+1)
 #endif
 
 #define check_PC \

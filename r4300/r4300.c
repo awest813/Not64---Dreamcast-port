@@ -42,7 +42,12 @@
 #include "Recomp-Cache.h"
 #include "ARAM-blocks.h"
 #endif
+#if defined(__APPLE__) || defined(__FreeBSD__)
+/* No <malloc.h> on Darwin/BSD; the host stub builds there. */
+#include <stdlib.h>
+#else
 #include <malloc.h>
+#endif
 
 #ifdef DBG
 extern int debugger_mode;

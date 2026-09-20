@@ -338,7 +338,8 @@ EXPORT void CALL WM_KeyDown( WPARAM wParam, LPARAM lParam )
 EXPORT void CALL WM_KeyUp( WPARAM wParam, LPARAM lParam )
 {
 }
-void pauseInput(void){
+
+void pauseInput(void){
 	int i;
 	for(i=0; i<4; ++i){
 		if(virtualControllers[i].inUse){
@@ -450,6 +451,14 @@ void auto_assign_controllers(void){
 	}
 }
 
+/* File-scope helper: GCC nested functions are not portable (clang, and the
+   Dreamcast host stub, reject them). Callers below keep the old spelling. */
+static button_t* read_config_pointer(FILE* f, button_t* list, int size){
+	int index;
+	fread(&index, 4, 1, f);
+	return list + (index % size);
+}
+
 int load_configurations(FILE* f, controller_t* controller){
 	int i,j;
 	char magic[4] = { 
@@ -460,14 +469,8 @@ int load_configurations(FILE* f, controller_t* controller){
 	if(memcmp(magic, actual, 4))
 		return 0;
 	
-	inline button_t* getPointer(button_t* list, int size){
-		int index;
-		fread(&index, 4, 1, f);
-		return list + (index % size);
-	}
-	inline button_t* getButton(void){
-		return getPointer(controller->buttons, controller->num_buttons);
-	}
+#define getPointer(list, size) read_config_pointer(f, (list), (size))
+#define getButton()            getPointer(controller->buttons, controller->num_buttons)
 	
 	for(i=0; i<4; ++i){
 		controller->config_slot[i].DL = getButton();
@@ -501,6 +504,8 @@ int load_configurations(FILE* f, controller_t* controller){
 			       &controller->config_slot[(int)loadButtonSlot],
 			       sizeof(controller_config_t));
 	
+#undef getButton
+#undef getPointer
 	return 1;
 }
 

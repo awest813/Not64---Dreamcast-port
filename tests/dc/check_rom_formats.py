@@ -7,7 +7,6 @@ import tempfile
 
 runner = sys.argv[1:]
 source = bytearray(pathlib.Path('roms/dc_cputest.z64').read_bytes())
-source[0x3c:0x40] = b'TSEE'
 orders = {'z64': (0, 1, 2, 3), 'v64': (1, 0, 3, 2), 'n64': (3, 2, 1, 0)}
 with tempfile.TemporaryDirectory() as root:
     for extension, order in orders.items():
@@ -17,3 +16,11 @@ with tempfile.TemporaryDirectory() as root:
         if result.returncode or 'CPUTEST PASS' not in result.stdout or 'country=0x45' not in result.stdout:
             sys.exit(f'{extension} FAIL:\n{result.stdout}\n{result.stderr}')
         print(f'ROM byte order + region PASS: {extension}')
+
+    # Exercise replacement beyond the 1 MiB stream window with generated data.
+    path = pathlib.Path(root) / 'large-fixture.z64'
+    path.write_bytes(source + bytes(range(256)) * (3 * 1024 * 1024 // 256))
+    result = subprocess.run(runner + [str(path)], text=True, capture_output=True)
+    if result.returncode or 'rom cache smoke PASS' not in result.stdout or 'CPUTEST PASS' not in result.stdout:
+        sys.exit(f'Large ROM cache FAIL:\n{result.stdout}\n{result.stderr}')
+    print('Large ROM cache replacement + file reuse PASS')
