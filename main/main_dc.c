@@ -276,6 +276,177 @@ static int smoke_map(void)
 }
 #endif /* DC_HOST_STUB */
 
+static int smoke_tlbcache(void)
+{
+	/* A game maps a run of CONSECUTIVE pages, which was the worst case for
+	 * the old high-bit hash: every page in the run landed in one bucket. */
+	const unsigned int base = 0x00048;	/* the KUSEG page Phase 3.5 faults on */
+	const unsigned int count = 512;
+	unsigned int i, longest;
+	int fail = 0;
+
+	TLBCache_init();
+
+	for (i = 0; i < count; ++i) {
+		if (TLBCache_get_r(base + i) || TLBCache_get_w(base + i)) {
+			printf("tlb cache smoke: page %x not empty after init\n", base + i);
+			fail = 1;
+			break;
+		}
+	}
+
+	for (i = 0; i < count; ++i)
+		TLBCache_set_r(base + i, 0x80000000u | ((0x100u + i) << 12));
+
+	for (i = 0; i < count; ++i) {
+		unsigned int want = 0x80000000u | ((0x100u + i) << 12);
+		if (TLBCache_get_r(base + i) != want) {
+			printf("tlb cache smoke: r page %x = %08x want %08x\n",
+			       base + i, TLBCache_get_r(base + i), want);
+			fail = 1;
+			break;
+		}
+		/* r and w are independent tables. */
+		if (TLBCache_get_w(base + i) != 0) {
+			printf("tlb cache smoke: w page %x leaked from r\n", base + i);
+			fail = 1;
+			break;
+		}
+	}
+
+	/* This is the property the hash exists for. With 512 consecutive pages
+	 * in 1024 slots a chain over 8 means the key is clumping again. */
+	longest = TLBCache_longest_chain();
+	if (longest > 8) {
+		printf("tlb cache smoke: %u consecutive pages -> longest chain %u\n",
+		       count, longest);
+		fail = 1;
+	}
+
+	/* Re-mapping a live page must update it, not shadow it. */
+	TLBCache_set_r(base, 0x80042000u);
+	if (TLBCache_get_r(base) != 0x80042000u) {
+		printf("tlb cache smoke: re-map of page %x did not take\n", base);
+		fail = 1;
+	}
+
+	/* Invalidation must unlink, not park a 0 in the chain forever. */
+	for (i = 0; i < count; ++i)
+		TLBCache_set_r(base + i, 0);
+	for (i = 0; i < count; ++i) {
+		if (TLBCache_get_r(base + i) != 0) {
+			printf("tlb cache smoke: page %x still mapped after clear\n",
+			       base + i);
+			fail = 1;
+			break;
+		}
+	}
+	if (TLBCache_longest_chain() != 0) {
+		printf("tlb cache smoke: %u tombstones left after clear\n",
+		       TLBCache_longest_chain());
+		fail = 1;
+	}
+
+	/* Recycled nodes must still be usable. */
+	for (i = 0; i < count; ++i)
+		TLBCache_set_w(base + i, 0x80000000u | ((0x200u + i) << 12));
+	for (i = 0; i < count; ++i) {
+		unsigned int want = 0x80000000u | ((0x200u + i) << 12);
+		if (TLBCache_get_w(base + i) != want) {
+			printf("tlb cache smoke: w page %x = %08x want %08x after reuse\n",
+			       base + i, TLBCache_get_w(base + i), want);
+			fail = 1;
+			break;
+		}
+	}
+
+	TLBCache_init();
+	if (TLBCache_longest_chain() != 0) {
+		printf("tlb cache smoke: init left %u nodes\n",
+		       TLBCache_longest_chain());
+		fail = 1;
+	}
+
+	printf("tlb cache smoke %s (%u pages, longest chain %u of %u slots)\n",
+	       fail ? "FAIL" : "PASS", count, longest, (unsigned)TLB_NUM_SLOTS);
+	return fail;
+}
+
+/* The ROM cache pages 64 KiB blocks in and out of a 1 MiB window for the whole
+ * run, so its eviction has to hand back the right bytes and has to keep the
+ * blocks the game is actually using. Only a ROM bigger than the window
+ * exercises it; the 4 KiB bring-up images do not. */
+static int smoke_romcache(void)
+{
+	enum { BLOCK = 64 * 1024, PROBE = 32 };
+	const unsigned int win = DC_ROM_STREAM_SIZE / BLOCK;
+	unsigned char first[PROBE], again[PROBE];
+	unsigned long before, sweep_pageins;
+	unsigned int i, total, probes = 0;
+	int fail = 0;
+
+	if (!ROMCache_streaming()) {
+		printf("rom cache smoke SKIP (ROM fits the stream window)\n");
+		return 0;
+	}
+	total = (unsigned int)rom_length / BLOCK;
+	if (total < win + 16) {
+		printf("rom cache smoke SKIP (ROM only %u blocks)\n", total);
+		return 0;
+	}
+
+	/* 1. Bytes must survive a round trip through eviction. */
+	ROMCache_read(first, 0, PROBE);
+	for (i = 0; i * BLOCK + PROBE <= (unsigned int)rom_length; ++i) {
+		ROMCache_read(again, i * BLOCK, PROBE);
+		probes++;
+	}
+	sweep_pageins = ROMCache_pagein_count();
+	ROMCache_read(again, 0, PROBE);
+	if (memcmp(first, again, PROBE) != 0) {
+		printf("rom cache smoke: offset 0 differs after eviction\n");
+		fail = 1;
+	}
+
+	/* A sweep of N blocks through a smaller window pages in about N blocks. */
+	if (sweep_pageins < probes / 2 || sweep_pageins > (unsigned long)probes * 2) {
+		printf("rom cache smoke: %lu page-ins for a %u block sweep\n",
+		       sweep_pageins, probes);
+		fail = 1;
+	}
+
+	/* 2. The eviction POLICY. Fill the window oldest-first... */
+	for (i = 0; i < win; ++i)
+		ROMCache_read(again, i * BLOCK, PROBE);
+
+	/* ...then touch one block outside it. That must cost exactly one
+	 * page-in, and the victim must be block 0, the least recently used. */
+	before = ROMCache_pagein_count();
+	ROMCache_read(again, (win + 8) * BLOCK, PROBE);
+	if (ROMCache_pagein_count() != before + 1) {
+		printf("rom cache smoke: one miss caused %lu page-ins\n",
+		       ROMCache_pagein_count() - before);
+		fail = 1;
+	}
+
+	/* Blocks 1..win-1 were all used more recently than block 0, so every one
+	 * of them must still be resident. This is what fails if eviction picks
+	 * the newest block, or any block that is not the oldest. */
+	before = ROMCache_pagein_count();
+	for (i = 1; i < win; ++i)
+		ROMCache_read(again, i * BLOCK, PROBE);
+	if (ROMCache_pagein_count() != before) {
+		printf("rom cache smoke: evicting one block cost %lu of the %u still in use\n",
+		       ROMCache_pagein_count() - before, win - 1);
+		fail = 1;
+	}
+
+	printf("rom cache smoke %s (%u blocks swept, %lu page-ins, %lu file opens)\n",
+	       fail ? "FAIL" : "PASS", probes, sweep_pageins,
+	       fileBrowser_kos_open_count());
+	return fail;
+}
+
 static int smoke_pif(void)
 {
 	int fail = 0;
@@ -644,7 +815,7 @@ static int load_and_step(const char *path, unsigned long steps)
 		return 1;
 	}
 #endif
-	if (smoke_io() || smoke_pif()) {
+	if (smoke_tlbcache() || smoke_romcache() || smoke_io() || smoke_pif()) {
 		cpu_deinit();
 		TLBCache_deinit();
 		ROMCache_deinit();
@@ -660,6 +831,9 @@ static int load_and_step(const char *path, unsigned long steps)
 	       (steps && dc_interp_steps >= steps) ? "hit step limit"
 						   : "stopped early",
 	       (unsigned long)(unsigned int)interp_addr, stop);
+	/* The ROM cache pages 64 KiB blocks in and out for the whole run; this
+	 * count used to equal the number of page-ins. */
+	printf("ROM file opens: %lu\n", fileBrowser_kos_open_count());
 	dump_run_state();
 	ret = check_cputest(path);
 	cpu_deinit();

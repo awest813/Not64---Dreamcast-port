@@ -43,6 +43,14 @@ int ROMCache_load(fileBrowser_file* file);
 // WARNING: Not necessarily valid after another ROMCache call
 void* ROMCache_pointer(u32 rom_offset);
 
+#ifdef __DREAMCAST__
+/* Bring-up diagnostics: whether the ROM is larger than the stream window (so
+ * blocks get evicted and paged back in), and how many blocks have been paged
+ * in so far. smoke_romcache() uses both. */
+int ROMCache_streaming(void);
+unsigned long ROMCache_pagein_count(void);
+#endif
+
 /* Byteswapping stuff */
 extern int rom_byte_swap;
 #define ROM_byte_swap rom_byte_swap
