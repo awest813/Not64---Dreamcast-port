@@ -3,20 +3,32 @@
 # Host bring-up stub (supported ILP32 toolchain):
 #   make -f Makefile.dc HOST=1
 #   make -f Makefile.dc HOST=1 run
-#   See tools/dc/README.md for the supported ILP32 Docker host.
+#   make -f Makefile.dc host-test          # Docker armhf + QEMU (see tools/dc/README.md)
+#   make -f Makefile.dc help
 #
 # KallistiOS (needs KOS_BASE from environ.sh):
 #   make -f Makefile.dc
+#   make -f Makefile.dc VIDEO=pvr DEMO=1
 #
 # The host and SH4 builds enforce the same ILP32 memory contract.
 
 .DEFAULT_GOAL := all
+.SUFFIXES:
+.DELETE_ON_ERROR:
+
+PYTHON ?= python3
 GFX ?= none
 ifneq ($(filter $(GFX),none soft),$(GFX))
 $(error GFX must be none or soft)
 endif
 GFX_SUFFIX = $(if $(filter soft,$(GFX)),-soft)
 GAME_SUFFIX = $(if $(filter 1,$(GAME_DISC)),-game)
+
+ifeq ($(GAME_DISC),1)
+ifneq ($(GFX),soft)
+$(error GAME_DISC=1 requires GFX=soft)
+endif
+endif
 
 CORE_OBJS = \
 	main/rom_dc.o \
@@ -71,18 +83,6 @@ CORE_OBJS = \
 	rsp_hle/re2.o \
 	rsp_hle/plugin.o
 
-SOURCE_OBJS = main/main_dc.o \
-	fileBrowser/fileBrowser.o \
-	fileBrowser/fileBrowser-kos.o \
-	gc_input/controller-DC.o \
-	gc_audio/audio-dc.o \
-	$(MENU_OBJS) \
-	$(CORE_OBJS)
-
-ifeq ($(GFX),soft)
-SOURCE_OBJS += platform/dc_soft.o $(addprefix mupen64_soft_gfx/,rsp.o rdp.o rs.o tx.o tf.o cc.o bl.o)
-endif
-
 DC_DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DUSE_TLB_CACHE -DPIXEL_FORMAT=RGB565
 # Legacy register/memory views intentionally alias 32-bit and 64-bit words.
 ifeq ($(GFX),soft)
@@ -93,34 +93,70 @@ endif
 endif
 DC_DEFS += -fno-strict-aliasing -include platform/dc_abi.h
 
-ifeq ($(HOST),1)
-CC = gcc
-CFLAGS ?= -std=gnu11 -fgnu89-inline -Wall -Wextra -Wno-unused-parameter \
+VIDEO_OBJS =
+SOFT_OBJS =
+ifeq ($(GFX),soft)
+SOFT_OBJS = platform/dc_soft.o $(addprefix mupen64_soft_gfx/,rsp.o rdp.o rs.o tx.o tf.o cc.o bl.o)
+endif
+
+SKIP_TOOLCHAIN :=
+ifneq ($(filter help host-test clean,$(MAKECMDGOALS)),)
+ifeq ($(filter-out help host-test clean,$(MAKECMDGOALS)),)
+SKIP_TOOLCHAIN := 1
+endif
+endif
+
+ifeq ($(SKIP_TOOLCHAIN),1)
+BUILD_DIR := build/dc
+TARGET := unused
+MENU_OBJS :=
+else ifeq ($(HOST),1)
+ifneq ($(origin VIDEO),undefined)
+$(error VIDEO= is KallistiOS-only; omit it for HOST=1 (see make -f Makefile.dc help))
+endif
+ifneq ($(origin DEMO),undefined)
+$(error DEMO= is KallistiOS-only; omit it for HOST=1 (see make -f Makefile.dc help))
+endif
+ifeq ($(GAME_DISC),1)
+$(error GAME_DISC=1 is a KallistiOS disc image path; omit it for HOST=1)
+endif
+CC ?= gcc
+CFLAGS ?= -std=gnu11 -fgnu89-inline -Wall -Wextra -Werror=implicit-function-declaration \
+    -Wno-unused-parameter \
     -Wno-missing-field-initializers -Wno-unused-function \
     -Wno-unused-variable -Wno-pointer-sign -Wno-multichar -O1 -g
 MENU_OBJS = platform/dc_menu/dc_menu.o platform/dc_menu/dc_draw_host.o
-CPPFLAGS += $(DC_DEFS) -DDC_HOST_STUB
+CPPFLAGS += $(DC_DEFS) -DDC_HOST_STUB -I$(CURDIR)
 BUILD_DIR ?= build/dc/host-$(shell $(CC) -dumpmachine)$(GFX_SUFFIX)
 TARGET = $(BUILD_DIR)/not64-dc-bringup
 RUNNER ?=
 DC_CC = $(CC)
-DC_CXX = $(subst gcc,g++,$(CC))
+DC_CXX = $(patsubst %gcc,%g++,$(CC))
 DC_CFLAGS = $(CPPFLAGS) $(CFLAGS)
 DC_LDFLAGS = $(LDFLAGS)
 DC_LIBS = -lm
+HOST_LONG_SIZE := $(shell $(CC) $(CFLAGS) -dM -E -x c /dev/null 2>/dev/null | awk '/__SIZEOF_LONG__/ { print $$3 }')
+ifneq ($(HOST_LONG_SIZE),4)
+$(error HOST=1 needs ILP32 (this $(CC) has sizeof(long)=$(or $(HOST_LONG_SIZE),unknown)). Run: make -f Makefile.dc host-test)
+endif
 else
 ifndef KOS_BASE
-$(error KOS_BASE is not set. Source KallistiOS environ.sh, or use the documented Docker builds in tools/dc/README.md)
+$(error KOS_BASE is not set. Host tests: make -f Makefile.dc host-test. KOS ELF: source environ.sh. See tools/dc/README.md)
 endif
 include $(KOS_BASE)/Makefile.rules
 VIDEO ?= software
 ifeq ($(filter $(VIDEO),software pvr),)
 $(error VIDEO must be software or pvr)
 endif
+ifeq ($(DEMO),1)
+ifeq ($(GAME_DISC),1)
+$(error DEMO=1 embeds vitest; GAME_DISC=1 is a separate game-disc ELF)
+endif
+endif
 MENU_OBJS = platform/dc_menu/dc_menu.o platform/dc_menu/dc_draw_kos.o
-SOURCE_OBJS += platform/dc_video_kos.o
+VIDEO_OBJS = platform/dc_video_kos.o
 ifeq ($(VIDEO),pvr)
-SOURCE_OBJS += platform/dc_pvr.o
+VIDEO_OBJS += platform/dc_pvr.o
 DC_DEFS += -DDC_VIDEO_PVR
 TARGET = not64-dc-pvr$(GFX_SUFFIX)$(GAME_SUFFIX).elf
 else
@@ -135,11 +171,22 @@ else
 BUILD_DIR ?= build/dc/kos-$(VIDEO)$(GFX_SUFFIX)$(GAME_SUFFIX)
 endif
 DC_CC = $(KOS_CC)
-DC_CXX = $(subst gcc,g++,$(KOS_CC))
-DC_CFLAGS = $(KOS_CFLAGS) $(DC_DEFS) -I$(CURDIR) -std=gnu11 -fgnu89-inline
+DC_CXX = $(patsubst %gcc,%g++,$(KOS_CC))
+DC_CFLAGS = $(KOS_CFLAGS) $(DC_DEFS) -I$(CURDIR) -std=gnu11 -fgnu89-inline \
+    -Werror=implicit-function-declaration
 DC_LDFLAGS = $(KOS_LDFLAGS) -Wl,-Map,$(BUILD_DIR)/not64-dc.map
 DC_LIBS = $(OBJEXTRA) $(KOS_LIBS) -lm
 endif
+
+SOURCE_OBJS = main/main_dc.o \
+	fileBrowser/fileBrowser.o \
+	fileBrowser/fileBrowser-kos.o \
+	gc_input/controller-DC.o \
+	gc_audio/audio-dc.o \
+	$(MENU_OBJS) \
+	$(CORE_OBJS) \
+	$(VIDEO_OBJS) \
+	$(SOFT_OBJS)
 
 ifeq ($(GFX),soft)
 DC_LIBS := -Wl,--start-group -lstdc++ $(DC_LIBS) -Wl,--end-group
@@ -149,20 +196,45 @@ OBJS = $(addprefix $(BUILD_DIR)/,$(SOURCE_OBJS))
 TEST_OBJS = $(BUILD_DIR)/tests/dc/test_contract.o $(BUILD_DIR)/tests/dc/rsp_memory_probe.o
 TEST_TARGET = $(BUILD_DIR)/test-contract
 VI_TEST_TARGET = $(BUILD_DIR)/test-vi
+SOFT_TEST_TARGET = $(BUILD_DIR)/test-soft
 ROMS = roms/dc_dummy.z64 roms/dc_cputest.z64 roms/dc_vitest.z64
 CONFIG_STAMP = $(BUILD_DIR)/compiler-flags
+HOST_IMAGE ?= not64-dc-host:arm32
 
-.PHONY: all clean run test FORCE
+.PHONY: all clean run test test-soft help host-test FORCE
 all: $(ROMS) $(TARGET)
+
+help:
+	@printf '%s\n' \
+	  'Not64 Dreamcast — Makefile.dc' \
+	  '' \
+	  'Host (ILP32; native LP64 gcc is rejected):' \
+	  '  make -f Makefile.dc host-test' \
+	  '  make -f Makefile.dc HOST=1 CC=arm-linux-gnueabihf-gcc RUNNER='\''qemu-arm -L /usr/arm-linux-gnueabihf'\'' test' \
+	  '  make -f Makefile.dc HOST=1 GFX=soft ... test-soft' \
+	  '' \
+	  'KallistiOS (requires KOS_BASE):' \
+	  '  make -f Makefile.dc' \
+	  '  make -f Makefile.dc VIDEO=pvr|software [DEMO=1] [GFX=soft] [GAME_DISC=1]' \
+	  '' \
+	  'Flags: HOST=1  VIDEO=software|pvr  GFX=none|soft  DEMO=1  GAME_DISC=1' \
+	  'Docs:  tools/dc/README.md'
+
+host-test:
+	@command -v docker >/dev/null 2>&1 || { \
+	  echo 'host-test needs docker. Install the ILP32 image from tools/dc/README.md' >&2; \
+	  exit 1; }
+	docker build -t $(HOST_IMAGE) -f tools/dc/Dockerfile.host tools/dc
+	docker run --rm -v "$(CURDIR):/workspace" -w /workspace $(HOST_IMAGE)
 
 # A stamp avoids races between the two ROM outputs under parallel make.
 $(BUILD_DIR)/roms.stamp: roms/gen_dc_roms.py
 	@mkdir -p $(@D)
-	python3 $<
+	$(PYTHON) $<
 	@touch $@
 
 $(ROMS): $(BUILD_DIR)/roms.stamp
-	@test -f $@ || python3 roms/gen_dc_roms.py
+	@test -f $@ || $(PYTHON) roms/gen_dc_roms.py
 
 # Rebuild when compiler/options change, even within one target architecture.
 $(CONFIG_STAMP): FORCE
@@ -193,13 +265,16 @@ ifeq ($(HOST),1)
 $(TEST_TARGET): $(filter-out $(BUILD_DIR)/main/main_dc.o,$(OBJS)) $(TEST_OBJS)
 	$(DC_CC) $(DC_CFLAGS) $(DC_LDFLAGS) -o $@ $^ $(DC_LIBS)
 
-SOFT_TEST_TARGET = $(BUILD_DIR)/test-soft
 $(SOFT_TEST_TARGET): $(BUILD_DIR)/tests/dc/test_soft.o $(addprefix $(BUILD_DIR)/mupen64_soft_gfx/,rsp.o rdp.o rs.o tx.o tf.o cc.o bl.o)
 	$(DC_CXX) $(filter-out -std=gnu11 -fgnu89-inline,$(DC_CFLAGS)) $(DC_LDFLAGS) -o $@ $^ $(DC_LIBS)
 
-.PHONY: test-soft
+ifeq ($(GFX),soft)
 test-soft: $(SOFT_TEST_TARGET)
 	$(RUNNER) ./$(SOFT_TEST_TARGET)
+else
+test-soft:
+	$(error test-soft requires GFX=soft)
+endif
 
 run: all
 	$(RUNNER) ./$(TARGET)
@@ -207,17 +282,28 @@ run: all
 $(VI_TEST_TARGET): $(BUILD_DIR)/tests/dc/test_vi.o $(BUILD_DIR)/platform/dc_vi.o $(BUILD_DIR)/platform/dc_video.o
 	$(DC_CC) $(DC_CFLAGS) $(DC_LDFLAGS) -o $@ $^ $(DC_LIBS)
 
-test: all $(TEST_TARGET) $(VI_TEST_TARGET)
+TEST_SOFT_PREREQ =
+ifeq ($(GFX),soft)
+TEST_SOFT_PREREQ = $(SOFT_TEST_TARGET)
+endif
+
+test: all $(TEST_TARGET) $(VI_TEST_TARGET) $(TEST_SOFT_PREREQ)
 	$(RUNNER) ./$(TEST_TARGET)
 	$(RUNNER) ./$(VI_TEST_TARGET)
 	$(RUNNER) ./$(TARGET) roms/dc_cputest.z64
 	$(RUNNER) ./$(TARGET) roms/dc_dummy.z64
 	$(RUNNER) ./$(TARGET) roms/dc_vitest.z64 300000 --frames 2 --capture $(BUILD_DIR)/vitest.ppm
-	python3 tests/dc/check_capture.py $(BUILD_DIR)/vitest.ppm
-	python3 tests/dc/check_rom_formats.py $(RUNNER) ./$(TARGET)
+	$(PYTHON) tests/dc/check_capture.py $(BUILD_DIR)/vitest.ppm
+	$(PYTHON) tests/dc/check_rom_formats.py $(RUNNER) ./$(TARGET)
+ifeq ($(GFX),soft)
+	$(RUNNER) ./$(SOFT_TEST_TARGET)
+endif
 endif
 
 clean:
-	rm -f $(OBJS) $(TEST_OBJS) $(OBJS:.o=.d) $(TEST_OBJS:.o=.d) $(TARGET) $(TEST_TARGET) $(VI_TEST_TARGET) $(BUILD_DIR)/tests/dc/test_vi.o $(BUILD_DIR)/tests/dc/test_vi.d $(CONFIG_STAMP) $(BUILD_DIR)/roms.stamp
+	rm -rf build/dc
+	rm -f not64-dc.elf not64-dc-pvr.elf not64-dc-software-demo.elf not64-dc-pvr-demo.elf \
+	      not64-dc-soft.elf not64-dc-pvr-soft.elf not64-dc-pvr-soft-game.elf \
+	      not64-dc-pvr-soft-demo.elf not64-dc-software-soft-demo.elf
 
--include $(OBJS:.o=.d) $(TEST_OBJS:.o=.d) $(BUILD_DIR)/tests/dc/test_vi.d
+-include $(OBJS:.o=.d) $(TEST_OBJS:.o=.d) $(BUILD_DIR)/tests/dc/test_vi.d $(BUILD_DIR)/tests/dc/test_soft.d

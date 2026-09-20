@@ -1,5 +1,11 @@
 # Agent handoff — Not64 Dreamcast port
 
+Native `make -f Makefile.dc HOST=1` is rejected at Makefile parse time on LP64
+(`sizeof(long) != 4`). Use `make -f Makefile.dc host-test` (Docker armhf + QEMU).
+`make -f Makefile.dc` without `KOS_BASE` points at that host path. `GFX=soft`
+adds `test-soft` to `test`. `GAME_DISC=1` requires `GFX=soft`. `VIDEO=` / `DEMO=`
+are KallistiOS-only.
+
 ## Integration checkpoint — 2026-09-20
 
 Resumed at the user's request to finish, merge, commit, and push all work.

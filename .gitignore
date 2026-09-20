@@ -9,6 +9,9 @@
 /saves/settings.cfg
 /saves/not64.log
 
+__pycache__/
+*.pyc
+
 # Drop-in ROMs: keep the generated bring-up images, never commit a game dump.
 /roms/*.z64
 /roms/*.n64

@@ -1,6 +1,10 @@
 /**
  * Immediate-mode RGB565 surface for the Dreamcast menu.
  *
+ * Not linked. Makefile.dc uses dc_draw_host.c (HOST=1) or dc_draw_kos.c
+ * (KallistiOS). Kept as the last shared-buffer sketch; do not add it to
+ * SOURCE_OBJS without replacing those backends.
+ *
  * KOS presents into vram; the host stub keeps the buffer so tests can
  * snapshot a PPM. The same 8x8 font is used on both so layout is identical.
  */

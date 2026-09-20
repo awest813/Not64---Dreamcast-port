@@ -10,6 +10,14 @@ This is a supported-configuration restriction, not a completed LP64 port.
 From the repository root:
 
 ```sh
+make -f Makefile.dc help
+make -f Makefile.dc host-test
+```
+
+`host-test` builds `tools/dc/Dockerfile.host` and runs the ILP32 suite. Equivalent
+manual Docker:
+
+```sh
 docker build -t not64-dc-host:arm32 -f tools/dc/Dockerfile.host tools/dc
 docker run --rm -v "$PWD:/workspace" not64-dc-host:arm32
 ```
