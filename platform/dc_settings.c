@@ -18,6 +18,7 @@
 #include "../main/timers.h"
 #include "../fileBrowser/fileBrowser.h"
 #include "../fileBrowser/fileBrowser-kos.h"
+#include "dc_debug.h"
 
 extern char audioEnabled;
 extern char printToSD;
@@ -41,13 +42,14 @@ struct dc_setting {
 static const struct dc_setting table[DC_SET_COUNT] = {
 	{ "audio",    "Audio",           "AICA drain is still a stub; this gates the ring.", onoff, 2 },
 	{ "fps",      "Show FPS",        "Overlay once a renderer exists.", onoff, 2 },
-	{ "debug",    "Debug overlay",   "Also writes ./saves/not64.log when On.", onoff, 2 },
+	{ "debug",    "Debug overlay",   "Mirror log lines to the console.", onoff, 2 },
 	{ "autosave", "Auto-save SRAM",  "Write native saves when leaving a game.", onoff, 2 },
 	{ "autoload", "Auto-load SRAM",  "Load native saves on ROM boot.", onoff, 2 },
 	{ "aspect",   "Aspect",          "16:9 pillar-boxes the N64 4:3 frame.", aspect, 3 },
 	{ "video",    "Video out",       "VGA box vs RGB/composite. Auto-detect is a human call.", video, 2 },
 	{ "saves",    "Save device",     "VMU layout for FlashRAM is a human call.", saves, 2 },
 	{ "vilimit",  "VI limiter",      "Same three modes as Wii64.", vilimit, 3 },
+	{ "logfile",  "Log file",        "Append saves/not64.log (session + errors).", onoff, 2 },
 	{ "skipmenu", "Skip menu",       "Bring-up / argv path. Keep Off on hardware.", onoff, 2 },
 };
 
@@ -57,6 +59,7 @@ static int get_int(int i)
 	case DC_SET_AUDIO:    return audioEnabled ? 1 : 0;
 	case DC_SET_FPS:      return showFPSonScreen ? 1 : 0;
 	case DC_SET_DEBUG:    return printToScreen ? 1 : 0;
+	case DC_SET_LOGFILE:  return printToSD ? 1 : 0;
 	case DC_SET_AUTOSAVE: return autoSave ? 1 : 0;
 	case DC_SET_AUTOLOAD: return autoLoadSave ? 1 : 0;
 	case DC_SET_ASPECT:   return (int)(unsigned char)screenMode;
@@ -78,7 +81,8 @@ static void set_int(int i, int v)
 	switch (i) {
 	case DC_SET_AUDIO:    audioEnabled = (char)v; break;
 	case DC_SET_FPS:      showFPSonScreen = (char)v; break;
-	case DC_SET_DEBUG:    printToScreen = (char)v; printToSD = (char)v; break;
+	case DC_SET_DEBUG:    printToScreen = (char)v; break;
+	case DC_SET_LOGFILE:  dc_debug_set_file(v); break;
 	case DC_SET_AUTOSAVE: autoSave = (char)v; saveEnabled = (char)v; break;
 	case DC_SET_AUTOLOAD: autoLoadSave = (char)v; break;
 	case DC_SET_ASPECT:   screenMode = (char)v; break;
@@ -99,7 +103,7 @@ void dc_settings_defaults(void)
 	audioEnabled = 1;
 	showFPSonScreen = 1;
 	printToScreen = 1;
-	printToSD = 0;
+	printToSD = 1;
 	autoSave = 1;
 	autoLoadSave = 1;
 	saveEnabled = 1;
@@ -403,6 +407,42 @@ int dc_settings_selftest(void)
 		    "Skip menu")) {
 		printf("settings FAIL: skipMenu must stay off the screen\n");
 		fails++;
+	}
+	if (!printToSD) {
+		printf("settings FAIL: log file should default On\n");
+		fails++;
+	}
+	{
+		int overlay0 = printToScreen;
+		int file0 = printToSD;
+
+		dc_settings_cycle(DC_SET_DEBUG, 1);
+		if (printToScreen == overlay0 || printToSD != file0) {
+			printf("settings FAIL: debug overlay must not toggle logfile\n");
+			fails++;
+		}
+		dc_settings_cycle(DC_SET_LOGFILE, 1);
+		if (printToSD == file0) {
+			printf("settings FAIL: cycle logfile\n");
+			fails++;
+		}
+		if (dc_settings_save(path) != 0) {
+			printf("settings FAIL: save logfile\n");
+			fails++;
+		}
+		dc_settings_defaults();
+		if (dc_settings_load(path) != 0) {
+			printf("settings FAIL: load logfile\n");
+			fails++;
+		}
+		if (printToSD) {
+			printf("settings FAIL: load did not restore logfile Off\n");
+			fails++;
+		}
+		if (printToScreen == overlay0) {
+			printf("settings FAIL: load did not restore overlay Off\n");
+			fails++;
+		}
 	}
 	remove(path);
 	dc_settings_defaults();

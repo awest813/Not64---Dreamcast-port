@@ -76,7 +76,7 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
 9. **Controller map** — triggers carry Z/R, `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons. See **Controller mapping** below.
 10. **Second audit polish** — host stub builds under clang/macOS (`gc_input/input.c` nested functions removed, `<malloc.h>` guarded, `invalidate_func` declared); DC ROM-header byte order fixed and asserted; PIF joybus store made alignment- and LP64-safe; ROM cache bounds/LRU/NULL fixes; AI DMA clamped to RDRAM; `PC` no longer leaked per run; recursive `mkdir` for `/sd/not64/...`; `get_savespath()` correct on KOS.
 11. **Menu 8a** — immediate-mode ROM browser in `platform/dc_menu/`. Host `--menu-test` covers filter/sort/wrap/scroll/empty/missing/`skipMenu`. `--menu` is a keyboard picker. Argv ROM path unchanged. Framebuffer freed before `go()`. Not a `libgui/` port.
-12. **Menu 8c** — versioned `settings.cfg`, Settings list, Controls legend (shift map). Debug ring + optional `not64.log`. `dc_pvr_available()` is 0 on purpose.
+12. **Menu 8c** — versioned `settings.cfg`, Settings list, Controls legend (shift map). Overlay (`debug`) and session file (`logfile` → `saves/not64.log`) are independent; `dc_log()` is the bring-up logger. `dc_pvr_available()` is 0 on purpose.
 
 ---
 

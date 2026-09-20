@@ -465,7 +465,8 @@ them against Dreamcast hardware:
 | Setting | On Dreamcast |
 |---------|--------------|
 | `audioEnabled`, `scalePitch` | Keep |
-| `showFPSonScreen`, `printToScreen` | Keep |
+| `showFPSonScreen`, `printToScreen` | Keep — overlay only |
+| `printToSD` | Keep — session file `saves/not64.log`; Settings `logfile` row, not tied to overlay |
 | `Timers.limitVIs` | Keep |
 | `autoLoadSave`, `autoSave`, `saveEnabled` | Keep |
 | `padAutoAssign`, `padAssign[4]`, `padType[4]` | Keep — four Maple ports map to four N64 players |

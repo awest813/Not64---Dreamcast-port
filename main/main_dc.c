@@ -52,15 +52,15 @@ static RSP_INFO rsp_info;
 
 static void print_budget(void)
 {
-	printf("Not64 Dreamcast bring-up\n");
-	printf("  main RAM          %d MiB\n", DC_MAIN_RAM_SIZE / DC_MB);
-	printf("  OS/code reserve   %d MiB\n", DC_OS_AND_CODE_RESERVE / DC_MB);
-	printf("  N64 RDRAM         %d MiB\n", DC_N64_RDRAM_SIZE / DC_MB);
-	printf("  ROM stream        %d MiB\n", DC_ROM_STREAM_SIZE / DC_MB);
-	printf("  TLB/misc          %d KiB\n", DC_TLB_MISC_SIZE / DC_KB);
-	printf("  tex cache         %d\n", DC_TEXCACHE_SIZE);
-	printf("  audio ring        %d KiB\n", DC_AUDIO_RING_SIZE / DC_KB);
-	printf("  heap remainder    %d bytes\n", DC_HEAP_REMAINDER);
+	dc_log(DC_LOG_INFO, "Not64 Dreamcast bring-up");
+	dc_log(DC_LOG_INFO, "  main RAM          %d MiB", DC_MAIN_RAM_SIZE / DC_MB);
+	dc_log(DC_LOG_INFO, "  OS/code reserve   %d MiB", DC_OS_AND_CODE_RESERVE / DC_MB);
+	dc_log(DC_LOG_INFO, "  N64 RDRAM         %d MiB", DC_N64_RDRAM_SIZE / DC_MB);
+	dc_log(DC_LOG_INFO, "  ROM stream        %d MiB", DC_ROM_STREAM_SIZE / DC_MB);
+	dc_log(DC_LOG_INFO, "  TLB/misc          %d KiB", DC_TLB_MISC_SIZE / DC_KB);
+	dc_log(DC_LOG_INFO, "  tex cache         %d", DC_TEXCACHE_SIZE);
+	dc_log(DC_LOG_INFO, "  audio ring        %d KiB", DC_AUDIO_RING_SIZE / DC_KB);
+	dc_log(DC_LOG_INFO, "  heap remainder    %d bytes", DC_HEAP_REMAINDER);
 }
 
 static void list_rom_dir(void)
@@ -70,14 +70,16 @@ static void list_rom_dir(void)
 
 	fileBrowser_kos_bind();
 	if (romFile_init(romFile_topLevel) != 0) {
-		printf("rom dir init failed: %s\n", romFile_topLevel->name);
+		dc_log(DC_LOG_ERROR, "rom dir init failed: %s",
+		       romFile_topLevel->name);
 		return;
 	}
 
 	n = romFile_readDir(romFile_topLevel, &entries);
-	printf("ROM dir %s (%d entries)\n", romFile_topLevel->name, n);
+	dc_log(DC_LOG_INFO, "ROM dir %s (%d entries)", romFile_topLevel->name, n);
 	if (n < 0) {
-		printf("  (create this folder and add .z64/.n64 dumps later)\n");
+		dc_log(DC_LOG_INFO,
+		       "  (create this folder and add .z64/.n64 dumps later)");
 		return;
 	}
 	for (i = 0; i < n && i < 16; ++i) {
@@ -90,11 +92,11 @@ static void list_rom_dir(void)
 			if (ext && strcmp(ext, ".py") == 0)
 				continue;
 		}
-		printf("  %s%s\n", entries[i].name,
+		dc_log(DC_LOG_INFO, "  %s%s", entries[i].name,
 		       (entries[i].attr & FILE_BROWSER_ATTR_DIR) ? "/" : "");
 	}
 	if (n > 16)
-		printf("  ... %d more\n", n - 16);
+		dc_log(DC_LOG_INFO, "  ... %d more", n - 16);
 	free(entries);
 	romFile_deinit(romFile_topLevel);
 }
@@ -104,7 +106,7 @@ static void probe_controllers(void)
 	int i;
 	controller_DC.refreshAvailable();
 	for (i = 0; i < 4; ++i)
-		printf("Maple %d: %s\n", i,
+		dc_log(DC_LOG_INFO, "Maple %d: %s", i,
 		       controller_DC.available[i] ? "present" : "empty");
 }
 
@@ -117,7 +119,8 @@ static int probe_saves(void)
 
 	fileBrowser_kos_bind();
 	if (saveFile_init(saveFile_dir) != 0) {
-		printf("save dir init failed: %s\n", saveFile_dir->name);
+		dc_log(DC_LOG_ERROR, "save dir init failed: %s",
+		       saveFile_dir->name);
 		return -1;
 	}
 
@@ -127,13 +130,13 @@ static int probe_saves(void)
 	strcat(marker.name, "/dc_host.txt");
 	n = saveFile_writeFile(&marker, (void *)msg, (unsigned int)strlen(msg));
 	if (n < (int)strlen(msg)) {
-		printf("save write failed (%d)\n", n);
+		dc_log(DC_LOG_ERROR, "save write failed (%d)", n);
 		return -1;
 	}
 	marker.offset = 0;
 	memset(buf, 0, sizeof(buf));
 	n = saveFile_readFile(&marker, buf, sizeof(buf) - 1);
-	printf("save %s (%d bytes): %s", marker.name, n, buf);
+	dc_log(DC_LOG_INFO, "save %s (%d bytes): %s", marker.name, n, buf);
 	saveFile_deinit(saveFile_dir);
 	return n > 0 ? 0 : -1;
 }
@@ -148,11 +151,11 @@ static int smoke_io(void)
 #endif
 	memset(&keys, 0, sizeof(keys));
 	getKeys(0, &keys);
-	printf("input0 A=%u X=%d Y=%d\n",
+	dc_log(DC_LOG_INFO, "input0 A=%u X=%d Y=%d",
 	       (unsigned)keys.A_BUTTON, (int)keys.X_AXIS, (int)keys.Y_AXIS);
 #ifdef DC_HOST_STUB
 	if (!keys.A_BUTTON) {
-		printf("input smoke: expected A held on host inject\n");
+		dc_log(DC_LOG_ERROR, "input smoke: expected A held on host inject");
 		fail = 1;
 	}
 #endif
@@ -161,9 +164,9 @@ static int smoke_io(void)
 	ai_register.ai_len = 64;
 	memset(rdram, 0x5A, 64);
 	aiLenChanged();
-	printf("audio ring buffered %u bytes\n", audio_dc_buffered());
+	dc_log(DC_LOG_INFO, "audio ring buffered %u bytes", audio_dc_buffered());
 	if (audio_dc_buffered() < 64) {
-		printf("audio smoke: ring did not accept AI DMA\n");
+		dc_log(DC_LOG_ERROR, "audio smoke: ring did not accept AI DMA");
 		fail = 1;
 	}
 	/* The ROM runs next: do not leave the smoke pattern in RDRAM. */
@@ -240,7 +243,8 @@ static int smoke_map(void)
 		    k.U_CBUTTON != t->want_cu || k.D_CBUTTON != t->want_cd ||
 		    k.L_CBUTTON != t->want_cl || k.R_CBUTTON != t->want_cr ||
 		    k.U_DPAD != t->want_du) {
-			printf("map smoke: %s -> Z=%u L=%u R=%u C(u%u d%u l%u r%u) DU=%u\n",
+			dc_log(DC_LOG_ERROR,
+			       "map smoke: %s -> Z=%u L=%u R=%u C(u%u d%u l%u r%u) DU=%u",
 			       t->what, (unsigned)k.Z_TRIG, (unsigned)k.L_TRIG,
 			       (unsigned)k.R_TRIG, (unsigned)k.U_CBUTTON,
 			       (unsigned)k.D_CBUTTON, (unsigned)k.L_CBUTTON,
@@ -260,7 +264,8 @@ static int smoke_map(void)
 
 		if ((int)(signed char)k.X_AXIS != t->want_x ||
 		    (int)(signed char)k.Y_AXIS != t->want_y) {
-			printf("map smoke: %s raw(%d,%d) -> X=%d Y=%d want %d,%d\n",
+			dc_log(DC_LOG_ERROR,
+			       "map smoke: %s raw(%d,%d) -> X=%d Y=%d want %d,%d",
 			       t->what, t->jx, t->jy,
 			       (int)(signed char)k.X_AXIS,
 			       (int)(signed char)k.Y_AXIS,
@@ -272,7 +277,8 @@ static int smoke_map(void)
 	/* Leave pad 0 as the other smokes expect to find it. */
 	controller_DC_host_set_triggers(0, 0, 0);
 	controller_DC_host_set(0, DC_CONT_A, 200, 80);
-	printf("map smoke %s (%u button + %u analog cases)\n",
+	dc_log(fail ? DC_LOG_ERROR : DC_LOG_INFO,
+	       "map smoke %s (%u button + %u analog cases)",
 	       fail ? "FAIL" : "PASS",
 	       (unsigned)(sizeof(dc_map_cases) / sizeof(dc_map_cases[0])),
 	       (unsigned)(sizeof(dc_axis_cases) / sizeof(dc_axis_cases[0])));
@@ -291,7 +297,7 @@ static int smoke_pif(void)
 #endif
 
 	if (!Controls[0].Present) {
-		printf("pif smoke: pad 0 not Present\n");
+		dc_log(DC_LOG_ERROR, "pif smoke: pad 0 not Present");
 		return 1;
 	}
 
@@ -302,7 +308,8 @@ static int smoke_pif(void)
 	update_pif_write();
 	status_type = PIF_RAMb[3];
 	if (status_type != 0x05) {
-		printf("pif smoke: status type=0x%02x want 0x05\n", status_type);
+		dc_log(DC_LOG_ERROR, "pif smoke: status type=0x%02x want 0x05",
+		       status_type);
 		fail = 1;
 	}
 
@@ -312,13 +319,14 @@ static int smoke_pif(void)
 	PIF_RAMb[2] = 0x01;
 	update_pif_read();
 	if (!(PIF_RAMb[3] & 1u)) {
-		printf("pif smoke: buttons %02x %02x %02x %02x missing A\n",
+		dc_log(DC_LOG_ERROR,
+		       "pif smoke: buttons %02x %02x %02x %02x missing A",
 		       PIF_RAMb[3], PIF_RAMb[4], PIF_RAMb[5], PIF_RAMb[6]);
 		fail = 1;
 	}
 	/* Raw (200,80) scaled to the N64 range by controller-DC.c. */
 	if ((signed char)PIF_RAMb[5] != 42 || (signed char)PIF_RAMb[6] != 26) {
-		printf("pif smoke: analog X=%d Y=%d want 42,26\n",
+		dc_log(DC_LOG_ERROR, "pif smoke: analog X=%d Y=%d want 42,26",
 		       (int)(signed char)PIF_RAMb[5],
 		       (int)(signed char)PIF_RAMb[6]);
 		fail = 1;
@@ -330,11 +338,12 @@ static int smoke_pif(void)
 	native_cmd[2] = 0x01;
 	native_ReadController(0, native_cmd);
 	if (!(native_cmd[3] & 1u)) {
-		printf("pif smoke: native_ReadController missing A\n");
+		dc_log(DC_LOG_ERROR, "pif smoke: native_ReadController missing A");
 		fail = 1;
 	}
 
-	printf("pif smoke %s (status=0x%02x A=%u X=%d Y=%d)\n",
+	dc_log(fail ? DC_LOG_ERROR : DC_LOG_INFO,
+	       "pif smoke %s (status=0x%02x A=%u X=%d Y=%d)",
 	       fail ? "FAIL" : "PASS",
 	       status_type,
 	       (unsigned)(PIF_RAMb[3] & 1u),
@@ -358,8 +367,8 @@ static int check_cputest(const char *path)
 
 	if (strcmp(ROM_SETTINGS.goodname, "DC CPUTEST") != 0) {
 		if (want_cputest) {
-			printf("CPUTEST FAIL: %s decoded as '%s', "
-			       "expected 'DC CPUTEST'\n",
+			dc_log(DC_LOG_ERROR,
+			       "CPUTEST FAIL: %s decoded as '%s', expected 'DC CPUTEST'",
 			       base, ROM_SETTINGS.goodname);
 			return 1;
 		}
@@ -370,7 +379,7 @@ static int check_cputest(const char *path)
 	do { \
 		got = (unsigned long)(reg[(n)] & 0xffffffffu); \
 		if (got != (unsigned long)(v)) { \
-			printf("CPUTEST r%d=0x%lx want 0x%x\n", (n), got, (v)); \
+			dc_log(DC_LOG_ERROR, "CPUTEST r%d=0x%lx want 0x%x", (n), got, (v)); \
 			fail = 1; \
 		} \
 	} while (0)
@@ -408,20 +417,22 @@ static int check_cputest(const char *path)
 	 * survived every low-32 check here. IPL3's checksum compares 64-bit
 	 * registers with SLTU, so the high half is load-bearing. */
 	if ((unsigned long long)reg[22] != 0xFFFFFFFFF208B700ull) {
-		printf("CPUTEST r22=0x%016llx want 0xFFFFFFFFF208B700 "
-		       "(32-bit result not sign-extended)\n",
+		dc_log(DC_LOG_ERROR,
+		       "CPUTEST r22=0x%016llx want 0xFFFFFFFFF208B700 "
+		       "(32-bit result not sign-extended)",
 		       (unsigned long long)reg[22]);
 		fail = 1;
 	}
 
 	got = (unsigned long)(rdram[0] & 0xffffffffu);
 	if (got != 0x1333u) {
-		printf("CPUTEST rdram[0]=0x%lx want 0x1333\n", got);
+		dc_log(DC_LOG_ERROR, "CPUTEST rdram[0]=0x%lx want 0x1333", got);
 		fail = 1;
 	}
 	/* IPL spin; move these if gen_dc_roms.py changes the instruction count. */
 	if (interp_addr != 0xa40000a8 && interp_addr != 0xa40000ac) {
-		printf("CPUTEST interp_addr=0x%08lx (expected IPL BEQ spin)\n",
+		dc_log(DC_LOG_ERROR,
+		       "CPUTEST interp_addr=0x%08lx (expected IPL BEQ spin)",
 		       interp_addr);
 		fail = 1;
 	}
@@ -430,26 +441,28 @@ static int check_cputest(const char *path)
 	 * DC loader un-swapped them (rom_dc.c). Without that, isEEPROM16k(),
 	 * saveregionstr() and GetVILimit() all read scrambled bytes. */
 	if (ROM_HEADER.Cartridge_ID != 'DO') {
-		printf("CPUTEST Cartridge_ID=0x%04x want 0x%04x\n",
+		dc_log(DC_LOG_ERROR, "CPUTEST Cartridge_ID=0x%04x want 0x%04x",
 		       (unsigned)ROM_HEADER.Cartridge_ID, (unsigned)'DO');
 		fail = 1;
 	}
 	if (ROM_HEADER.Country_code != 0x45) {
-		printf("CPUTEST Country_code=0x%02x want 0x45\n",
+		dc_log(DC_LOG_ERROR, "CPUTEST Country_code=0x%02x want 0x45",
 		       (unsigned)ROM_HEADER.Country_code);
 		fail = 1;
 	}
 	if (ROM_HEADER.Version != 0x01) {
-		printf("CPUTEST Version=0x%02x want 0x01\n",
+		dc_log(DC_LOG_ERROR, "CPUTEST Version=0x%02x want 0x01",
 		       (unsigned)ROM_HEADER.Version);
 		fail = 1;
 	}
 	if (!ROM_SETTINGS.isEEPROM16k) {
-		printf("CPUTEST isEEPROM16k=0 want 1 ('DO'/'E' is in ROM_TABLE)\n");
+		dc_log(DC_LOG_ERROR,
+		       "CPUTEST isEEPROM16k=0 want 1 ('DO'/'E' is in ROM_TABLE)");
 		fail = 1;
 	}
 
-	printf("CPUTEST %s\n", fail ? "FAIL" : "PASS");
+	dc_log(fail ? DC_LOG_ERROR : DC_LOG_INFO, "CPUTEST %s",
+	       fail ? "FAIL" : "PASS");
 	return fail;
 }
 
@@ -546,31 +559,35 @@ static void rsp_info_init(void)
  */
 static void dump_run_state(void)
 {
-	printf("  COP0   Count=0x%08lx Compare=0x%08lx Status=0x%08lx Cause=0x%08lx EPC=0x%08lx\n",
+	dc_log(DC_LOG_INFO,
+	       "  COP0   Count=0x%08lx Compare=0x%08lx Status=0x%08lx Cause=0x%08lx EPC=0x%08lx",
 	       (unsigned long)(unsigned int)reg_cop0[9],
 	       (unsigned long)(unsigned int)reg_cop0[11],
 	       (unsigned long)(unsigned int)reg_cop0[12],
 	       (unsigned long)(unsigned int)reg_cop0[13],
 	       (unsigned long)(unsigned int)reg_cop0[14]);
-	printf("  COP0   BadVAddr=0x%08lx EntryHi=0x%08lx Index=0x%08lx Wired=0x%08lx\n",
+	dc_log(DC_LOG_INFO,
+	       "  COP0   BadVAddr=0x%08lx EntryHi=0x%08lx Index=0x%08lx Wired=0x%08lx",
 	       (unsigned long)(unsigned int)reg_cop0[8],
 	       (unsigned long)(unsigned int)reg_cop0[10],
 	       (unsigned long)(unsigned int)reg_cop0[0],
 	       (unsigned long)(unsigned int)reg_cop0[6]);
-	printf("  MI     intr=0x%08lx mask=0x%08lx\n",
+	dc_log(DC_LOG_INFO, "  MI     intr=0x%08lx mask=0x%08lx",
 	       (unsigned long)MI_register.mi_intr_reg,
 	       (unsigned long)MI_register.mi_intr_mask_reg);
-	printf("  VI     origin=0x%08lx width=%lu status=0x%08lx current=%lu\n",
+	dc_log(DC_LOG_INFO,
+	       "  VI     origin=0x%08lx width=%lu status=0x%08lx current=%lu",
 	       (unsigned long)vi_register.vi_origin,
 	       (unsigned long)vi_register.vi_width,
 	       (unsigned long)vi_register.vi_status,
 	       (unsigned long)vi_register.vi_current);
-	printf("  SP     status=0x%08lx  DPC start=0x%08lx end=0x%08lx current=0x%08lx\n",
+	dc_log(DC_LOG_INFO,
+	       "  SP     status=0x%08lx  DPC start=0x%08lx end=0x%08lx current=0x%08lx",
 	       (unsigned long)sp_register.sp_status_reg,
 	       (unsigned long)dpc_register.dpc_start,
 	       (unsigned long)dpc_register.dpc_end,
 	       (unsigned long)dpc_register.dpc_current);
-	printf("  VERDICT: %s\n",
+	dc_log(DC_LOG_INFO, "VERDICT: %s",
 	       vi_register.vi_origin
 		       ? "VI framebuffer set - ROM reached video (Phase 4 gate)"
 		       : "VI origin still 0 - no framebuffer handed over yet");
@@ -586,7 +603,7 @@ static int load_and_step(const char *path, unsigned long steps)
 	{
 		FILE *fp = fopen(path, "rb");
 		if (!fp) {
-			printf("ROM open failed: %s\n", path);
+			dc_log(DC_LOG_ERROR, "ROM open failed: %s", path);
 			return -1;
 		}
 		fseek(fp, 0, SEEK_END);
@@ -603,14 +620,14 @@ static int load_and_step(const char *path, unsigned long steps)
 
 	ret = rom_read(&romfile);
 	if (ret) {
-		printf("rom_read failed (%d)\n", ret);
+		dc_log(DC_LOG_ERROR, "rom_read failed (%d)", ret);
 		TLBCache_deinit();
 		ROMCache_deinit();
 		return ret;
 	}
 
 	hasLoadedROM = TRUE;
-	printf("Loaded '%s' (%d bytes)\n",
+	dc_log(DC_LOG_INFO, "Loaded '%s' (%d bytes)",
 	       ROM_SETTINGS.goodname, rom_length);
 
 	init_memory();
@@ -637,8 +654,10 @@ static int load_and_step(const char *path, unsigned long steps)
 
 	dynacore = 2;
 	cpu_init();
-	printf("Header name: '%s'  country=0x%02x  CIC_Chip=%lu  PC=0x%08x\n",
-	       ROM_SETTINGS.goodname, ROM_HEADER.Country_code, CIC_Chip, ROM_HEADER.PC);
+	dc_log(DC_LOG_INFO,
+	       "Header name: '%s'  country=0x%02x  CIC_Chip=%lu  PC=0x%08x",
+	       ROM_SETTINGS.goodname, ROM_HEADER.Country_code, CIC_Chip,
+	       ROM_HEADER.PC);
 
 #ifdef DC_HOST_STUB
 	if (smoke_map()) {
@@ -659,7 +678,8 @@ static int load_and_step(const char *path, unsigned long steps)
 	go();
 	/* Report what was actually retired: echoing the limit hides an early
 	 * exit (exception, unmapped fetch, NI opcode) as a clean finish. */
-	printf("Interpreter retired %lu of %lu steps (%s), interp_addr=0x%08lx stop=%d\n",
+	dc_log(DC_LOG_INFO,
+	       "Interpreter retired %lu of %lu steps (%s), interp_addr=0x%08lx stop=%d",
 	       dc_interp_steps, steps,
 	       (steps && dc_interp_steps >= steps) ? "hit step limit"
 						   : "stopped early",
@@ -685,11 +705,11 @@ int main(int argc, char **argv)
 
 	dc_settings_defaults();
 	if (dc_settings_load(NULL) != 0)
-		DEBUG_print("settings: defaults (no cfg yet)", -1);
+		dc_log(DC_LOG_INFO, "settings: defaults (no cfg yet)");
 	else
-		DEBUG_print("settings: loaded", -1);
+		dc_log(DC_LOG_INFO, "settings: loaded");
 	if (dc_pvr_available())
-		printf("PVR: unexpected backend present\n");
+		dc_log(DC_LOG_ERROR, "PVR: unexpected backend present");
 
 #ifndef DC_HOST_STUB
 	vid_set_mode(DM_640x480, PM_RGB565);
@@ -720,10 +740,11 @@ int main(int argc, char **argv)
 
 		if (picked == DC_MENU_OK) {
 			rompath = menu_rom;
+			dc_log(DC_LOG_INFO, "menu picked %s", rompath);
 		} else if (picked == DC_MENU_SKIP) {
-			printf("skipMenu: using %s\n", rompath);
+			dc_log(DC_LOG_INFO, "skipMenu: using %s", rompath);
 		} else {
-			printf("menu: no ROM selected\n");
+			dc_log(DC_LOG_INFO, "menu: no ROM selected");
 			return fail;
 		}
 	} else if (argc > 1)
@@ -733,7 +754,8 @@ int main(int argc, char **argv)
 	if (argc > 2 && !want_menu)
 		steps = strtoul(argv[2], NULL, 0);
 
-	printf("Phase 2/3: interpreter %lu steps using %s\n", steps, rompath);
+	dc_log(DC_LOG_INFO, "Phase 2/3: interpreter %lu steps using %s",
+	       steps, rompath);
 	if (load_and_step(rompath, steps))
 		fail = 1;
 

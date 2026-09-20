@@ -1,15 +1,23 @@
 /**
- * Dreamcast debug overlay + log.
+ * Dreamcast debug overlay + session log.
  *
- * Wii64 parked strings in a GX HUD and optionally a USB Gecko. Here the
- * same DEBUG_print API fills a ring (RetroArch-style console) and, when
- * printToSD is on, appends to saves/not64.log. A failed open is remembered
- * so we do not retry fopen on every line.
+ * Modelled on mupen64plus DebugMessage / RetroArch's log file: one printf-
+ * style call, a ring for an overlay, and an append-only session file.
+ * Wii64 split HUD (printToScreen) from SD (printToSD); we keep that split.
+ * Overlay off still records ERROR to stdout so a failed test is visible.
  */
 
 #include "dc_debug.h"
+
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+
+#ifdef DC_HOST_STUB
+#include <time.h>
+#else
+#include <kos.h>
+#endif
 
 #include "../fileBrowser/fileBrowser.h"
 #include "../fileBrowser/fileBrowser-kos.h"
@@ -29,31 +37,58 @@ static unsigned stats_buffer[20];
 static unsigned avge_counter[20];
 static FILE *log_fp;
 static int log_failed;
+static int session_written;
+static char last_line[DC_LOG_WIDTH];
 
 extern char *get_savespath(void);
 
+static unsigned now_ms(void)
+{
+#ifdef DC_HOST_STUB
+	struct timespec ts;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+		return 0;
+	return (unsigned)(ts.tv_sec * 1000u + (unsigned)(ts.tv_nsec / 1000000u));
+#else
+	return (unsigned)timer_ms_gettime64();
+#endif
+}
+
+const char *dc_debug_log_path(void)
+{
+	static char path[180];
+	const char *dir = get_savespath();
+
+	if (!dir)
+		dir = "./saves";
+	snprintf(path, sizeof(path), "%s/not64.log", dir);
+	return path;
+}
+
 static void log_open(void)
 {
-	char path[180];
-	const char *dir;
-
 	if (log_fp || log_failed || !printToSD)
 		return;
 	fileBrowser_kos_bind();
 	if (saveFile_dir)
 		fileBrowser_kos_init(saveFile_dir);
-	dir = get_savespath();
-	if (!dir)
-		dir = "./saves";
-	snprintf(path, sizeof(path), "%s/not64.log", dir);
-	log_fp = fopen(path, "a");
-	if (!log_fp)
+	log_fp = fopen(dc_debug_log_path(), "a");
+	if (!log_fp) {
 		log_failed = 1;
+		return;
+	}
+	if (!session_written) {
+		fprintf(log_fp, "----- not64-dc log t=%u -----\n", now_ms());
+		fflush(log_fp);
+		session_written = 1;
+	}
 }
 
 void dc_debug_close(void)
 {
 	if (log_fp) {
+		fflush(log_fp);
 		fclose(log_fp);
 		log_fp = NULL;
 	}
@@ -67,10 +102,21 @@ void dc_debug_reset(void)
 	log_failed = 0;
 	log_seq = 0;
 	log_head = 0;
+	session_written = 0;
+	last_line[0] = '\0';
 	memset(stats_buffer, 0, sizeof(stats_buffer));
 	memset(avge_counter, 0, sizeof(avge_counter));
 	for (i = 0; i < DC_LOG_LINES; ++i)
 		log_text[i][0] = '\0';
+}
+
+void dc_debug_set_file(int on)
+{
+	printToSD = on ? 1 : 0;
+	if (!on)
+		dc_debug_close();
+	else
+		log_failed = 0;
 }
 
 unsigned dc_debug_seq(void)
@@ -78,12 +124,79 @@ unsigned dc_debug_seq(void)
 	return log_seq;
 }
 
-void DEBUG_print(char *string, int pos)
+int dc_debug_last(char *buf, size_t n)
+{
+	if (!buf || n == 0)
+		return -1;
+	strncpy(buf, last_line, n - 1);
+	buf[n - 1] = '\0';
+	return last_line[0] ? 0 : -1;
+}
+
+static void strip_eol(char *s)
+{
+	size_t n = strlen(s);
+
+	while (n && (s[n - 1] == '\n' || s[n - 1] == '\r'))
+		s[--n] = '\0';
+}
+
+static void ring_store(const char *s, int pos)
 {
 	unsigned row;
-	size_t n;
 	char copy[DC_LOG_WIDTH];
 
+	strncpy(copy, s, DC_LOG_WIDTH - 1);
+	copy[DC_LOG_WIDTH - 1] = '\0';
+	strip_eol(copy);
+
+	strncpy(last_line, copy, DC_LOG_WIDTH - 1);
+	last_line[DC_LOG_WIDTH - 1] = '\0';
+
+	/* Gecko control codes are not HUD rows. */
+	if (pos >= 0 && pos < DC_LOG_LINES)
+		row = (unsigned)pos;
+	else
+		row = log_head++ % DC_LOG_LINES;
+	memset(log_text[row], 0, DC_LOG_WIDTH);
+	strncpy(log_text[row], copy, DC_LOG_WIDTH - 1);
+}
+
+static void emit(int level, const char *string, int pos, int to_ring)
+{
+	char copy[256];
+	int echo;
+
+	if (!string)
+		return;
+	strncpy(copy, string, sizeof(copy) - 1);
+	copy[sizeof(copy) - 1] = '\0';
+	strip_eol(copy);
+
+	echo = printToScreen || (level == DC_LOG_ERROR);
+	if (echo) {
+		fputs(copy, stdout);
+		fputc('\n', stdout);
+	}
+
+	log_open();
+	if (log_fp) {
+		fprintf(log_fp, "%u t=%u %s %s\n", log_seq, now_ms(),
+			level == DC_LOG_ERROR ? "ERR" : "INF", copy);
+		fflush(log_fp);
+	}
+
+	if (to_ring)
+		ring_store(copy, pos);
+	else {
+		strncpy(last_line, copy, DC_LOG_WIDTH - 1);
+		last_line[DC_LOG_WIDTH - 1] = '\0';
+	}
+	log_seq++;
+}
+
+void DEBUG_print(char *string, int pos)
+{
 	if (!string)
 		return;
 
@@ -95,36 +208,26 @@ void DEBUG_print(char *string, int pos)
 		dc_debug_close();
 		return;
 	}
-
-	n = strlen(string);
-	if (printToScreen) {
-		fputs(string, stdout);
-		if (n == 0 || string[n - 1] != '\n')
-			fputc('\n', stdout);
+	/* Wii SD gecko print was file-only; keep that split. */
+	if (pos == DBG_SDGECKOPRINT) {
+		emit(DC_LOG_INFO, string, pos, 0);
+		return;
 	}
 
-	log_open();
-	if (log_fp) {
-		fprintf(log_fp, "%04u %s", log_seq, string);
-		if (n == 0 || string[n - 1] != '\n')
-			fputc('\n', log_fp);
-		fflush(log_fp);
-	}
+	emit(DC_LOG_INFO, string, pos, 1);
+}
 
-	strncpy(copy, string, DC_LOG_WIDTH - 1);
-	copy[DC_LOG_WIDTH - 1] = '\0';
-	n = strlen(copy);
-	if (n && (copy[n - 1] == '\n' || copy[n - 1] == '\r'))
-		copy[n - 1] = '\0';
+void dc_log(int level, const char *fmt, ...)
+{
+	char buf[256];
+	va_list ap;
 
-	if (pos >= 0 && pos < DC_LOG_LINES && pos != DBG_SDGECKOPRINT)
-		row = (unsigned)pos;
-	else
-		row = log_head++ % DC_LOG_LINES;
-
-	memset(log_text[row], 0, DC_LOG_WIDTH);
-	strncpy(log_text[row], copy, DC_LOG_WIDTH - 1);
-	log_seq++;
+	if (!fmt)
+		return;
+	va_start(ap, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+	emit(level, buf, -1, 1);
 }
 
 void DEBUG_stats(int stats_id, char *info, unsigned int stats_type,
@@ -152,9 +255,7 @@ void DEBUG_stats(int stats_id, char *info, unsigned int stats_type,
 	value = stats_buffer[stats_id];
 	if (stats_type == STAT_TYPE_AVGE && avge_counter[stats_id])
 		value /= avge_counter[stats_id];
-	snprintf(txtbuffer, sizeof(txtbuffer), "%s [ %u ]",
-		 info ? info : "", value);
-	DEBUG_print(txtbuffer, DBG_STATSBASE + stats_id);
+	dc_log(DC_LOG_INFO, "%s [ %u ]", info ? info : "", value);
 }
 
 void DEBUG_update(void)
@@ -172,48 +273,103 @@ char **DEBUG_get_text(void)
 #ifdef DC_HOST_STUB
 int dc_debug_selftest(void)
 {
-	int fails = 0;
-	char **rows;
+	int fails = 0, i;
+	char last[DC_LOG_WIDTH];
 	FILE *fp;
-	char buf[128];
-	char *dir;
-	char path[180];
-	extern char *get_savespath(void);
+	char buf[192];
+	int saw_hdr = 0, saw_err = 0, saw_info = 0;
+	int saved_screen = printToScreen;
+	int saved_sd = printToSD;
 
 	dc_debug_reset();
 	printToScreen = 0;
-	printToSD = 1;
-	DEBUG_print("ring-one\n", -1);
-	DEBUG_print("ring-two", -1);
-	rows = DEBUG_get_text();
-	if (!rows || !strstr(rows[0], "ring-one") || !strstr(rows[1], "ring-two")) {
-		printf("debug FAIL: ring\n");
+	dc_debug_set_file(1);
+
+	dc_log(DC_LOG_INFO, "ring-one");
+	dc_log(DC_LOG_INFO, "ring-two");
+	if (dc_debug_last(last, sizeof(last)) != 0 || !strstr(last, "ring-two")) {
+		printf("debug FAIL: last line\n");
 		fails++;
 	}
 	if (dc_debug_seq() != 2) {
 		printf("debug FAIL: seq\n");
 		fails++;
 	}
-	dc_debug_close();
-	dir = get_savespath();
-	snprintf(path, sizeof(path), "%s/not64.log", dir ? dir : "./saves");
-	fp = fopen(path, "r");
-	if (!fp) {
-		printf("debug FAIL: log open %s\n", path);
-		fails++;
-	} else {
-		int saw = 0;
-		while (fgets(buf, sizeof(buf), fp))
-			if (strstr(buf, "ring-one"))
-				saw = 1;
-		fclose(fp);
-		if (!saw) {
-			printf("debug FAIL: log contents\n");
+
+	for (i = 0; i < DC_LOG_LINES + 5; ++i)
+		dc_log(DC_LOG_INFO, "wrap-%d", i);
+
+	{
+		char want[32];
+
+		snprintf(want, sizeof(want), "wrap-%d", DC_LOG_LINES + 4);
+		if (dc_debug_last(last, sizeof(last)) != 0 || !strstr(last, want)) {
+			printf("debug FAIL: wrap last want %s got %s\n",
+			       want, last);
 			fails++;
 		}
 	}
-	printToSD = 0;
-	printToScreen = 1;
+
+	dc_log(DC_LOG_ERROR, "boom-expected");
+	DEBUG_print("gecko-file-only", DBG_SDGECKOPRINT);
+	dc_debug_close();
+
+	fp = fopen(dc_debug_log_path(), "r");
+	if (!fp) {
+		printf("debug FAIL: log open %s\n", dc_debug_log_path());
+		fails++;
+	} else {
+		int saw_gecko = 0;
+		char **rows = DEBUG_get_text();
+
+		while (fgets(buf, sizeof(buf), fp)) {
+			if (strstr(buf, "----- not64-dc log"))
+				saw_hdr = 1;
+			if (strstr(buf, "ERR") && strstr(buf, "boom-expected"))
+				saw_err = 1;
+			if (strstr(buf, "INF") && strstr(buf, "ring-one"))
+				saw_info = 1;
+			if (strstr(buf, "gecko-file-only"))
+				saw_gecko = 1;
+		}
+		fclose(fp);
+		if (!saw_hdr || !saw_err || !saw_info || !saw_gecko) {
+			printf("debug FAIL: log hdr=%d err=%d info=%d gecko=%d\n",
+			       saw_hdr, saw_err, saw_info, saw_gecko);
+			fails++;
+		}
+		if (rows) {
+			for (i = 0; i < DC_LOG_LINES; ++i) {
+				if (strstr(rows[i], "gecko-file-only")) {
+					printf("debug FAIL: gecko print leaked into ring\n");
+					fails++;
+					break;
+				}
+			}
+		}
+	}
+
+	printToScreen = 0;
+	dc_debug_set_file(0);
+	dc_log(DC_LOG_INFO, "should-not-open-file");
+	dc_debug_close();
+	fp = fopen(dc_debug_log_path(), "r");
+	if (fp) {
+		int leaked = 0;
+		while (fgets(buf, sizeof(buf), fp))
+			if (strstr(buf, "should-not-open-file"))
+				leaked = 1;
+		fclose(fp);
+		if (leaked) {
+			printf("debug FAIL: INFO wrote file while logfile Off\n");
+			fails++;
+		}
+	}
+	/* Overlay off + INFO must not be required on stdout; ERROR still is
+	 * (already checked boom-expected above with overlay off). */
+
+	printToScreen = saved_screen;
+	dc_debug_set_file(saved_sd);
 	dc_debug_reset();
 	printf("debug selftest: %s (%d failure(s))\n",
 	       fails ? "FAIL" : "PASS", fails);
