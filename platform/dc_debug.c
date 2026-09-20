@@ -301,7 +301,7 @@ int dc_debug_selftest(void)
 	int saved_screen = printToScreen;
 	int saved_sd = printToSD;
 	int saved_out, cap_fd;
-	char cap_path[] = "/tmp/not64-debug-cap-XXXXXX";
+	const char *cap_path = "/tmp/not64-debug-cap.txt";
 	char capbuf[128];
 
 	snprintf(token, sizeof(token), "tok%u-%ld", dc_debug_seq(), (long)getpid());
@@ -351,7 +351,7 @@ int dc_debug_selftest(void)
 	snprintf(boom, sizeof(boom), "boom-%s", token);
 	fflush(stdout);
 	saved_out = dup(STDOUT_FILENO);
-	cap_fd = mkstemp(cap_path);
+	cap_fd = open(cap_path, O_RDWR | O_CREAT | O_TRUNC, 0600);
 	if (saved_out >= 0 && cap_fd >= 0) {
 		dup2(cap_fd, STDOUT_FILENO);
 		dc_log(DC_LOG_ERROR, "%s", boom);
