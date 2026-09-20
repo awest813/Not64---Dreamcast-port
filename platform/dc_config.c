@@ -1,7 +1,8 @@
 #include "../main/wii64config.h"
 #include "../main/timers.h"
 
-char skipMenu = 0;
+/* Values overwritten by dc_settings_defaults() at startup. */
+char skipMenu;
 char showFPSonScreen;
 char printToScreen;
 char nativeSaveDevice;

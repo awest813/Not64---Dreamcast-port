@@ -9,6 +9,9 @@
 
 #include "dc_menu.h"
 #include "dc_draw.h"
+#include "../dc_settings.h"
+#include "../dc_pvr.h"
+#include "../../gui/DEBUG.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -661,12 +664,22 @@ static int poll_action(unsigned int *prev, unsigned int *hold)
 
 int dc_menu_pick_rom(char *out_path, size_t out_len, unsigned int max_frames)
 {
-	dc_menu_browser *b;
+	dc_menu_browser *b = NULL;
 	unsigned int prev = 0;
 	unsigned int hold = 0;
 	unsigned int frame = 0;
 	int result = DC_MENU_QUIT;
 	const char *root;
+	enum { SCR_HOME, SCR_ROMS, SCR_SETTINGS, SCR_CONTROLS } scr = SCR_HOME;
+	int home_cur = 0;
+	int set_cur = 0;
+	int ctrl_scroll = 0;
+	static const char *home_items[] = {
+		"Load ROM",
+		"Settings",
+		"Controls",
+		"Quit"
+	};
 
 	if (skipMenu)
 		return DC_MENU_SKIP;
@@ -686,16 +699,46 @@ int dc_menu_pick_rom(char *out_path, size_t out_len, unsigned int max_frames)
 #endif
 
 	for (;;) {
-		int act, applied;
+		int act;
 
 		if (max_frames && frame++ >= max_frames) {
 			result = DC_MENU_QUIT;
 			break;
 		}
-		dc_menu_browser_draw(b);
+
+		if (scr == SCR_ROMS)
+			dc_menu_browser_draw(b);
+		else if (scr == SCR_SETTINGS)
+			dc_settings_draw(set_cur);
+		else if (scr == SCR_CONTROLS)
+			dc_controls_draw(ctrl_scroll);
+		else {
+			int i;
+			dc_draw_clear(DC_COL_BG);
+			dc_draw_fill_rect(0, 0, DC_FB_W, 56, DC_COL_BG2);
+			dc_draw_fill_rect(0, 0, 8, 56, DC_COL_ACCENT);
+			dc_draw_text_scaled(24, 10, DC_COL_TEXT, "Not64", 2);
+			dc_draw_text(24 + dc_draw_text_width("Not64") * 2 + 16, 18,
+				     DC_COL_ACCENT2, "Dreamcast");
+			dc_draw_text(24, 40, DC_COL_DIM, "Load a ROM or open settings");
+			dc_draw_fill_rect(16, 80, 400, 220, DC_COL_PANEL);
+			dc_draw_rect(16, 80, 400, 220, DC_COL_LINE);
+			for (i = 0; i < 4; ++i) {
+				int y = 100 + i * 44;
+				int sel = (i == home_cur);
+				if (sel) {
+					dc_draw_fill_rect(28, y - 8, 376, 36, DC_COL_SEL_BG);
+					dc_draw_fill_rect(28, y - 8, 4, 36, DC_COL_ACCENT);
+				}
+				dc_draw_text(48, y + 4, sel ? DC_COL_TEXT : DC_COL_FILE,
+					     home_items[i]);
+			}
+			dc_draw_fill_rect(0, 424, DC_FB_W, 56, DC_COL_BG2);
+			dc_draw_fill_rect(0, 424, DC_FB_W, 2, DC_COL_LINE);
+			dc_draw_text(24, 440, DC_COL_DIM, "A select    B/Y quit");
+		}
 		dc_draw_present();
 #ifdef DC_HOST_STUB
-		/* Avoid a busy spin when a human is driving --menu. */
 		if (!max_frames)
 			usleep(16000);
 #else
@@ -704,19 +747,66 @@ int dc_menu_pick_rom(char *out_path, size_t out_len, unsigned int max_frames)
 		act = poll_action(&prev, &hold);
 		if (act == DC_MENU_ACT_NONE)
 			continue;
-		applied = dc_menu_browser_apply(b, act);
-		if (applied == DC_MENU_OK) {
-			if (out_path && out_len) {
-				strncpy(out_path, dc_menu_browser_chosen(b),
-					out_len - 1);
-				out_path[out_len - 1] = '\0';
-			}
-			result = DC_MENU_OK;
-			break;
-		}
-		if (applied == DC_MENU_QUIT) {
+
+		if (act == DC_MENU_ACT_QUIT) {
 			result = DC_MENU_QUIT;
 			break;
+		}
+
+		if (scr == SCR_HOME) {
+			if (act == DC_MENU_ACT_UP)
+				home_cur = (home_cur + 3) % 4;
+			else if (act == DC_MENU_ACT_DOWN)
+				home_cur = (home_cur + 1) % 4;
+			else if (act == DC_MENU_ACT_BACK) {
+				result = DC_MENU_QUIT;
+				break;
+			} else if (act == DC_MENU_ACT_CONFIRM) {
+				if (home_cur == 0)
+					scr = SCR_ROMS;
+				else if (home_cur == 1)
+					scr = SCR_SETTINGS;
+				else if (home_cur == 2)
+					scr = SCR_CONTROLS;
+				else {
+					result = DC_MENU_QUIT;
+					break;
+				}
+			}
+		} else if (scr == SCR_ROMS) {
+			int applied = dc_menu_browser_apply(b, act);
+			if (applied == DC_MENU_OK) {
+				if (out_path && out_len) {
+					strncpy(out_path, dc_menu_browser_chosen(b),
+						out_len - 1);
+					out_path[out_len - 1] = '\0';
+				}
+				result = DC_MENU_OK;
+				break;
+			}
+			if (applied == DC_MENU_QUIT)
+				scr = SCR_HOME;
+		} else if (scr == SCR_SETTINGS) {
+			if (act == DC_MENU_ACT_UP)
+				set_cur = (set_cur + DC_SET_COUNT - 1) % DC_SET_COUNT;
+			else if (act == DC_MENU_ACT_DOWN)
+				set_cur = (set_cur + 1) % DC_SET_COUNT;
+			else if (act == DC_MENU_ACT_PAGE_UP)
+				dc_settings_cycle(set_cur, -1);
+			else if (act == DC_MENU_ACT_PAGE_DOWN ||
+				 act == DC_MENU_ACT_CONFIRM)
+				dc_settings_cycle(set_cur, 1);
+			else if (act == DC_MENU_ACT_BACK) {
+				dc_settings_save(NULL);
+				scr = SCR_HOME;
+			}
+		} else if (scr == SCR_CONTROLS) {
+			if (act == DC_MENU_ACT_UP && ctrl_scroll > 0)
+				ctrl_scroll--;
+			else if (act == DC_MENU_ACT_DOWN)
+				ctrl_scroll++;
+			else if (act == DC_MENU_ACT_BACK)
+				scr = SCR_HOME;
 		}
 	}
 
@@ -1000,6 +1090,24 @@ int dc_menu_selftest(void)
 			dc_menu_browser_destroy(b);
 		}
 		topLevel_kos = saved;
+	}
+
+	fails += dc_settings_selftest();
+	expect(&fails, !dc_pvr_available(), "PVR backend absent (honest stub)");
+	DEBUG_print("menu-test log line\n", -1);
+	expect(&fails, DEBUG_get_text() != NULL, "debug ring");
+	expect(&fails, strstr(DEBUG_get_text()[0], "menu-test") != NULL ||
+			       strstr(DEBUG_get_text()[1], "menu-test") != NULL ||
+			       DEBUG_get_text()[0][0] != '\0',
+	       "debug ring captured a line");
+
+	if (dc_draw_init() == 0) {
+		dc_settings_defaults();
+		dc_settings_draw(0);
+		dc_draw_write_ppm("/tmp/not64-menu-settings.ppm");
+		dc_controls_draw(0);
+		dc_draw_write_ppm("/tmp/not64-menu-controls.ppm");
+		dc_draw_shutdown();
 	}
 
 	printf("menu selftest: %s (%d failure(s))\n",

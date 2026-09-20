@@ -39,7 +39,7 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | Rumble / VMU pak | **Not started** — `rumble_ctl()` is a no-op; Jump Pack and VMU are the natural N64 Rumble/Controller Pak analogues. Needs KOS to write |
 | First commercial ROM (host) | **Passes the CIC boot checksum and runs game code**; stops at a TLB store miss, still no VI. See Phase 3.5 |
 | Software / PVR renderer | Not started. **No PVR code exists**; DC gfx plugin is empty stubs. Blocked behind Phase 4 and a ROM reaching VI — see Phase 7 |
-| Dreamcast menu | **8a ROM browser landed** (host-tested); 8b overlay / 8c settings not started. `libgui/` still does not port |
+| Dreamcast menu | **8a+8c on host** (ROM browser, settings INI, controls legend). 8b overlay waits on a framebuffer + savestates. |
 | SH4 dynarec | Not started |
 | Cloud environment KOS toolchain | **Missing** (`sh-elf-gcc` not installed) |
 
@@ -351,10 +351,16 @@ disagreed with the source.
 
 ### Phase 7 — PVR graphics (audit: nothing exists yet, and it is not next)
 
-**Current state: there is no PVR code in this tree, and no renderer of any
-kind is wired into the Dreamcast build.** `grep` for `pvr_`/`PVR_`/`glKos`/`KGL`
-returns nothing, no graphics directory appears in `Makefile.dc`, and the whole
-DC graphics plugin is empty stubs in `platform/dc_plugins.c`:
+**Current state: there is still no PVR renderer.** `platform/dc_pvr.c`
+exports `dc_pvr_available() == 0` so the menu and Makefile can name the
+slot without pretending TA lists exist. Flycast/Reicast (the production
+Dreamcast emulators) still keep a **software fallback for framebuffer
+read-back**; N64 games that sample the colour buffer mid-frame need that
+class of path, which PVR2 does not give cheaply. Do not start a PVR rewrite
+until Phase 4 has a ROM that reaches VI.
+
+`grep` for `pvr_`/`PVR_`/`glKos`/`KGL` in the Wii tree still returns nothing
+usable. The DC graphics plugin remains empty stubs in `platform/dc_plugins.c`.
 
 ```c
 void processDList(void) {}
@@ -363,8 +369,8 @@ void updateScreen(void) {}
 BOOL initiateGFX(GFX_INFO Gfx_Info) { (void)Gfx_Info; return TRUE; }
 ```
 
-So there is nothing to audit or polish. This section records why starting PVR
-now would be a mistake, and what it will involve when it is time.
+The empty plugin is the honest state. Starting PVR now would still be a
+mistake; this section records why, and what it will involve when it is time.
 
 #### Why not now
 
@@ -523,7 +529,7 @@ Each step is independently useful; none blocks the emulator core.
 |------|-------|-----------|
 | **8a** | ROM browser only: list `/sd/not64/roms` (host: `./roms`), pick, boot. Replaces the argv path on hardware. **Done on host** (`--menu-test`; `--menu` for a keyboard/pad picker). | KOS ELF still needed to *see* it on a Dreamcast; logic does not. |
 | **8b** | In-game overlay: return to menu, reset, save/load state. | Phase 4 framebuffer; `platform/dc_savestates.c` is still a stub |
-| **8c** | Settings, button/shift config, persistence to `/sd/not64/settings.cfg`. | 8a |
+| **8c** | Settings, controls legend, persistence to `{saves}/settings.cfg` (mupen64plus-style `key=value`). **Done on host.** | 8a |
 
 8a is the one worth doing early — it is the difference between a demo that
 needs a rebuild per ROM and something a person can actually use, and it needs
@@ -588,6 +594,8 @@ Requires `KOS_BASE`. Load with dcload, or convert to `.cdi` later.
 | Bring-up main | `main/main_dc.c` |
 | DC Makefile | `Makefile.dc` |
 | ROM browser (8a) | `platform/dc_menu/` |
+| Settings INI (8c) | `platform/dc_settings.c` |
+| PVR slot (empty) | `platform/dc_pvr.c` |
 | FAT/POSIX I/O | `fileBrowser/fileBrowser-kos.c` |
 | Maple pad | `gc_input/controller-DC.c` |
 | Audio stub | `gc_audio/audio-dc.c` |

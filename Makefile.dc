@@ -4,7 +4,7 @@
 #   make -f Makefile.dc HOST=1
 #   make -f Makefile.dc HOST=1 test      # CPUTEST PASS + pif smoke PASS, exit 0
 #   ./not64-dc-bringup [optional.z64]
-#   ./not64-dc-bringup --menu-test   # Phase 8a ROM browser self-test
+#   ./not64-dc-bringup --menu-test   # Phase 8a/8c UI + settings self-test
 #   ./not64-dc-bringup --menu         # host: interactive picker (keys or injected pad)
 #
 # KallistiOS (needs KOS_BASE from environ.sh):
@@ -20,6 +20,8 @@ CORE_OBJS = \
 	platform/dc_debug.o \
 	platform/dc_timers.o \
 	platform/dc_config.o \
+	platform/dc_settings.o \
+	platform/dc_pvr.o \
 	platform/dc_savestates.o \
 	platform/dc_plugins.o \
 	platform/dc_recomp_stubs.o \

@@ -76,6 +76,7 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
 9. **Controller map** — triggers carry Z/R, `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons. See **Controller mapping** below.
 10. **Second audit polish** — host stub builds under clang/macOS (`gc_input/input.c` nested functions removed, `<malloc.h>` guarded, `invalidate_func` declared); DC ROM-header byte order fixed and asserted; PIF joybus store made alignment- and LP64-safe; ROM cache bounds/LRU/NULL fixes; AI DMA clamped to RDRAM; `PC` no longer leaked per run; recursive `mkdir` for `/sd/not64/...`; `get_savespath()` correct on KOS.
 11. **Menu 8a** — immediate-mode ROM browser in `platform/dc_menu/`. Host `--menu-test` covers filter/sort/wrap/scroll/empty/missing/`skipMenu`. `--menu` is a keyboard picker. Argv ROM path unchanged. Framebuffer freed before `go()`. Not a `libgui/` port.
+12. **Menu 8c** — versioned `settings.cfg`, Settings list, Controls legend (shift map). Debug ring + optional `not64.log`. `dc_pvr_available()` is 0 on purpose.
 
 ---
 
@@ -177,7 +178,7 @@ analog cases (centre, both deadzone edges, all four extremes).
 1. **KallistiOS ELF** — install `sh-elf-gcc` + KOS (`KOS_BASE`, `environ.sh`). `make -f Makefile.dc` → `not64-dc.elf`. Same bring-up on lxdream/redream or hardware. Cloud image does not have this yet (`environment.json` when someone can install it).
 2. **AICA** — `audio-dc.c` only fills a ring. Host smoke is enough; hardware needs `snd_stream` (or equivalent) draining that ring.
 3. **Get a real ROM to VI** — *this is the live problem.* A retail 32 MiB cart now **passes IPL3's CIC boot checksum and runs game code**; after 600M instructions it takes a **TLB store miss** (`Cause=0x0c`, `EPC=0x800afbe4`) and vectors to `0x80000000`, and `VI origin` is still 0. It is an **infinite TLB refill loop**: `BadVAddr=0x00048240` (KUSEG), the game's handler *is* installed at the vector (`JR` to `0x800afba0`), and the PC cycles vector -> faulting store -> vector forever. The entry the handler writes is not taking effect. Start at `TLBWR`/`TLBWI` and `gc_memory/TLB-Cache-hash.c` (DC uses `USE_TLB_CACHE`; its DC `#ifdef`s only stub zlib savestate dumpers, so suspect the write path). Full evidence in **Phase 3.5 of `PORTING.md`**.
-4. **Menu 8b/8c** — overlay (reset/save-state) and settings persistence. 8a is done on the host; hardware still needs the KOS ELF to display it. Design leftovers are **Phase 8 in `PORTING.md`**.
+4. **Menu 8b** — in-game overlay (reset/save-state). Needs a framebuffer and a real `dc_savestates.c`. 8a/8c are host-complete.
 5. **Software first frame** (Phase 4) — only after a ROM actually hits RDP/VI. Start from `mupen64_soft_gfx/` (27 files, least GX coupling — 4 files touch `GX_*`), not `glN64_GX/` (73 files, 41 touching `GX_*`). **Not PVR:** no PVR code exists anywhere in this tree, and **Phase 7 in `PORTING.md`** records why it is not next and what it will have to solve (tile-based deferred rendering vs immediate-mode display lists, no cheap framebuffer read-back, 8 MB VRAM, RDP combiner semantics).
 6. **SH4 dynarec** — last. New `r4300/sh4/`. PPC JIT is not a template you search-replace.
 

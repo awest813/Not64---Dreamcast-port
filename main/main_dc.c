@@ -12,6 +12,9 @@
 
 #include "../platform/dc_memory.h"
 #include "../platform/dc_menu/dc_menu.h"
+#include "../platform/dc_settings.h"
+#include "../platform/dc_pvr.h"
+#include "../gui/DEBUG.h"
 #include "../fileBrowser/fileBrowser.h"
 #include "../fileBrowser/fileBrowser-kos.h"
 #include "../main/winlnxdefs.h"
@@ -679,6 +682,11 @@ int main(int argc, char **argv)
 
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stderr, NULL, _IONBF, 0);
+
+	dc_settings_defaults();
+	dc_settings_load(NULL);
+	if (dc_pvr_available())
+		printf("PVR: unexpected backend present\n");
 
 #ifndef DC_HOST_STUB
 	vid_set_mode(DM_640x480, PM_RGB565);
