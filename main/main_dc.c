@@ -34,6 +34,7 @@
 #include "../main/savestates.h"
 #include "../gc_memory/pif.h"
 #include "../gc_memory/flashram.h"
+#include "../gc_memory/Saves.h"
 
 #ifndef DC_HOST_STUB
 KOS_INIT_FLAGS(INIT_DEFAULT);
@@ -46,6 +47,9 @@ KOS_INIT_ROMDISK(romdisk);
 extern unsigned long dc_interp_step_limit;
 extern unsigned long dc_interp_steps;
 extern BOOL hasLoadedROM;
+#ifdef DC_HOST_STUB
+extern BOOL mempakWritten;
+#endif
 extern void init_controller_ts(void);
 extern void controller_DC_set_start_pulse(unsigned vi);
 extern void auto_assign_controllers(void);
@@ -836,12 +840,16 @@ static int smoke_pak(void)
 	int fail = 0;
 	char old_pak = pakMode[0];
 	int old_plugin = Controls[0].Plugin;
+	BOOL old_mw = mempakWritten;
+	unsigned char bak[0x20];
 	int i;
 
 	if (!Controls[0].Present) {
 		printf("pak smoke: pad 0 not Present\n");
 		return 1;
 	}
+
+	memcpy(bak, dc_cart_mempak(), sizeof(bak));
 
 	pakMode[0] = PAKMODE_MEMPAK;
 	apply_pak_modes();
@@ -927,6 +935,8 @@ static int smoke_pak(void)
 	pakMode[0] = old_pak;
 	Controls[0].Plugin = old_plugin;
 	apply_pak_modes();
+	memcpy(dc_cart_mempak(), bak, sizeof(bak));
+	mempakWritten = old_mw;
 	printf("pak smoke %s (mempak + rumble latch)\n", fail ? "FAIL" : "PASS");
 	return fail;
 }

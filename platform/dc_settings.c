@@ -314,7 +314,7 @@ void dc_settings_boot(void)
 void dc_settings_enter(void)
 {
 	set_cursor = 0;
-	set_prev = 0;
+	set_prev = ~0; /* swallow a held stick/button from the ROM browser */
 }
 
 int dc_settings_step(const BUTTONS *keys)
@@ -407,7 +407,7 @@ void dc_controls_enter(void)
 {
 	ctl_cursor = 0;
 	ctl_scroll = 0;
-	ctl_prev = 0;
+	ctl_prev = ~0; /* swallow a held stick from the ROM browser */
 }
 
 int dc_controls_step(const BUTTONS *keys)
@@ -654,6 +654,14 @@ int dc_settings_selftest(void)
 			}
 		}
 		memset(&k, 0, sizeof(k));
+		k.X_AXIS = 80;
+		dc_settings_step(&k);
+		if (!audioEnabled) {
+			printf("settings FAIL: opening stick must not cycle Audio\n");
+			fails++;
+		}
+		memset(&k, 0, sizeof(k));
+		dc_settings_step(&k);
 		k.D_DPAD = 1;
 		dc_settings_step(&k);
 		memset(&k, 0, sizeof(k));
@@ -688,6 +696,14 @@ int dc_settings_selftest(void)
 			}
 		}
 		memset(&k, 0, sizeof(k));
+		k.X_AXIS = 80;
+		dc_controls_step(&k);
+		if (pakMode[0] != PAKMODE_MEMPAK) {
+			printf("settings FAIL: opening stick must not cycle pak\n");
+			fails++;
+		}
+		memset(&k, 0, sizeof(k));
+		dc_controls_step(&k);
 		k.A_BUTTON = 1;
 		dc_controls_step(&k);
 		if (pakMode[0] != PAKMODE_RUMBLEPAK) {

@@ -687,28 +687,32 @@ static int read_state(FILE *f)
 		return -1;
 	}
 	if (rd_mmio(f))
-		return -1;
+		goto bad_read;
 	if (rd_mem(f, rdramb, DC_N64_RDRAM_SIZE) ||
 	    rd_mem(f, SP_DMEMb, 0x1000) || rd_mem(f, SP_IMEMb, 0x1000) ||
 	    rd_mem(f, PIF_RAMb, 0x40))
-		return -1;
+		goto bad_read;
 	if (rd_mem(f, flash, 24))
-		return -1;
+		goto bad_read;
 	load_flashram_infos(flash);
 	if (rd_mem(f, dc_cart_eeprom(), DC_EEPROM_SIZE) ||
 	    rd_mem(f, dc_cart_sram(), DC_SRAM_SIZE) ||
 	    rd_mem(f, dc_cart_flashram(), DC_FLASH_SIZE) ||
 	    rd_mem(f, dc_cart_mempak(), DC_MEMPAK_SIZE))
-		return -1;
+		goto bad_read;
 	eepromWritten = buf_not_fill(dc_cart_eeprom(), DC_EEPROM_SIZE, 0xFF);
 	sramWritten = buf_not_fill(dc_cart_sram(), DC_SRAM_SIZE, 0x00);
 	flashramWritten = buf_not_fill(dc_cart_flashram(), DC_FLASH_SIZE, 0xFF);
 	mempakWritten = TRUE;
 	if (TLBCache_fread(f))
-		return -1;
+		goto bad_read;
 	if (rd_cpu(f) || rd_events(f))
-		return -1;
+		goto bad_read;
 	return 0;
+bad_read:
+	if (!last_err[0])
+		snprintf(last_err, sizeof(last_err), "read failed");
+	return -1;
 }
 
 void savestates_save(void)
@@ -741,6 +745,7 @@ void savestates_save(void)
 	}
 	if (fclose(fp) != 0) {
 		remove(path);
+		snprintf(last_err, sizeof(last_err), "write failed");
 		dc_log(DC_LOG_ERROR, "savestate: save slot %u close failed", slot);
 		return;
 	}
@@ -757,6 +762,7 @@ void savestates_load(void)
 	last_ok = 0;
 	last_err[0] = 0;
 	if (!rdramb) {
+		snprintf(last_err, sizeof(last_err), "no RDRAM");
 		dc_log(DC_LOG_ERROR, "savestate: load slot %u: no RDRAM", slot);
 		return;
 	}
