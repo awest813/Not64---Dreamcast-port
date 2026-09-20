@@ -10,9 +10,7 @@ def check(path, backend):
     assert backend in ('software', 'pvr'), 'unknown backend'
     assert not re.search(r'FAIL|Fatal:|Verify Failed|Unhandled exception', text), 'target or emulator reported failure'
     assert text.count('KallistiOS v') == 1, 'unexpected kernel restart'
-    assert 'Dreamcast run complete: status=0; exit=system-menu' in text, 'missing successful run completion'
-    assert ('arch: exiting the system to the BIOS menu' in text or
-            'Flycast has stopped: Reboot to BIOS' in text), 'missing explicit system-menu exit'
+    assert 'Dreamcast run complete: status=0; diagnostic idle' in text, 'missing successful cleanup and diagnostic idle'
     assert text.count('VITEST PASS (76800 CPU-written pixels + VI scanout)') == 9, 'missing pixel checks'
     assert f'Graphics {backend}: VI=121 presented=120 DList=0 RDP=0 invalid=0 unsupported=0 failures=0' in text, 'initial run failed'
     match = re.search(rf'VIDEO STRESS PASS: backend={backend} cycles=8 valid-frames=152 scanout-present-avg-us=(\d+)', text)

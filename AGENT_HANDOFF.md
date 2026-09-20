@@ -13,8 +13,14 @@ The merged host suite passes CPU, controller/Joybus, menu, TLB cache, memory
 contract, VI conversion, exact image capture, and all three ROM dump formats.
 The optimized SDK-endian regression and software renderer checks also pass.
 A generated large fixture exercises ROM-cache replacement and file reuse.
-Target shutdown now requests the BIOS menu instead of the default loader return;
-the log validator rejects fatal errors and accidental kernel restarts.
+Diagnostic builds release graphics/CPU/cache resources and idle safely until
+the emulator is closed. ReIOS reboots a mounted disc when asked for the BIOS
+menu, so a menu exit alone did not prevent repeated startup. The log validator
+rejects fatal errors and accidental restarts and requires successful cleanup.
+Final Flycast diagnostic-disc validation passes: 272 frames, eight reopen
+cycles, stable PVR allocations, successful cleanup/idle, and no restart.
+Evidence: build/dc/validation/merged-disc-idle.log. The final game-disc ELF
+builds; the full commercial-game run was not repeated after integration.
 Physical hardware and full gameplay remain unverified.
 
 ## Historical stopping checkpoint — 2026-09-20

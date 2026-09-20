@@ -99,7 +99,7 @@ host regression with that constant defined protect the fix. The build also uses
 
 Add `DEMO=1` to either KOS build. It embeds the generated fixture in a KOS ROM disk,
 runs 300,000 interpreter iterations or 120 valid frames, checks the result, then
-performs eight close/reopen cycles with 19 valid frames each. It holds the final image for 60 seconds, then closes the backend and restores the console.
+performs eight close/reopen cycles with 19 valid frames each. It holds the final image for 60 seconds, then closes the backend, restores the console, and idles until you close the emulator.
 No SD card or game dump is required. Example using the local SDK:
 
 ```sh
@@ -248,7 +248,7 @@ For this workstation:
 
 The game-disc preset runs up to 600 valid frames / 500 million interpreter loop
 iterations, pulses Start during VIs 400–419, holds the last image for 60 seconds,
-and shuts down. It is a bounded display regression, not a normal game launcher.
+and releases graphics/CPU/cache resources before idling until you close the emulator. It is a bounded display regression, not a normal game launcher.
 A different game may need different timing. Standalone builds accept `--frames`,
 `--capture output.ppm`, and `--start-at VI`; no synthetic input occurs without
 that option outside the game-disc preset. The existing Maple input stays active.
@@ -334,8 +334,22 @@ capture, all three dump formats, an optimized SDK-endian regression, and the
 software renderer tests. A generated 3 MiB fixture also exercises ROM-cache
 replacement and persistent file handling without a commercial game dump.
 
-Target exit now explicitly requests `ARCH_EXIT_MENU`. KOS otherwise defaults to
-returning to a loader, which is unsuitable for a standalone disc and was followed
-by a second startup and crash in the prior game log. The target log checker now
-rejects fatal errors and repeated startup and requires successful process exit
-and the BIOS-menu transition, as well as the existing presentation checks.
+The standalone ELF returned to Flycast's BIOS successfully, but the same code
+on a disc revealed that Flycast's emulated BIOS (ReIOS) boots a mounted disc
+again when asked for its system menu. This reproduces the repeated startup
+that preceded the old game-disc crash; changing KOS's exit destination alone
+does not fix it. Diagnostic demo/game builds now release graphics, CPU, and
+cache resources and remain in a sleeping KOS idle loop. Close the emulator
+after the completion message. Ordinary builds request the system menu on exit;
+with ReIOS and a mounted disc that may boot the browser again.
+
+The target log checker rejects fatal errors and repeated startup and requires
+a successful cleanup/idle message, along with all existing presentation checks.
+
+Validated the final diagnostic disc in Flycast: nine complete pixel checks,
+272 presented frames, eight reopen cycles, stable PVR allocation, and
+`Dreamcast run complete: status=0; diagnostic idle` with one KOS startup.
+`python3 tests/dc/check_target_log.py pvr build/dc/validation/merged-disc-idle.log`
+passes. The validator also rejects both the historical fatal game log and the
+intermediate BIOS-menu disc that restarted. The final game-disc ELF builds;
+its complete 600-frame commercial-game run was not repeated after integration.

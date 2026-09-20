@@ -1379,7 +1379,15 @@ int main(int argc, char **argv)
     printf("Dreamcast interpreter: %lu steps using %s\n", steps, rompath);
     if (load_and_step(rompath, steps)) fail = 1;
 #ifndef DC_HOST_STUB
+#if defined(DC_EMBED_VITEST) || defined(DC_GAME_DISC)
+    /* ReIOS boots a mounted disc again when asked for the BIOS menu. All
+     * emulator and graphics resources are closed; keep only KOS alive so
+     * a bounded diagnostic cannot reenter startup with stale disc state. */
+    printf("Dreamcast run complete: status=%d; diagnostic idle (close emulator to exit)\n", fail);
+    for (;;) thd_sleep(1000);
+#else
     printf("Dreamcast run complete: status=%d; exit=system-menu\n", fail);
+#endif
 #endif
     return fail;
 usage:

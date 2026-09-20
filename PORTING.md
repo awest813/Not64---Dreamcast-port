@@ -4,7 +4,7 @@
 
 Graphics, controller, ROM browser, and cache branches are combined on master.
 See tools/dc/README.md for current builds, merged regression results, and
-explicit system-menu shutdown. Older phase notes below are historical.
+safe diagnostic cleanup and idle. Older phase notes below are historical.
 
 ## Current implementation update — 2026-09-19
 
