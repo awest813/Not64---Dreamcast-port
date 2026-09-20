@@ -80,6 +80,7 @@ static void list_rom_dir(void)
 	if (n < 0) {
 		dc_log(DC_LOG_INFO,
 		       "  (create this folder and add .z64/.n64 dumps later)");
+		romFile_deinit(romFile_topLevel);
 		return;
 	}
 	for (i = 0; i < n && i < 16; ++i) {
@@ -704,6 +705,14 @@ int main(int argc, char **argv)
 	setvbuf(stderr, NULL, _IONBF, 0);
 
 	dc_settings_defaults();
+#ifdef DC_HOST_STUB
+	/* Load cfg for the selftests, but do not log a session first — that
+	 * used to leave a one-line banner in not64.log before the real tests. */
+	if (argc > 1 && strcmp(argv[1], "--menu-test") == 0) {
+		dc_settings_load(NULL);
+		return dc_menu_selftest();
+	}
+#endif
 	if (dc_settings_load(NULL) != 0)
 		dc_log(DC_LOG_INFO, "settings: defaults (no cfg yet)");
 	else
@@ -713,11 +722,6 @@ int main(int argc, char **argv)
 
 #ifndef DC_HOST_STUB
 	vid_set_mode(DM_640x480, PM_RGB565);
-#endif
-
-#ifdef DC_HOST_STUB
-	if (argc > 1 && strcmp(argv[1], "--menu-test") == 0)
-		return dc_menu_selftest();
 #endif
 
 	print_budget();

@@ -14,7 +14,9 @@
 #include <string.h>
 
 #ifdef DC_HOST_STUB
+#include <fcntl.h>
 #include <time.h>
+#include <unistd.h>
 #else
 #include <kos.h>
 #endif
@@ -92,6 +94,8 @@ void dc_debug_close(void)
 		fclose(log_fp);
 		log_fp = NULL;
 	}
+	/* Next open is a new session (gecko close, end of run, selftest). */
+	session_written = 0;
 }
 
 void dc_debug_reset(void)
@@ -201,6 +205,7 @@ void DEBUG_print(char *string, int pos)
 		return;
 
 	if (pos == DBG_SDGECKOOPEN) {
+		log_failed = 0;
 		log_open();
 		return;
 	}
@@ -271,22 +276,41 @@ char **DEBUG_get_text(void)
 }
 
 #ifdef DC_HOST_STUB
+static int log_has(const char *needle)
+{
+	FILE *fp;
+	char buf[256];
+	int saw = 0;
+
+	fp = fopen(dc_debug_log_path(), "r");
+	if (!fp)
+		return 0;
+	while (fgets(buf, sizeof(buf), fp))
+		if (strstr(buf, needle))
+			saw = 1;
+	fclose(fp);
+	return saw;
+}
+
 int dc_debug_selftest(void)
 {
 	int fails = 0, i;
 	char last[DC_LOG_WIDTH];
-	FILE *fp;
-	char buf[192];
-	int saw_hdr = 0, saw_err = 0, saw_info = 0;
+	char token[40], boom[64], gecko[80], leaked[80];
+	char **rows;
 	int saved_screen = printToScreen;
 	int saved_sd = printToSD;
+	int saved_out, cap_fd;
+	char cap_path[] = "/tmp/not64-debug-cap-XXXXXX";
+	char capbuf[128];
 
+	snprintf(token, sizeof(token), "tok%u-%ld", dc_debug_seq(), (long)getpid());
 	dc_debug_reset();
 	printToScreen = 0;
 	dc_debug_set_file(1);
 
-	dc_log(DC_LOG_INFO, "ring-one");
-	dc_log(DC_LOG_INFO, "ring-two");
+	dc_log(DC_LOG_INFO, "ring-one %s", token);
+	dc_log(DC_LOG_INFO, "ring-two %s", token);
 	if (dc_debug_last(last, sizeof(last)) != 0 || !strstr(last, "ring-two")) {
 		printf("debug FAIL: last line\n");
 		fails++;
@@ -295,12 +319,18 @@ int dc_debug_selftest(void)
 		printf("debug FAIL: seq\n");
 		fails++;
 	}
+	rows = DEBUG_get_text();
+	if (!rows || !strstr(rows[0], "ring-one") || !strstr(rows[1], "ring-two")) {
+		printf("debug FAIL: ring rows\n");
+		fails++;
+	}
 
 	for (i = 0; i < DC_LOG_LINES + 5; ++i)
 		dc_log(DC_LOG_INFO, "wrap-%d", i);
 
 	{
 		char want[32];
+		int saw_old = 0;
 
 		snprintf(want, sizeof(want), "wrap-%d", DC_LOG_LINES + 4);
 		if (dc_debug_last(last, sizeof(last)) != 0 || !strstr(last, want)) {
@@ -308,65 +338,73 @@ int dc_debug_selftest(void)
 			       want, last);
 			fails++;
 		}
-	}
-
-	dc_log(DC_LOG_ERROR, "boom-expected");
-	DEBUG_print("gecko-file-only", DBG_SDGECKOPRINT);
-	dc_debug_close();
-
-	fp = fopen(dc_debug_log_path(), "r");
-	if (!fp) {
-		printf("debug FAIL: log open %s\n", dc_debug_log_path());
-		fails++;
-	} else {
-		int saw_gecko = 0;
-		char **rows = DEBUG_get_text();
-
-		while (fgets(buf, sizeof(buf), fp)) {
-			if (strstr(buf, "----- not64-dc log"))
-				saw_hdr = 1;
-			if (strstr(buf, "ERR") && strstr(buf, "boom-expected"))
-				saw_err = 1;
-			if (strstr(buf, "INF") && strstr(buf, "ring-one"))
-				saw_info = 1;
-			if (strstr(buf, "gecko-file-only"))
-				saw_gecko = 1;
-		}
-		fclose(fp);
-		if (!saw_hdr || !saw_err || !saw_info || !saw_gecko) {
-			printf("debug FAIL: log hdr=%d err=%d info=%d gecko=%d\n",
-			       saw_hdr, saw_err, saw_info, saw_gecko);
+		rows = DEBUG_get_text();
+		for (i = 0; i < DC_LOG_LINES; ++i)
+			if (rows && !strcmp(rows[i], "wrap-0"))
+				saw_old = 1;
+		if (saw_old) {
+			printf("debug FAIL: wrap-0 still in ring\n");
 			fails++;
 		}
-		if (rows) {
-			for (i = 0; i < DC_LOG_LINES; ++i) {
-				if (strstr(rows[i], "gecko-file-only")) {
-					printf("debug FAIL: gecko print leaked into ring\n");
-					fails++;
-					break;
-				}
+	}
+
+	snprintf(boom, sizeof(boom), "boom-%s", token);
+	fflush(stdout);
+	saved_out = dup(STDOUT_FILENO);
+	cap_fd = mkstemp(cap_path);
+	if (saved_out >= 0 && cap_fd >= 0) {
+		dup2(cap_fd, STDOUT_FILENO);
+		dc_log(DC_LOG_ERROR, "%s", boom);
+		fflush(stdout);
+		dup2(saved_out, STDOUT_FILENO);
+		close(saved_out);
+		lseek(cap_fd, 0, SEEK_SET);
+		memset(capbuf, 0, sizeof(capbuf));
+		if (read(cap_fd, capbuf, sizeof(capbuf) - 1) <= 0 ||
+		    !strstr(capbuf, boom)) {
+			printf("debug FAIL: ERROR not echoed to stdout\n");
+			fails++;
+		}
+		close(cap_fd);
+		unlink(cap_path);
+	} else {
+		dc_log(DC_LOG_ERROR, "%s", boom);
+		if (saved_out >= 0)
+			close(saved_out);
+		if (cap_fd >= 0) {
+			close(cap_fd);
+			unlink(cap_path);
+		}
+	}
+
+	snprintf(gecko, sizeof(gecko), "gecko-file-only %s", token);
+	DEBUG_print(gecko, DBG_SDGECKOPRINT);
+	dc_debug_close();
+
+	if (!log_has(token) || !log_has(boom) || !log_has(gecko)) {
+		printf("debug FAIL: session file missing token/err/gecko\n");
+		fails++;
+	}
+	rows = DEBUG_get_text();
+	if (rows) {
+		for (i = 0; i < DC_LOG_LINES; ++i) {
+			if (strstr(rows[i], "gecko-file-only")) {
+				printf("debug FAIL: gecko print leaked into ring\n");
+				fails++;
+				break;
 			}
 		}
 	}
 
 	printToScreen = 0;
 	dc_debug_set_file(0);
-	dc_log(DC_LOG_INFO, "should-not-open-file");
+	snprintf(leaked, sizeof(leaked), "should-not-open-file %s", token);
+	dc_log(DC_LOG_INFO, "%s", leaked);
 	dc_debug_close();
-	fp = fopen(dc_debug_log_path(), "r");
-	if (fp) {
-		int leaked = 0;
-		while (fgets(buf, sizeof(buf), fp))
-			if (strstr(buf, "should-not-open-file"))
-				leaked = 1;
-		fclose(fp);
-		if (leaked) {
-			printf("debug FAIL: INFO wrote file while logfile Off\n");
-			fails++;
-		}
+	if (log_has(leaked)) {
+		printf("debug FAIL: INFO wrote file while logfile Off\n");
+		fails++;
 	}
-	/* Overlay off + INFO must not be required on stdout; ERROR still is
-	 * (already checked boom-expected above with overlay off). */
 
 	printToScreen = saved_screen;
 	dc_debug_set_file(saved_sd);
