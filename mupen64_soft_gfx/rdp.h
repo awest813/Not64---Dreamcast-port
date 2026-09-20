@@ -61,6 +61,7 @@ class RDP
    void setTImg(int format, int size, int width, void *timg);
    void setZImg(void *zimg);
    void setFillColor(int color);
+   void setPrimDepth(int z) { bl->setPrimDepth(z); }
    void setFogColor(int color);
    void setBlendColor(int color);
    void setEnvColor(int color);

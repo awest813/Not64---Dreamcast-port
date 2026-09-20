@@ -32,8 +32,9 @@
 #include "global.h"
 #include "cc.h"
 
-CC::CC() : zero(0), oldCycle1(0), oldCycle2(0)
+CC::CC() : zero(0), one(0xffffffff), oldCycle1(-1), oldCycle2(-1)
 {
+   setCombineMode(0,0);
 }
 
 CC::~CC()
@@ -47,66 +48,16 @@ void CC::setCombineKey(int value)
 
 Color32* CC::getColorSource(int src, int var)
 {
-   switch(src)
-     {
-      case 0:
-	return &combined;
-	break;
-      case 1:
-	return &texel0;
-	break;
-      case 2:
-	return &texel1;
-	break;
-      case 3:
-	return &primColor;
-	break;
-      case 4:
-	return &shade;
-	break;
-      case 5:
-	return &envColor;
-	break;
-      case 7:
-	if (var == 4)
-	  return &zero;
-	printf("CC:unknown color combiner source:%d,%d\n", src, var);
-	return &combinedAlpha;
-	break;
-      case 8:
-	if (var == 3)
-	  return &texel0Alpha;
-	else
-	  printf("CC:unknown color combiner source:%d,%d\n", src, var);
-	break;
-      case 9:
-	if (var == 3)
-	  return &texel1Alpha;
-	else
-	  return &zero;
-	break;
-      case 12:
-	if (var == 2)
-	  return &zero;
-	printf("CC:unknown color combiner source:%d,%d\n", src, var);
-	break;
-      case 13:
-	if (var == 3)
-	  return &LODFraction;
-	else
-	  printf("CC:unknown color combiner source:%d,%d\n", src, var);
-	break;
-      case 15:
-	if (var == 1 || var == 2)
-	  return &zero;
-	printf("CC:unknown color combiner source:%d,%d\n", src, var);
-	break;
-      case 31:
-	return &zero;
-	break;
-      default:
-	printf("CC:unknown color combiner source:%d\n", src);
-     }
+   if(src<=5) {
+       Color32 *basic[]={&combined,&texel0,&texel1,&primColor,&shade,&envColor};
+       return basic[src];
+   }
+   if(var==3) {
+       Color32 *factor[]={&zero,&combinedAlpha,&texel0Alpha,&texel1Alpha,&primAlpha,&shadeAlpha,&envAlpha,&LODFraction,&primLOD,&zero};
+       if(src>=6 && src<=15) return factor[src-6];
+       return &zero;
+   }
+   if(src==6 && var!=2) return &one;
    return &zero;
 }
 
@@ -134,6 +85,8 @@ float* CC::getAlphaSource(int src, int var)
       case 5:
 	return envColor.getAlphap();
 	break;
+      case 6:
+        return var==3 ? primLOD.getAlphap() : one.getAlphap();
       case 7:
 	return zero.getAlphap();
 	break;
@@ -190,25 +143,29 @@ void CC::setPrimColor(int color, float m, float l)
    primColor = color;
    mLOD = m;
    lLOD = l;
+   primLOD = Color32(l,l,l,l);
+   primAlpha = Color32(primColor.getAlpha(),primColor.getAlpha(),primColor.getAlpha(),primColor.getAlpha());
 }
 
 void CC::setEnvColor(int color)
 {
    envColor = color;
+   envAlpha=Color32(envColor.getAlpha(),envColor.getAlpha(),envColor.getAlpha(),envColor.getAlpha());
 }
 
 void CC::setShade(const Color32& c)
 {
    shade = c;
+   shadeAlpha=Color32(shade.getAlpha(),shade.getAlpha(),shade.getAlpha(),shade.getAlpha());
 }
 
 Color32 CC::combine1(const Color32& texel)
 {
    texel0 = texel;
    texel0Alpha = Color32(texel0.getAlpha(), texel0.getAlpha(), texel0.getAlpha(), texel0.getAlpha());
-   Color32 c =  (*pa0 - *pb0)* *pc0 + *pd0;
-   float Ac0 = *pAc0 / 255.0f;
-   c.setAlpha((Ac0 * (*pAa0 - *pAb0)) + *pAd0);
+   Color32 c =  (*pa1 - *pb1)* *pc1 + *pd1;
+   float Ac0 = *pAc1 / 255.0f;
+   c.setAlpha((Ac0 * (*pAa1 - *pAb1)) + *pAd1);
    return c;
 }
 
@@ -223,6 +180,7 @@ Color32 CC::combine2(const Color32& texela, const Color32& texelb)
    float Ac0 = *pAc0 / 255.0f;
    combined.setAlpha((Ac0 * (*pAa0 - *pAb0)) + *pAd0);
    
+   combinedAlpha=Color32(combined.getAlpha(),combined.getAlpha(),combined.getAlpha(),combined.getAlpha());
    Color32 c = (*pa1 - *pb1)* *pc1 + *pd1;
    float Ac1 = *pAc1 / 255.0f;
    c.setAlpha((Ac1 * (*pAa1 - *pAb1)) + *pAd1);

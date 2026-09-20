@@ -3,3 +3,9 @@
 /not64-dc.elf
 *.o
 /saves/dc_host.txt
+
+/build/dc/
+/not64-dc-pvr.elf
+/not64-dc-*-demo.elf
+
+/not64-dc*-soft*.elf

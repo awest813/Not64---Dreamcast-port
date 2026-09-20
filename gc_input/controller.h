@@ -110,6 +110,7 @@ extern virtualControllers_t virtualControllers[4];
 extern controller_t controller_DC;
 #ifdef DC_HOST_STUB
 #define DC_CONT_A (1u << 2)
+#define DC_CONT_START (1u << 3)
 void controller_DC_host_set(int Control, unsigned int buttons, int jx, int jy);
 #endif
 extern controller_t* controller_ts[num_controller_t];

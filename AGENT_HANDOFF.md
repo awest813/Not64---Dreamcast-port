@@ -1,5 +1,50 @@
 # Agent handoff — Not64 Dreamcast port
 
+## Stopping checkpoint — 2026-09-20
+
+Paused at the user's request. All source changes remain on disk, uncommitted;
+no commit or push was made. No task-owned emulator or host test is still running.
+The user's separate Flycast instance and existing SDK Docker container were left
+untouched.
+
+Verified: Mario Golf opening/title display in Flycast through PVR, 600 presented
+frames / 302 display lists, zero reported presentation or decoder errors during
+that bounded run. Host regressions and focused software-renderer UBSan checks pass.
+Local test disc: `build/dc/not64-game.cdi`; reproducible build instructions and
+limitations are in `tools/dc/README.md`.
+
+Important follow-up found while stopping: the complete Flycast serial log shows
+another KOS startup after the successful run and display-mode restoration, then
+`Fatal: SH4 exception when blocked`. Its cause has not been investigated. The
+600-frame display result is valid, but clean game-disc exit/restart is NOT verified.
+Complete evidence is saved in `build/dc/validation/mario-golf-flycast.log`.
+Investigate that exit/restart failure before broadening gameplay or performance work.
+Physical Dreamcast hardware and full gameplay remain unverified.
+
+## Current implementation update — 2026-09-19
+
+The software VI display and native PVR textured-quad presenter now both render
+CPU-written color bars in Flycast: 120 valid frames, all 76,800 source pixels
+checked, zero reported presentation failures. Host memory/lifecycle, converter,
+CPU/PIF/AI/save and exact image-capture tests pass. Target testing also fixed a
+KOS byte-order constant that incorrectly selected big-endian CPU/RSP paths.
+
+Use [tools/dc/README.md](tools/dc/README.md) for reproducible Docker builds,
+self-contained software/PVR demo ELFs, SDK provenance, and test scope. Native
+LP64 host builds remain intentionally rejected. Both presenters passed eight
+Flycast reopen cycles and invalid/blank recovery, with stable PVR allocations and
+recorded emulated-clock timings. Physical Dreamcast hardware remains unverified.
+Opt-in `GFX=soft` now renders F3DEX2 game tasks into RDRAM for VI/PVR display.
+Mario Golf (USA) displays its title screen in both the host capture and Flycast
+through PVR after a deterministic Start pulse. Corrected ROM byte order, reset VI timing, and Joybus button packets
+allow the boot and input transition. See the game-disc instructions and precise
+limitations in [tools/dc/README.md](tools/dc/README.md). Raw DPC, broad microcode
+compatibility, accurate coverage/VI filtering, and full gameplay remain unverified.
+
+The sections below preserve the earlier handoff/plan; this update supersedes
+older statements about missing ELFs, stub graphics, and untested emulator boot.
+
+
 **Read this first, then `PORTING.md`.** This file is for the next agent, not a design essay.
 
 | | |

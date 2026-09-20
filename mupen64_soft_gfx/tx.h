@@ -73,6 +73,8 @@ class TX
    
    Descriptor descriptor[8];
    unsigned char tmem[512*8];
+   unsigned short paletteData[256];
+   Color32 sample(int tile, int s, int t);
    
    Color32 (TX::*unpackTexel[8])(int tile, int s, int t);
    Color32 unpack_RGBA16(int tile, int s, int t);

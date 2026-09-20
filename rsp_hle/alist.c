@@ -237,7 +237,7 @@ void alist_interleave(struct hle_t* hle, uint16_t dmemo, uint16_t left, uint16_t
         uint16_t r1 = *(srcR++);
         uint16_t r2 = *(srcR++);
 
-#if _BIG_ENDIAN
+#if _BIG_ENDIAN && !defined(__DREAMCAST__)
         *(dst++) = l1;
         *(dst++) = r1;
         *(dst++) = l2;

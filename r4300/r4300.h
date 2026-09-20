@@ -30,6 +30,11 @@
 #ifndef R4300_H
 #define R4300_H
 
+#ifdef __DREAMCAST__
+/* Interpreter-only implementation lives in platform/dc_recomp_stubs.c. */
+void invalidate_func(unsigned int addr);
+#endif
+
 #include <stdio.h>
 #include <string.h>
 #include "../main/rom.h"

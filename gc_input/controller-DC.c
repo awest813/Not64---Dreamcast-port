@@ -4,6 +4,10 @@
 
 #include <string.h>
 #include "controller.h"
+#include "../main/timers.h"
+extern timers Timers;
+static unsigned start_pulse_vi;
+void controller_DC_set_start_pulse(unsigned vi) { start_pulse_vi = vi; }
 
 #ifndef DC_HOST_STUB
 #include <kos.h>
@@ -114,6 +118,9 @@ static int _GetKeys(int Control, BUTTONS *Keys, controller_config_t *config)
 	memset(c, 0, sizeof(BUTTONS));
 	if (!poll_pad(Control, &b, &jx, &jy))
 		return 0;
+    /* Optional deterministic input for startup/title-screen regression runs. */
+    if (Control == 0 && start_pulse_vi && Timers.vis >= start_pulse_vi &&
+        Timers.vis < start_pulse_vi + 20u) b |= CONT_START;
 
 	last_buttons[Control] = b;
 	last_joyx[Control] = jx;

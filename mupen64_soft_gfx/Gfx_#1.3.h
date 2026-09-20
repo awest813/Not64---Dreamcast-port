@@ -1,3 +1,6 @@
+#ifdef __DREAMCAST__
+#include "../main/plugin.h"
+#else
 /**********************************************************************************
 Common gfx plugin spec, version #1.3 maintained by zilmar (zilmar@emulation64.com)
 
@@ -269,4 +272,6 @@ EXPORT void CALL ViWidthChanged (void);
 #if defined(__cplusplus)
 }
 #endif
+#endif
+
 #endif

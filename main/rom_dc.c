@@ -23,7 +23,7 @@ int init_byte_swap(unsigned int magicWord)
 		rom_byte_swap = BYTE_SWAP_BYTE;
 		break;
 	case 0x40123780: // aka little endian, aka halfswapped
-		rom_byte_swap = BYTE_SWAP_HALF;
+		rom_byte_swap = BYTE_SWAP_NONE;
 		break;
 	case 0x80371240:
 #ifdef __DREAMCAST__
@@ -57,11 +57,12 @@ void byte_swap(char* buffer, unsigned int length)
 				((v & 0xFF000000u) >> 24);
 		}
 	} else if (rom_byte_swap == BYTE_SWAP_BYTE) {
-		for (i = 0; i < (length & ~1u); i += 2) {
-			unsigned char a = (unsigned char)buffer[i];
-			buffer[i] = buffer[i + 1];
-			buffer[i + 1] = (char)a;
-		}
+        /* Pair-swapped dump -> native little-endian 32-bit words. */
+        for (i = 0; i < (length & ~3u); i += 4) {
+            unsigned char a=buffer[i], b=buffer[i+1];
+            buffer[i]=buffer[i+2]; buffer[i+1]=buffer[i+3];
+            buffer[i+2]=a; buffer[i+3]=b;
+        }
 	}
 }
 
@@ -133,12 +134,27 @@ int rom_read(fileBrowser_file* file){
      ROMCache_deinit();
      return ret;
    }
-   ROMCache_read(&ROM_HEADER, 0, sizeof(rom_header));
+   ROMCache_read((u8 *)&ROM_HEADER, 0, sizeof(rom_header));
+#ifdef __DREAMCAST__
+   /* Numeric words are native-endian, but byte and halfword fields retain the
+    * core's word-swapped lane layout. Decode metadata before CPU region setup. */
+   {
+      unsigned char raw[sizeof(rom_header)];
+      memcpy(raw, &ROM_HEADER, sizeof(raw));
+      ROM_HEADER.init_PI_BSB_DOM1_LAT_REG = raw[0 ^ 3];
+      ROM_HEADER.init_PI_BSB_DOM1_PGS_REG = raw[1 ^ 3];
+      ROM_HEADER.init_PI_BSB_DOM1_PWD_REG = raw[2 ^ 3];
+      ROM_HEADER.init_PI_BSB_DOM1_PGS_REG2 = raw[3 ^ 3];
+      ROM_HEADER.Cartridge_ID = ((unsigned)raw[0x3c ^ 3] << 8) | raw[0x3d ^ 3];
+      ROM_HEADER.Country_code = raw[0x3e ^ 3];
+      ROM_HEADER.Version = raw[0x3f ^ 3];
+   }
+#endif
 
   //Copy header name as Goodname (in the .ini we can use CRC to identify ROMS)
   memcpy(ROM_SETTINGS.goodname, ROM_HEADER.Name, 20);
 #ifdef __DREAMCAST__
-  if (rom_byte_swap == BYTE_SWAP_HALF) {
+  {
     for (i = 0; i < 20; i += 4) {
       unsigned char *p = (unsigned char *)ROM_SETTINGS.goodname + i;
       unsigned char t0 = p[0], t1 = p[1];

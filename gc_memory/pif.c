@@ -344,7 +344,20 @@ void internal_ReadController(int Control, BYTE *Command)
 #else
 	     getKeys(Control, &Keys);
 #endif
-	     *((unsigned long *)(Command + 3)) = Keys.Value;
+	#ifdef __DREAMCAST__
+             /* Joybus bytes have fixed bit positions, independent of C bitfields. */
+             Command[3] = (Keys.A_BUTTON << 7) | (Keys.B_BUTTON << 6) |
+                 (Keys.Z_TRIG << 5) | (Keys.START_BUTTON << 4) |
+                 (Keys.U_DPAD << 3) | (Keys.D_DPAD << 2) |
+                 (Keys.L_DPAD << 1) | Keys.R_DPAD;
+             Command[4] = (Keys.L_TRIG << 5) | (Keys.R_TRIG << 4) |
+                 (Keys.U_CBUTTON << 3) | (Keys.D_CBUTTON << 2) |
+                 (Keys.L_CBUTTON << 1) | Keys.R_CBUTTON;
+             Command[5] = (unsigned char)Keys.X_AXIS;
+             Command[6] = (unsigned char)Keys.Y_AXIS;
+#else
+             *((unsigned long *)(Command + 3)) = Keys.Value;
+#endif
 #ifdef COMPARE_CORE
 	     check_input_sync(Command+3);
 #endif

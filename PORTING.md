@@ -1,5 +1,29 @@
 # Not64 Dreamcast Port — Audit and Plan
 
+## Current implementation update — 2026-09-19
+
+The software VI display and native PVR textured-quad presenter now both render
+CPU-written color bars in Flycast: 120 valid frames, all 76,800 source pixels
+checked, zero reported presentation failures. Host memory/lifecycle, converter,
+CPU/PIF/AI/save and exact image-capture tests pass. Target testing also fixed a
+KOS byte-order constant that incorrectly selected big-endian CPU/RSP paths.
+
+Use [tools/dc/README.md](tools/dc/README.md) for reproducible Docker builds,
+self-contained software/PVR demo ELFs, SDK provenance, and test scope. Native
+LP64 host builds remain intentionally rejected. Both presenters passed eight
+Flycast reopen cycles and invalid/blank recovery, with stable PVR allocations and
+recorded emulated-clock timings. Physical Dreamcast hardware remains unverified.
+Opt-in `GFX=soft` now renders F3DEX2 game tasks into RDRAM for VI/PVR display.
+Mario Golf (USA) displays its title screen in both the host capture and Flycast
+through PVR after a deterministic Start pulse. Corrected ROM byte order, reset VI timing, and Joybus button packets
+allow the boot and input transition. See the game-disc instructions and precise
+limitations in [tools/dc/README.md](tools/dc/README.md). Raw DPC, broad microcode
+compatibility, accurate coverage/VI filtering, and full gameplay remain unverified.
+
+The sections below preserve the earlier handoff/plan; this update supersedes
+older statements about missing ELFs, stub graphics, and untested emulator boot.
+
+
 **Status:** Phase 2–3 host: interpreter CPUTEST PASS (ADDI/SLTI/BNE), Maple→PIF smoke, AI/save smokes. No KallistiOS ELF yet.  
 **Handoff for the next agent:** `AGENT_HANDOFF.md`  
 **Repo:** `Not64---Dreamcast-port` (GitHub name is aspirational; the tree is Wii/GC Not64).  
@@ -114,6 +138,9 @@ There is no unified HAL. Boot, video, and threading live in `main/main_gc-menu2.
 - **Makefile variants** — `Makefile.dc` next to `Makefile.menu2_wii`
 
 ### Graphics
+
+Detailed source audit and staged PVR implementation gates: [PVR_PLAN.md](PVR_PLAN.md).
+This is planning work; software/PVR implementation remains not started.
 
 `glN64_GX` has `__GX__` vs desktop OpenGL/SDL (`#ifndef __GX__`). KOS KGL is not desktop OpenGL. Options later:
 

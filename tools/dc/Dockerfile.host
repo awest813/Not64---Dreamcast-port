@@ -1,0 +1,8 @@
+# 32-bit ARM userspace matches the legacy core's ILP32 memory/plugin ABI.
+FROM ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf libc6-dev-armhf-cross \
+    gdb-multiarch qemu-user make python3 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace
+CMD ["make", "-f", "Makefile.dc", "HOST=1", "CC=arm-linux-gnueabihf-gcc", "RUNNER=qemu-arm -L /usr/arm-linux-gnueabihf", "test"]

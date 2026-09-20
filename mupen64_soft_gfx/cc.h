@@ -37,6 +37,8 @@ class CC
    
    // constants
    Color32 zero;
+   Color32 one;
+   Color32 primAlpha, shadeAlpha, envAlpha, primLOD;
    
    // to be set by the pipeline
    Color32 texel0;

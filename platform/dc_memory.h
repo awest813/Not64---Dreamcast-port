@@ -33,12 +33,22 @@
 /* Graphics cache: 0 until a renderer exists */
 #define DC_TEXCACHE_SIZE        0
 
+/* Fixed 512x256 RGB565 scanout staging; texture memory is a separate budget. */
+#define DC_VIDEO_STAGING_SIZE   (256 * DC_KB)
+
+/* Optional legacy software rasterizer: depth LUT and bounded working state. */
+#ifdef DC_SOFT_GFX
+#define DC_SOFT_RENDERER_SIZE (544 * DC_KB)
+#else
+#define DC_SOFT_RENDERER_SIZE 0
+#endif
+
 /* Audio ring in gc_audio/audio-dc.c */
 #define DC_AUDIO_RING_SIZE      (64 * DC_KB)
 
 #define DC_EMU_FIXED_SIZE \
 	(DC_N64_RDRAM_SIZE + DC_ROM_STREAM_SIZE + DC_TLB_MISC_SIZE + \
-	 DC_TEXCACHE_SIZE + DC_AUDIO_RING_SIZE)
+	 DC_TEXCACHE_SIZE + DC_AUDIO_RING_SIZE + DC_VIDEO_STAGING_SIZE + DC_SOFT_RENDERER_SIZE)
 
 #define DC_HEAP_REMAINDER \
 	(DC_MAIN_RAM_SIZE - DC_OS_AND_CODE_RESERVE - DC_EMU_FIXED_SIZE)

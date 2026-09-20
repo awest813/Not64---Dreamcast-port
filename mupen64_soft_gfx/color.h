@@ -1,3 +1,4 @@
+#include <stdio.h>
 /**
  * Mupen64 - color.h
  * Copyright (C) 2002 Hacktarux
@@ -38,7 +39,7 @@ class Color16
    float a;
    
  public:
-   Color16() {}
+   Color16() : r(0),g(0),b(0),a(0) {}
    ~Color16() {}
    
    Color16(const Color16 &c)
@@ -99,7 +100,7 @@ class Color32
    float a;
    
  public:
-   Color32() {}
+   Color32() : r(0),g(0),b(0),a(0) {}
    ~Color32() {}
    
    Color32(const Color32 &c)
@@ -236,6 +237,7 @@ class Color32
    
    void clamp()
      {
+        if(r<0)r=0; if(g<0)g=0; if(b<0)b=0; if(a<0)a=0;
 	if (r > 255.0f) r = 255.0f;
 	if (g > 255.0f) g = 255.0f;
 	if (b > 255.0f) b = 255.0f;
@@ -294,7 +296,11 @@ class Color32
    
    operator int()
      {
-	return ((int)r << 24) | ((int)g << 16) | ((int)b << 8) | (int)a;
+	unsigned rr=!(r>0)?0:r>=255?255:(unsigned)r;
+        unsigned gg=!(g>0)?0:g>=255?255:(unsigned)g;
+        unsigned bb=!(b>0)?0:b>=255?255:(unsigned)b;
+        unsigned aa=!(a>0)?0:a>=255?255:(unsigned)a;
+        return (int)((rr<<24)|(gg<<16)|(bb<<8)|aa);
      }
 };
 

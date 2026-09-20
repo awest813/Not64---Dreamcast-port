@@ -29,7 +29,7 @@
 #include "common.h"
 #include "hle_internal.h"
 
-#ifdef _BIG_ENDIAN
+#if defined(_BIG_ENDIAN) && !defined(__DREAMCAST__)
 #define S 0
 #define S16 0
 #define S8 0

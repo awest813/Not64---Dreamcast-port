@@ -40,7 +40,58 @@ def write_rom(path, name, ipl_words, size=4096):
     print("wrote", path, "(%d bytes) name=%r ipl=%d insns" % (size, name, len(ipl_words)))
 
 
+def vi_test():
+    # CPU-written 320x240 RGBA5551 framebuffer at physical 0x10000.
+    # Only instructions already exercised by the bring-up interpreter are used.
+    code = []
+
+    def emit(op, rs, rt, imm):
+        code.append(i_type(op, rs, rt, imm))
+
+    def load(rt, value):
+        emit(15, 0, rt, value >> 16)
+        emit(13, rt, rt, value & 0xffff)
+
+    load(1, 0x80010000)
+    emit(13, 0, 2, 240)
+    row = len(code)
+    for color in (0xffff, 0xffc1, 0x07ff, 0x07c1, 0xf83f, 0xf801, 0x003f, 0x0001):
+        load(3, (color << 16) | color)
+        emit(13, 0, 4, 20)  # 40 pixels, two pixels per word
+        pair = len(code)
+        emit(43, 1, 3, 0)
+        emit(8, 1, 1, 4)
+        emit(8, 4, 4, -1)
+        emit(5, 4, 0, pair - (len(code) + 1))
+        code.append(0)
+    emit(8, 2, 2, -1)
+    emit(5, 2, 0, row - (len(code) + 1))
+    code.append(0)
+
+    # Four distinct corner pixels catch flips and swapped halfwords.
+    for offset, color in ((0, 0xf801), (638, 0x07c1),
+                          (239 * 640, 0x003f), (240 * 640 - 2, 0xffff)):
+        load(1, 0x80010000 + offset)
+        emit(13, 0, 3, color)
+        emit(41, 1, 3, 0)  # SH
+
+    load(1, 0xa4400000)
+    for offset, value in ((4, 0x10000), (8, 320), (0x18, 525),
+                          (0x24, (108 << 16) | 748),
+                          (0x28, (37 << 16) | 517), (0x30, 512),
+                          (0x34, 1024), (0, 2)):
+        load(3, value)
+        emit(43, 1, 3, offset)
+    load(1, 0x80000200)
+    load(3, 0x56495445)  # VITE completion marker
+    emit(43, 1, 3, 0)
+    emit(4, 0, 0, -1)
+    code.append(0)
+    write_rom(HERE / "dc_vitest.z64", "DC VITEST", code)
+
+
 def main():
+    vi_test()
     # Dummy: branch to self in the delay-slotted IPL window.
     write_rom(
         HERE / "dc_dummy.z64",

@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <string.h>
 
 #ifndef DC_HOST_STUB
@@ -11,6 +12,7 @@
 #endif
 
 #include "../platform/dc_memory.h"
+#include "../platform/dc_gfx.h"
 #include "../fileBrowser/fileBrowser.h"
 #include "../fileBrowser/fileBrowser-kos.h"
 #include "../main/winlnxdefs.h"
@@ -28,15 +30,21 @@
 
 #ifndef DC_HOST_STUB
 KOS_INIT_FLAGS(INIT_DEFAULT);
+#ifdef DC_EMBED_VITEST
+extern unsigned char romdisk[];
+KOS_INIT_ROMDISK(romdisk);
+#endif
 #endif
 
 extern unsigned long dc_interp_step_limit;
 extern BOOL hasLoadedROM;
 extern void init_controller_ts(void);
+extern void controller_DC_set_start_pulse(unsigned vi);
 extern void auto_assign_controllers(void);
 extern unsigned int audio_dc_buffered(void);
 extern void native_ReadController(int Control, unsigned char *Command);
 
+static const char *capture_path;
 static GFX_INFO gfx_info;
 static AUDIO_INFO audio_info;
 static CONTROL_INFO control_info;
@@ -192,7 +200,7 @@ static int smoke_pif(void)
 	PIF_RAMb[1] = 0x04;
 	PIF_RAMb[2] = 0x01;
 	update_pif_read();
-	if (!(PIF_RAMb[3] & 1u)) {
+	if (!(PIF_RAMb[3] & 0x80u)) {
 		printf("pif smoke: buttons %02x %02x %02x %02x missing A\n",
 		       PIF_RAMb[3], PIF_RAMb[4], PIF_RAMb[5], PIF_RAMb[6]);
 		fail = 1;
@@ -209,15 +217,26 @@ static int smoke_pif(void)
 	native_cmd[1] = 0x04;
 	native_cmd[2] = 0x01;
 	native_ReadController(0, native_cmd);
-	if (!(native_cmd[3] & 1u)) {
+	if (!(native_cmd[3] & 0x80u)) {
 		printf("pif smoke: native_ReadController missing A\n");
 		fail = 1;
 	}
 
+#ifdef DC_HOST_STUB
+    /* Check the wire packet, not the compiler's native bitfield layout. */
+    controller_DC_host_set(0, DC_CONT_START, 128, 128);
+    native_ReadController(0, native_cmd);
+    if (native_cmd[3] != 0x10 || native_cmd[4] || native_cmd[5] || native_cmd[6]) {
+        printf("pif smoke: Start packet has wrong Joybus bit order\n");
+        fail = 1;
+    }
+    controller_DC_host_set(0, 0, 128, 128);
+#endif
+
 	printf("pif smoke %s (status=0x%02x A=%u X=%d Y=%d)\n",
 	       fail ? "FAIL" : "PASS",
 	       status_type,
-	       (unsigned)(PIF_RAMb[3] & 1u),
+	       (unsigned)!!(PIF_RAMb[3] & 0x80u),
 	       (int)(signed char)PIF_RAMb[5],
 	       (int)(signed char)PIF_RAMb[6]);
 	return fail;
@@ -267,7 +286,107 @@ static int check_cputest(void)
 	return fail;
 }
 
-static void gfx_info_init(void)
+/* Validate CPU-produced pixels through the same bounded accessor intended for
+ * VI scanout. This is a framebuffer fixture, not a renderer test yet. */
+static int check_vitest(void)
+{
+    static const uint16_t colors[8] = {
+        0xffff, 0xffc1, 0x07ff, 0x07c1, 0xf83f, 0xf801, 0x003f, 0x0001
+    };
+    uint32_t complete;
+    unsigned x, y;
+    if (strcmp(ROM_SETTINGS.goodname, "DC VITEST") != 0) return 0;
+    if (!dc_gfx_read_u32(0x200, &complete) || complete != 0x56495445 ||
+        vi_register.vi_origin != 0x10000 || vi_register.vi_width != 320 ||
+        vi_register.vi_status != 2 || vi_register.vi_v_sync != 525 ||
+        vi_register.vi_h_start != ((108u << 16) | 748u) ||
+        vi_register.vi_v_start != ((37u << 16) | 517u) ||
+        vi_register.vi_x_scale != 512 || vi_register.vi_y_scale != 1024) {
+        fprintf(stderr, "VITEST FAIL: incomplete frame or incorrect VI registers\n");
+        return 1;
+    }
+    for (y = 0; y < 240; ++y) for (x = 0; x < 320; ++x) {
+        uint16_t actual, expected = colors[x / 40];
+        if (y == 0 && x == 0) expected = 0xf801;
+        if (y == 0 && x == 319) expected = 0x07c1;
+        if (y == 239 && x == 0) expected = 0x003f;
+        if (y == 239 && x == 319) expected = 0xffff;
+        if (!dc_gfx_read_u16(0x10000 + (y * 320 + x) * 2, &actual) || actual != expected) {
+            fprintf(stderr, "VITEST FAIL: pixel %u,%u\n", x, y);
+            return 1;
+        }
+    }
+    if (!dc_gfx_get_stats().presented) {
+        fprintf(stderr, "VITEST FAIL: no converted frame presented\n");
+        return 1;
+    }
+    puts("VITEST PASS (76800 CPU-written pixels + VI scanout)");
+    return 0;
+}
+
+#ifdef DC_EMBED_VITEST
+/* Exercise the real target presenters without rerunning the emulated CPU.
+ * Alternate ROM close/reopen with complete plugin destruction/reinitialization. */
+static int stress_video(void)
+{
+    unsigned cycle, n;
+    const unsigned cycles = 8;
+    uint64_t total_us = 0;
+#ifdef DC_VIDEO_PVR
+    size_t free_vram = pvr_mem_available();
+#endif
+    dc_gfx_set_frame_limit(0);
+    for (cycle = 0; cycle < cycles; ++cycle) {
+        dc_gfx_stats stats;
+        romClosed_gfx();
+        romClosed_gfx(); /* Idempotent release must not free twice. */
+        if (dc_gfx_is_open() || dc_gfx_get_frame()) return 1;
+        if (cycle & 1) {
+            closeDLL_gfx();
+            if (!initiateGFX(gfx_info)) return 1;
+        }
+        romOpen_gfx();
+        if (!dc_gfx_is_open()) return 1;
+#ifdef DC_VIDEO_PVR
+        if (pvr_mem_available() != free_vram) {
+            puts("VIDEO STRESS FAIL: PVR allocation changed across reopen");
+            return 1;
+        }
+#endif
+        stop = 0;
+        vi_register.vi_status = 0;
+        updateScreen();
+        vi_register.vi_status = 2;
+        updateScreen();
+        vi_register.vi_origin = DC_N64_RDRAM_SIZE;
+        updateScreen();
+        vi_register.vi_origin = 0x10000;
+        updateScreen();
+        vi_register.vi_status = 1;
+        updateScreen();
+        vi_register.vi_status = 2;
+        updateScreen();
+        for (n = 0; n < 16; ++n) {
+            uint64_t begin = timer_us_gettime64();
+            updateScreen();
+            total_us += timer_us_gettime64() - begin;
+        }
+        stats = dc_gfx_get_stats();
+        if (stop || stats.present_failures || stats.presented != 19 ||
+            stats.vi_updates != 22 || stats.blanked != 1 ||
+            stats.invalid_vi != 1 || stats.unsupported_vi != 1 || check_vitest()) {
+            printf("VIDEO STRESS FAIL: cycle=%u\n", cycle + 1);
+            return 1;
+        }
+    }
+    printf("VIDEO STRESS PASS: backend=%s cycles=%u valid-frames=%u scanout-present-avg-us=%lu\n",
+           dc_gfx_backend_name(), cycles, cycles * 19,
+           (unsigned long)(total_us / (cycles * 16)));
+    return 0;
+}
+#endif
+
+static BOOL gfx_info_init(void)
 {
 	gfx_info.MemoryBswaped = TRUE;
 	gfx_info.HEADER = (BYTE*)&ROM_HEADER;
@@ -298,7 +417,7 @@ static void gfx_info_init(void)
 	gfx_info.VI_X_SCALE_REG = &(vi_register.vi_x_scale);
 	gfx_info.VI_Y_SCALE_REG = &(vi_register.vi_y_scale);
 	gfx_info.CheckInterrupts = check_interupt;
-	initiateGFX(gfx_info);
+	return initiateGFX(gfx_info);
 }
 
 static void audio_info_init(void)
@@ -390,7 +509,14 @@ static int load_and_step(const char *path, unsigned long steps)
 	       ROM_SETTINGS.goodname, rom_length);
 
 	init_memory();
-	gfx_info_init();
+	if (!gfx_info_init()) {
+		fprintf(stderr, "Graphics initialization failed\n");
+		closeDLL_gfx();
+		TLBCache_deinit();
+		ROMCache_deinit();
+		hasLoadedROM = FALSE;
+		return 1;
+	}
 	audio_info_init();
 	init_controller_ts();
 	control_info.MemoryBswaped = TRUE;
@@ -408,6 +534,12 @@ static int load_and_step(const char *path, unsigned long steps)
 	auto_assign_controllers();
 	rsp_info_init();
 	romOpen_gfx();
+	if (!dc_gfx_is_open()) {
+		fprintf(stderr, "Graphics open failed\n");
+		closeDLL_gfx(); TLBCache_deinit(); ROMCache_deinit();
+		hasLoadedROM = FALSE;
+		return 1;
+	}
 	romOpen_audio();
 	romOpen_input();
 
@@ -416,55 +548,122 @@ static int load_and_step(const char *path, unsigned long steps)
 	printf("Header name: '%s'  country=0x%02x  CIC_Chip=%lu  PC=0x%08x\n",
 	       ROM_SETTINGS.goodname, ROM_HEADER.Country_code, CIC_Chip, ROM_HEADER.PC);
 
-	if (smoke_io() || smoke_pif()) {
+#ifdef DC_HOST_STUB
+	if (!strncmp(ROM_SETTINGS.goodname, "DC ", 3) && (smoke_io() || smoke_pif())) {
+		romClosed_gfx();
+		closeDLL_gfx();
 		cpu_deinit();
 		TLBCache_deinit();
 		ROMCache_deinit();
+		hasLoadedROM = FALSE;
 		return 1;
 	}
 
+#endif
 	dc_interp_step_limit = steps;
 	go();
-	printf("Interpreter stopped after step limit %lu (interp_addr=0x%08lx stop=%d)\n",
+	printf("Interpreter stopped (budget=%lu interp_addr=0x%08lx stop=%d)\n",
 	       steps, interp_addr, stop);
-	ret = check_cputest();
+	ret = check_cputest() | check_vitest();
+	{
+		dc_gfx_stats stats = dc_gfx_get_stats();
+		printf("Graphics %s: VI=%lu presented=%lu DList=%lu RDP=%lu invalid=%lu unsupported=%lu failures=%lu\n",
+               dc_gfx_backend_name(), (unsigned long)stats.vi_updates,
+               (unsigned long)stats.presented, (unsigned long)stats.display_lists,
+               (unsigned long)stats.rdp_lists, (unsigned long)stats.invalid_vi,
+               (unsigned long)stats.unsupported_vi, (unsigned long)stats.present_failures);
+#ifdef DC_SOFT_GFX
+        printf("Software graphics: decode-failures=%lu\n", (unsigned long)stats.decode_failures);
+#endif
+        if (stats.present_failures || stats.decode_failures) ret = 1;
+	}
+    if (capture_path && !dc_gfx_capture_ppm(capture_path)) {
+        fprintf(stderr, "Framebuffer capture failed: %s\n", capture_path);
+        ret = 1;
+    }
+#ifdef DC_EMBED_VITEST
+    if (!ret && stress_video()) ret = 1;
+#endif
+#ifndef DC_HOST_STUB
+    /* Keep the last submitted image visible before restoring console video. */
+#if defined(DC_EMBED_VITEST) || defined(DC_GAME_DISC)
+    /* Leave the diagnostic result visible for emulator/hardware inspection. */
+    thd_sleep(60000);
+#else
+    thd_sleep(1000);
+#endif
+#endif
+	romClosed_gfx();
+	closeDLL_gfx();
 	cpu_deinit();
 	TLBCache_deinit();
 	ROMCache_deinit();
+	hasLoadedROM = FALSE;
 	return ret;
+}
+
+static int positive_number(const char *text, unsigned long *value)
+{
+    char *end;
+    errno = 0;
+    *value = strtoul(text, &end, 10);
+    return !errno && text[0] && strspn(text, "0123456789") == strlen(text) && !*end && *value;
 }
 
 int main(int argc, char **argv)
 {
-	const char *rompath = "roms/dc_cputest.z64";
-	int fail = 0;
-
-	setvbuf(stdout, NULL, _IONBF, 0);
-	setvbuf(stderr, NULL, _IONBF, 0);
-
-#ifndef DC_HOST_STUB
-	vid_set_mode(DM_640x480, PM_RGB565);
+    const char *rompath = "roms/dc_cputest.z64";
+    int fail = 0, arg = 1;
+    unsigned long steps = 10000, frames = 0;
+#ifdef DC_GAME_DISC
+    rompath = "/cd/game.z64";
+    steps = 500000000;
+    controller_DC_set_start_pulse(400);
 #endif
-
-	print_budget();
-	list_rom_dir();
-	probe_controllers();
-	if (probe_saves())
-		fail = 1;
-
-	if (argc > 1)
-		rompath = argv[1];
-
-	printf("Phase 2/3: interpreter %lu steps using %s\n", 10000UL, rompath);
-	if (load_and_step(rompath, 10000))
-		fail = 1;
-
-#ifndef DC_HOST_STUB
-	{
-		int frames;
-		for (frames = 0; frames < 60; ++frames)
-			thd_sleep(16);
-	}
+#ifdef DC_EMBED_VITEST
+    rompath = "/rd/roms/dc_vitest.z64";
+    steps = 300000;
 #endif
-	return fail;
+#ifndef DC_HOST_STUB
+    frames = 120; /* Prevent an idle ROM presenting thousands of real frames. */
+#ifdef DC_GAME_DISC
+    frames = 600;
+#endif
+#endif
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    if (arg < argc && argv[arg][0] != '-') rompath = argv[arg++];
+    if (arg < argc && argv[arg][0] != '-') {
+        if (!positive_number(argv[arg++], &steps)) goto usage;
+    }
+    while (arg < argc) {
+        if (!strcmp(argv[arg], "--frames") && arg + 1 < argc) {
+            if (!positive_number(argv[arg + 1], &frames)) goto usage;
+            arg += 2;
+        } else if (!strcmp(argv[arg], "--start-at") && arg + 1 < argc) {
+            unsigned long start_vi;
+            if (!positive_number(argv[arg + 1], &start_vi)) goto usage;
+            controller_DC_set_start_pulse((unsigned)start_vi);
+            arg += 2;
+        } else if (!strcmp(argv[arg], "--capture") && arg + 1 < argc) {
+            capture_path = argv[arg + 1];
+            arg += 2;
+        } else goto usage;
+    }
+    dc_gfx_set_frame_limit(frames);
+#ifndef DC_HOST_STUB
+    vid_set_mode(DM_640x480, PM_RGB565);
+#endif
+    print_budget();
+    list_rom_dir();
+    probe_controllers();
+#if !defined(DC_EMBED_VITEST) && !defined(DC_GAME_DISC)
+    if (probe_saves()) fail = 1;
+#endif
+    printf("Dreamcast interpreter: %lu steps using %s\n", steps, rompath);
+    if (load_and_step(rompath, steps)) fail = 1;
+    return fail;
+usage:
+    fprintf(stderr, "Usage: %s [rom.z64 [positive-step-budget]] [--frames positive-count] [--capture output.ppm] [--start-at VI]\n", argv[0]);
+    return 1;
 }

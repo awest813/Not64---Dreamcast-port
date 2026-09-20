@@ -111,8 +111,16 @@ class RSP
    // general members
    GFX_INFO gfxInfo;
    RDP *rdp;
+   bool ownsRdp;
    bool error;
    bool end;
+   bool f3dex2;
+   void GEOMETRY2();
+   void TRI2();
+   void OTHERMODE();
+   void PRIMDEPTH();
+   void COLORCONVERT();
+   unsigned long colorConvert[6] = {};
    unsigned long *currentCommand;
    COMMANDS commands[0x100];
    
@@ -132,7 +140,7 @@ class RSP
    Matrix<float, 4> modelView;
    Matrix<float, 4> projection;
    Matrix<float, 4> MP;
-   Vertex vtx[16];
+   Vertex vtx[32];
    int fm;
    int fo;
    
@@ -192,8 +200,9 @@ class RSP
    void executeDList();
    
  public:
-   RSP(GFX_INFO);
+   RSP(GFX_INFO, RDP *shared = NULL);
    ~RSP();
+   bool succeeded() const { return end && !error; }
 };
 
 #endif

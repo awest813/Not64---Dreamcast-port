@@ -1,0 +1,98 @@
+#include <cstdio>
+#include <cstring>
+#include "../../mupen64_soft_gfx/rsp.h"
+#include "../../mupen64_soft_gfx/tx.h"
+
+static unsigned char ram[0x400000], dmem[4096];
+static DWORD intr;
+static unsigned interrupts;
+static void interrupt() { ++interrupts; }
+static void byte(unsigned at, unsigned v) { ram[at ^ 3] = v; }
+static void word(unsigned at, unsigned v) { std::memcpy(ram+at,&v,4); }
+static unsigned half(unsigned at) { unsigned short v; std::memcpy(&v,ram+(at^2),2); return v; }
+#define CHECK(c) do { if (!(c)) { std::fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#c); return 1; } } while(0)
+
+int main() {
+    GFX_INFO info={}; info.RDRAM=ram; info.DMEM=dmem; info.MI_INTR_REG=&intr;
+    info.MemoryBswaped=TRUE; info.CheckInterrupts=interrupt;
+    TX tx(info);
+    // RGBA16 loads preserve both adjacent pixels and clamp the final texel.
+    byte(0x100,0xf8); byte(0x101,1); byte(0x102,0x07); byte(0x103,0xc1);
+    tx.setTImg(0,2,2,ram+0x100); tx.setTile(0,2,1,0,0,0,2,0,0,2,0,0);
+    tx.loadBlock(0,0,0,1,0); tx.setTileSize(0,0,1,0,0);
+    Color32 c=tx.getTexel(0,0,0,NULL); CHECK((unsigned)(int)c==0xff0000ffu);
+    c=tx.getTexel(1,0,0,NULL); CHECK((unsigned)(int)c==0x00ff00ffu);
+    c=tx.getTexel(2,0,0,NULL); CHECK((unsigned)(int)c==0x00ff00ffu);
+    c=tx.getTexel(0,0,8,NULL); CHECK((unsigned)(int)c==0xff0000ffu);
+    // Copy mode must accept fractional coordinates without dereferencing TF.
+    c=tx.getTexel(0.25f,0,0,NULL); CHECK((unsigned)(int)c==0xff0000ffu);
+    // I4 intensity expands to RGB and alpha.
+    byte(0x200,0xf5);
+    tx.setTImg(4,0,2,ram+0x200); tx.setTile(4,0,1,0,0,0,2,0,0,2,0,0);
+    tx.loadBlock(0,0,0,1,0); c=tx.getTexel(1,0,0,NULL); CHECK((unsigned)(int)c==0x55555555u);
+    // CI4 bank selection and palette loads use entries, not eight-byte overreads.
+    byte(0x300,0x12); byte(0x400,0xf8); byte(0x401,1); byte(0x402,0x07); byte(0x403,0xc1);
+    tx.setTextureLUT(2); tx.setTile(0,2,0,256+17,7,0,0,0,0,0,0,0);
+    tx.setTImg(0,2,2,ram+0x400); tx.loadTLUT(7,2);
+    tx.setTImg(2,0,2,ram+0x300); tx.setTile(2,0,1,0,0,1,2,0,0,2,0,0);
+    tx.loadBlock(0,0,0,1,0);
+    c=tx.getTexel(0,0,0,NULL); CHECK((unsigned)(int)c==0xff0000ffu);
+    c=tx.getTexel(1,0,0,NULL); CHECK((unsigned)(int)c==0x00ff00ffu);
+    // A transfer beyond RDRAM must preserve the previous texture.
+    tx.setTImg(2,0,2,ram+0x400000); tx.loadBlock(0,0,0,1,0);
+    c=tx.getTexel(0,0,0,NULL); CHECK((unsigned)(int)c==0xff0000ffu);
+
+    // One-cycle rendering uses the second mux cycle: texture times shade.
+    CC combiner;
+    combiner.setShade(Color32(128,255,0,255));
+    combiner.setCombineMode((1u<<5)|4u,(15u<<24)|(7u<<21)|(7u<<18)|(7u<<6)|(7u<<3)|1u);
+    c=combiner.combine1(Color32(255,128,128,255));
+    CHECK((unsigned)(int)c==0x808000ffu);
+    c=Color32(-10,300,20,400); CHECK((unsigned)(int)c==0x00ff14ffu);
+    TF filter; filter.setTextureFilter(2);
+    Color32 corners[4]={Color32(255,0,0,255),Color32(0,255,0,255),Color32(0,0,255,255),Color32(255,255,255,255)};
+    float distances[4]={0.125f,0.625f,1.125f,0.625f};
+    c=filter.filter(corners,distances); CHECK((unsigned)(int)c==0xbf7f3fffu);
+
+    // Transparent texels must not overwrite either the framebuffer or depth.
+    BL blender(info); blender.setCImg(0,2,4,ram+0x20000); blender.setZImg(ram+0x21000);
+    word(0x20000,0x07c107c1); word(0x21000,0xffffffff);
+    blender.setAlphaCompare(1); blender.setBlendColor(128);
+    blender.setBlender(0x30); // Z compare and update, opaque color.
+    blender.cycle1ModeDraw(0,0,Color32(255,0,0,0),100);
+    CHECK(half(0x20000)==0x07c1 && half(0x21000)==0xffff);
+    blender.cycle1ModeDraw(0,0,Color32(255,0,0,128),100);
+    CHECK(half(0x20000)==0xf801 && half(0x21000)!=0xffff);
+    blender.setAlphaCompare(0); blender.setBlender(0x3000);
+    blender.cycle2ModeDraw(0,0,Color32(0,0,255,0));
+    CHECK(half(0x20000)==0xf801);
+    blender.setBlender(0x00404000); // pixel*alpha + memory*(1-alpha)
+    blender.cycle1ModeDraw(0,0,Color32(0,0,255,128));
+    CHECK((half(0x20000)&0xf800)==0x7800 && (half(0x20000)&0x3e)==0x20);
+
+    // Execute an actual F3DEX2 display list: 4x4 red fill and FullSync.
+    const char *uc="RSP Gfx ucode F3DEX fifo 2.08";
+    for(unsigned i=0;i<std::strlen(uc);i++) byte(0x2000+i,uc[i]);
+    unsigned long *task=(unsigned long *)(dmem+0xfc0);
+    task[6]=0x2000; task[7]=2048; task[12]=0x3000;
+    const unsigned commands[][2]={
+        {0xff100003,0x10000}, {0xed000000,0x00010010},
+        {0xef300000,0}, {0xf7000000,0xf801f801},
+        {0xf600c00c,0}, {0xe9000000,0}, {0xdf000000,0}
+    };
+    for(unsigned i=0;i<sizeof(commands)/sizeof(commands[0]);i++) {
+        word(0x3000+i*8,commands[i][0]); word(0x3004+i*8,commands[i][1]);
+    }
+    RSP rsp(info);
+    CHECK(rsp.succeeded());
+    CHECK(intr==0x20 && interrupts==1);
+    for(unsigned i=0;i<16;i++) CHECK(half(0x10000+i*2)==0xf801);
+    CHECK(half(0xfffe)==0 && half(0x10020)==0);
+    intr=interrupts=0; word(0x3000,0x11000000);
+    { RSP bad(info); CHECK(!bad.succeeded() && intr==0 && interrupts==0); }
+    task[12]=0x3ffffc;
+    { RSP bad(info); CHECK(!bad.succeeded()); }
+    task[12]=0x3000; word(0x3000,0xde000000); word(0x3004,0x3000);
+    { RSP bad(info); CHECK(!bad.succeeded()); }
+    std::puts("Software graphics: texture formats, bounds, F3DEX2 fill and FullSync PASS");
+}
