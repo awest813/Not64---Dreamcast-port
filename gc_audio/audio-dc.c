@@ -1,6 +1,7 @@
 /**
  * Dreamcast audio plugin stub.
- * Buffers AI DMA locally. AICA / snd_stream output is Phase 3.
+ * Buffers AI DMA locally. AiReadLength reports unplayed bytes in the last
+ * DMA. AiUpdate drains the ring (stand-in until AICA/snd_stream).
  */
 
 #include "../main/winlnxdefs.h"
@@ -20,11 +21,34 @@ static unsigned int read_off;
 static unsigned int buffered;
 static unsigned int freq = 33600;
 
+static unsigned int pending_len;
+
+static unsigned int drain_bytes(unsigned int n)
+{
+	if (n > buffered)
+		n = buffered;
+	if (n == 0)
+		return 0;
+	read_off = (read_off + n) % DC_AUDIO_RING_SIZE;
+	buffered -= n;
+	if (n > pending_len)
+		pending_len = 0;
+	else
+		pending_len -= n;
+	return n;
+}
+
+unsigned int audio_dc_drain(unsigned int n)
+{
+	return drain_bytes(n);
+}
+
 static void reset_buffer(void)
 {
 	write_off = 0;
 	read_off = 0;
 	buffered = 0;
+	pending_len = 0;
 }
 
 EXPORT void CALL AiDacrateChanged(int SystemType)
@@ -56,7 +80,7 @@ EXPORT void CALL AiLenChanged(void)
 {
 	char *stream;
 	int length;
-	unsigned int addr;
+	unsigned int addr, copied;
 
 	if (!audioEnabled)
 		return;
@@ -72,32 +96,43 @@ EXPORT void CALL AiLenChanged(void)
 	if (length < 0 || (unsigned int)length > DC_N64_RDRAM_SIZE - addr)
 		length = (int)(DC_N64_RDRAM_SIZE - addr);
 
-	while (length > 0 && buffered < DC_AUDIO_RING_SIZE) {
+	copied = 0;
+	while (length > 0) {
 		int chunk = (int)(DC_AUDIO_RING_SIZE - write_off);
 		if (chunk > length)
 			chunk = length;
 		if (chunk > (int)(DC_AUDIO_RING_SIZE - buffered))
 			chunk = (int)(DC_AUDIO_RING_SIZE - buffered);
-		if (chunk <= 0)
-			break;
+		if (chunk <= 0) {
+			/* Ring is full: drop the oldest samples so this DMA is
+			 * not silently discarded (games keep feeding AI). */
+			if (!drain_bytes(DC_AUDIO_RING_SIZE / 8))
+				break;
+			continue;
+		}
 		memcpy(ring + write_off, stream, (size_t)chunk);
 		stream += chunk;
 		length -= chunk;
+		copied += (unsigned int)chunk;
 		write_off = (write_off + (unsigned int)chunk) % DC_AUDIO_RING_SIZE;
 		buffered += (unsigned int)chunk;
 	}
-	(void)read_off;
+	pending_len = copied;
 	(void)freq;
 }
 
 EXPORT DWORD CALL AiReadLength(void)
 {
-	return 0;
+	return pending_len;
 }
 
 EXPORT void CALL AiUpdate(BOOL Wait)
 {
 	(void)Wait;
+	/* HOST/KOS without AICA: consume the ring so a game that keeps
+	 * submitting DMA does not stall on a full buffer. Hardware will
+	 * replace this with snd_stream. */
+	drain_bytes(buffered);
 }
 
 EXPORT void CALL CloseDLL(void)

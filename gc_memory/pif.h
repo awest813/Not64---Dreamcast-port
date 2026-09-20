@@ -34,4 +34,8 @@ void update_pif_write();
 void update_pif_read();
 void format_mempacks();
 void init_eeprom();
+#ifdef DC_HOST_STUB
+void dc_eeprom_debug_set(unsigned int off, unsigned char v);
+unsigned char dc_eeprom_debug_get(unsigned int off);
+#endif
 #endif

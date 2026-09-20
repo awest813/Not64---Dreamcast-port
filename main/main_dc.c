@@ -30,6 +30,7 @@
 #include "../platform/dc_menu/dc_draw.h"
 #include "../platform/dc_settings.h"
 #include "../platform/dc_overlay.h"
+#include "../platform/dc_nativesaves.h"
 #include "../main/savestates.h"
 #include "../gc_memory/pif.h"
 #include "../gc_memory/flashram.h"
@@ -49,6 +50,8 @@ extern void init_controller_ts(void);
 extern void controller_DC_set_start_pulse(unsigned vi);
 extern void auto_assign_controllers(void);
 extern unsigned int audio_dc_buffered(void);
+extern unsigned int audio_dc_drain(unsigned int n);
+extern DWORD aiReadLength(void);
 extern void native_ReadController(int Control, unsigned char *Command);
 
 static const char *capture_path;
@@ -168,9 +171,26 @@ static int smoke_io(void)
 	ai_register.ai_len = 64;
 	memset(rdram, 0x5A, 64);
 	aiLenChanged();
-	printf("audio ring buffered %u bytes\n", audio_dc_buffered());
+	printf("audio ring buffered %u bytes remaining %lu\n",
+	       audio_dc_buffered(), (unsigned long)aiReadLength());
 	if (audio_dc_buffered() < 64) {
 		printf("audio smoke: ring did not accept AI DMA\n");
+		fail = 1;
+	}
+	if (aiReadLength() != 64) {
+		printf("audio smoke: AiReadLength=%lu want 64\n",
+		       (unsigned long)aiReadLength());
+		fail = 1;
+	}
+	if (audio_dc_drain(32) != 32 || aiReadLength() != 32 ||
+	    audio_dc_buffered() != 32) {
+		printf("audio smoke: drain 32 left remaining=%lu buffered=%u\n",
+		       (unsigned long)aiReadLength(), audio_dc_buffered());
+		fail = 1;
+	}
+	audio_dc_drain(32);
+	if (aiReadLength() != 0 || audio_dc_buffered() != 0) {
+		printf("audio smoke: ring not empty after full drain\n");
 		fail = 1;
 	}
 	/* The ROM runs next: do not leave the smoke pattern in RDRAM. */
@@ -694,6 +714,8 @@ static int smoke_menu(void)
 	if (dc_settings_selftest())
 		fail = 1;
 	if (savestates_selftest())
+		fail = 1;
+	if (dc_nativesave_selftest())
 		fail = 1;
 	if (dc_overlay_selftest())
 		fail = 1;
@@ -1224,6 +1246,7 @@ static int load_and_step(const char *path, unsigned long steps)
 
 	dynacore = 2;
 	cpu_init();
+	dc_nativesave_load();
 	printf("Header name: '%s'  country=0x%02x  CIC_Chip=%lu  PC=0x%08x\n",
 	       ROM_SETTINGS.goodname, ROM_HEADER.Country_code, CIC_Chip, ROM_HEADER.PC);
 
@@ -1274,6 +1297,7 @@ static int load_and_step(const char *path, unsigned long steps)
 #endif
 	romClosed_gfx();
 	closeDLL_gfx();
+	dc_nativesave_save();
 	cpu_deinit();
 	TLBCache_deinit();
 	ROMCache_deinit();

@@ -59,7 +59,7 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | Bring-up `main/main_dc.c` | Dummy + CPUTEST, 10000 interpreter steps, host I/O + PIF smokes |
 | `fileBrowser-kos` | Started; read handle held open across calls (was one `fopen` per 64 KiB page-in) |
 | Maple controller (`controller-DC.c`) | Started |
-| AICA audio stub (`audio-dc.c`) | Started |
+| AICA audio stub (`audio-dc.c`) | Ring + `AiReadLength` drain on host; no AICA/`snd_stream` yet |
 | Interpreter-only core link | **Host verified** (`CPUTEST PASS`) |
 | ROM stream (`main/ROM-Cache-dc.c`) | 1 MiB window; z64 words swapped to LE; O(1) LRU, covered by `smoke_romcache()` (host stub only — the sweep reads the whole cart) |
 | Host I/O smoke | Save file, injected Maple A, AI ring DMA, PIF joybus read/write |
@@ -674,24 +674,16 @@ init fails, Start+A+B is a black screen.
 
 Needs Docker `KOS_BASE`. Not HOST-testable beyond keeping `dc_draw.h` stable.
 
-### P2 — audio is a write-only ring
+### P2 — audio ring drain (host shipped; AICA still open)
 
-`AiLenChanged` copies into 64 KiB; `AiReadLength` always returns 0;
-`AiUpdate` is empty; there is no AICA/`snd_stream` drain. Games that wait
-on AI DMA complete will spin. Settings “Audio” only gates the memcpy.
+`AiReadLength` returns unplayed bytes from the last AI DMA. `AiUpdate` and
+`audio_dc_drain()` consume the ring so a full 64 KiB buffer no longer drops
+new DMA. Hardware still needs `snd_stream` / AICA.
 
-Host: make `AiReadLength` report remaining ring space (mupen64plus does
-this) and cover it in the existing AI smoke. Hardware: drain the ring.
+### P3 — native EEPROM/SRAM/Flash on SD (host shipped; VMU open)
 
-### P3 — native EEPROM/SRAM/Flash never touch disk on DC
-
-`autoSave` / `autoLoadSave` are INI rows, but `loadEeprom` / `saveSram` are
-only called from the Wii `gui/menu.c` path. Overlay Reset/Return-to-menu
-does not flush SRAM. Savestates dump flashram *infos* (24 bytes), not the
-128 KiB array, and do not dump EEPROM/SRAM/mempak at all.
-
-Host-testable: boot CPUTEST, poke EEPROM, leave via overlay, reboot, load.
-Keep VMU layout as a human call; SD files first (`saves/<name>.eep` etc.).
+`dc_nativesave_load/save` run after `cpu_init` and when leaving a ROM.
+Settings Auto-load/save now do something. VMU layout is still a human call.
 
 ### P4 — savestate leftovers (after v2 polish)
 
@@ -780,6 +772,7 @@ Requires `KOS_BASE`. Load with dcload, or convert to `.cdi` later.
 | Settings INI (8c) | `platform/dc_settings.c` |
 | Pause overlay (8b) | `platform/dc_overlay.c` |
 | Savestates (8d) | `platform/dc_savestates.c` |
+| Native SRAM/EEPROM (P3) | `platform/dc_nativesaves.c` |
 | PVR VI presenter | `platform/dc_pvr.c` (`VIDEO=pvr`) |
 | FAT/POSIX I/O | `fileBrowser/fileBrowser-kos.c` |
 | Maple pad | `gc_input/controller-DC.c` |

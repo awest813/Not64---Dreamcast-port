@@ -292,10 +292,10 @@ held during C-presses.
 
 Follow **Gap plan** in `PORTING.md`. Short form:
 
-1. **P0 — who writes `0x400` to `0x800c833c`** (Mario Golf `ERET`). Byte-view dumps only. Not TLB.
+1. **P0 — who writes `0x400` to `0x800c833c`** (Mario Golf `ERET`). Byte-view dumps only. Not TLB. **Blocked here: no commercial ROM in the tree.**
 2. **P1 — KOS ELF / `dc_draw_kos.c` bfont** when `KOS_BASE` exists.
-3. **P2 — `AiReadLength` + AICA drain.**
-4. **P3 — native EEPROM/SRAM/Flash on SD** (settings rows are currently inert on DC).
+3. ~~**P2 — `AiReadLength` + ring drain**~~ — host shipped; AICA/`snd_stream` still open.
+4. ~~**P3 — native EEPROM/SRAM/Flash on SD**~~ — host shipped; VMU still a human call.
 5. Menu 8a–8d is done (v2 dumps: ROM id + CRC32). `dc_draw_kos.c` still uncompiled.
 6. Software/TA/dynarec only after P0 produces a VI framebuffer.
 

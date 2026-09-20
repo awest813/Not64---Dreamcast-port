@@ -123,7 +123,23 @@ int saveEeprom(fileBrowser_file* savepath){
 void init_eeprom() {
   int i;
   for (i=0; i<0x800; i++) eeprom[i] = 0xff;
+  eepromWritten = FALSE;
 }
+
+#ifdef DC_HOST_STUB
+void dc_eeprom_debug_set(unsigned int off, unsigned char v)
+{
+	if (off < 0x800) {
+		eeprom[off] = v;
+		eepromWritten = TRUE;
+	}
+}
+
+unsigned char dc_eeprom_debug_get(unsigned int off)
+{
+	return off < 0x800 ? eeprom[off] : 0;
+}
+#endif
 
 //#define DEBUG_PIF
 #ifdef DEBUG_PIF
