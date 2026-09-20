@@ -283,7 +283,6 @@ held during C-presses.
 ## Open findings (audited, deliberately not changed)
 
 1. **Rumble and paks are stubs.** `rumble_ctl()` does nothing and `pakMode[4]` has no backend. The Dreamcast Jump Pack (`MAPLE_FUNC_PURUPURU`) is the natural N64 Rumble Pak analogue and the VMU (`MAPLE_FUNC_MEMCARD`) the natural Controller Pak. Both need KOS headers, so they cannot be written or verified from the host stub — do them alongside the Phase 1 ELF.
-1. **Rumble and paks are stubs.** `rumble_ctl()` does nothing and `pakMode[4]` has no backend. The Dreamcast Jump Pack (`MAPLE_FUNC_PURUPURU`) is the natural N64 Rumble Pak analogue and the VMU (`MAPLE_FUNC_MEMCARD`) the natural Controller Pak. Both need KOS headers, so they cannot be written or verified from the host stub — do them alongside the Phase 1 ELF.
 2. ~~**`fileBrowser_kos_readFile` does `fopen`/`fseek`/`fclose` per call.**~~ **Fixed** — the read handle is held open (item 11 above). Writes still open and close on purpose, so a save reaches the card the moment it is written.
 3. **Host stub is not an SH4 model.** `unsigned long` is 64-bit on an LP64 host and 32-bit on SH4, so `rdram[]`, `reg[]` and every `read_*_in_memory()` differ in width and layout. Concretely: `rdram[addr>>2]` is **not** how to read N64 memory here — see the byte-view landmine above. `CPUTEST PASS` on the host is a link/logic check, not evidence about hardware. The alignment and LP64 bugs found in `pif.c` are exactly the class the host stub cannot catch by itself.
 
@@ -291,44 +290,16 @@ held during C-presses.
 
 ## Next work (in order)
 
-1. **KallistiOS ELF** — install `sh-elf-gcc` + KOS (`KOS_BASE`, `environ.sh`). `make -f Makefile.dc` → `not64-dc.elf`. Same bring-up on lxdream/redream or hardware. Cloud image does not have this yet (`environment.json` when someone can install it).
-2. **AICA** — `audio-dc.c` only fills a ring. Host smoke is enough; hardware needs `snd_stream` (or equivalent) draining that ring.
-3. **Get a real ROM to VI** — *this is the live problem.* A retail 32 MiB cart
-   passes IPL3's CIC boot checksum and runs game code, then dies. **The earlier
-   "infinite TLB refill loop, start at `TLBWR`/`TLBWI` and `TLB-Cache-hash.c`"
-   diagnosis was wrong — do not start there.** `TLBCache_set_r/w` is never
-   called once in a whole run (681,075 lookups, zero stores), so `TLBWI`/`TLBWR`
-   never execute and no TLB entry is ever written.
+Follow **Gap plan** in `PORTING.md`. Short form:
 
-   What actually happens: the **first** exception is an instruction fetch at
-   `0x00000400` (`TLB_refill_exception addr=0x00000400 w=2 pc=0x00000400`),
-   immediately after the run's only `ERET` (`0x42000018` at `0x800b04e4`). That
-   `ERET` used an `EPC` of `0x400`, written by the run's only `MTC0 $14`, at
-   `0x800b0444`. `0x800b0440` is `lw k1, 0x11c(k0)` with `k0 = 0x800c8220`, and
-   `0x800c833c` genuinely contains `0x00000400`.
+1. **P0 — who writes `0x400` to `0x800c833c`** (Mario Golf `ERET`). Byte-view dumps only. Not TLB.
+2. **P1 — KOS ELF / `dc_draw_kos.c` bfont** when `KOS_BASE` exists.
+3. **P2 — `AiReadLength` + AICA drain.**
+4. **P3 — native EEPROM/SRAM/Flash on SD** (settings rows are currently inert on DC).
+5. Menu 8a–8d is done (v2 dumps: ROM id + CRC32). `dc_draw_kos.c` still uncompiled.
+6. Software/TA/dynarec only after P0 produces a VI framebuffer.
 
-   So an OS thread dispatcher restores a saved context whose PC is `0x400`.
-   **Find who wrote `0x400` to `0x800c833c` and what it should have been** — a
-   thread entry point is a `0x80xxxxxx` address, and `0x400` looks like one
-   with its high bits gone, which is the same class of bug as the LP64 fixes in
-   item 8. Everything after is fallout: the vector at `0x80000000`
-   (`LUI k0,0x800b` / `ADDIU k0,k0,0xfba0` / `JR k0`) reaches the game's handler
-   at `0x800afba0`, which re-faults on `BadVAddr = 0x00048240` forever.
-
-   Full evidence in **Phase 3.5 of `PORTING.md`**. Read the byte-view landmine
-   before dumping any N64 memory to check this.
-
-4. ~~**Menu step 8a–8d**~~ — **done**. `platform/dc_menu/` lists the ROM dir;
-   Y/X open Settings/Controls; Start+A+B is the pause overlay; savestates write
-   `saves/not64.stN` (`NOT64ST` little-endian via `rdramb`). `dc_draw_kos.c` has
-   never been compiled (fix `bfont` on the first KOS build). skipMenu is
-   file-only. EEPROM/SRAM native files are still separate; VMU layout is a
-   human call.
-
-5. **Software first frame** (Phase 4) — only after a ROM actually hits RDP/VI. Start from `mupen64_soft_gfx/` (27 files, least GX coupling — 4 files touch `GX_*`), not `glN64_GX/` (73 files, 41 touching `GX_*`). Hardware PVR presentation is in `platform/dc_pvr.c` when `VIDEO=pvr`.
-6. **SH4 dynarec** — last. New `r4300/sh4/`. PPC JIT is not a template you search-replace.
-
-Skip 5–6 until 1–3 have a ROM that is more than a BEQ spin.
+Skip SH4 dynarec and TA/RDP until 1–3 have a ROM that is more than a BEQ spin.
 
 ---
 
@@ -368,6 +339,6 @@ Checks live in `check_cputest()` in `main/main_dc.c`. Keep them if you change th
 
 ## Suggested first message for the next agent
 
-> Continue the Not64 Dreamcast port from `AGENT_HANDOFF.md`. Run `make -f Makefile.dc HOST=1 test` first. Do not start PVR or SH4 dynarec, and do not go looking at `TLBWR`/`TLBWI` for the boot failure — next-work item 3 says why. If KOS is available, produce `not64-dc.elf` and expect to fix the `bfont` call in `platform/dc_menu/dc_draw_kos.c`, the one file here that has never been compiled; otherwise chase item 3, or the AICA drain. Software renderer only after a ROM hits RDP/VI.
+> Continue the Not64 Dreamcast port from `AGENT_HANDOFF.md` and the Gap plan in `PORTING.md`. Run `make -f Makefile.dc HOST=1 test` first. P0 is the live problem: who writes `0x400` to `0x800c833c` (byte-view dumps; not TLBWI). If KOS is available, P1 is `dc_draw_kos.c` / bfont. Do not start TA/RDP or SH4 dynarec.
 
 Update **this file** and `PORTING.md` current-status when a phase actually finishes.

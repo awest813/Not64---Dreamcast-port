@@ -587,7 +587,7 @@ Each step is independently useful; none blocks the emulator core.
 | **8a** | ROM browser only: list `/sd/not64/roms`, pick, boot. Replaces the argv path. | KOS ELF (Phase 1) + `bfont`. **Not** the software renderer. | **Shipped** — see below |
 | **8b** | In-game overlay: return to menu, reset, save/load state. | Phase 4 framebuffer | **Shipped** — Start+A+B pause overlay; slots 0–9 |
 | **8c** | Settings INI / controls legend (`platform/dc_settings.c`). | 8a | **Shipped** — mupen64plus.cfg layout, Y/X screens from the ROM browser, skipMenu file-only |
-| **8d** | Savestate dump/restore (`platform/dc_savestates.c`). | 8b | **Shipped** — uncompressed LE `NOT64ST` files; RDRAM via `rdramb`; HOST roundtrip selftest |
+| **8d** | Savestate dump/restore (`platform/dc_savestates.c`). | 8b | **Shipped** — `NOT64ST` v2 LE dumps, ROM name+CRC1, CRC32 footer, HOST roundtrip / reject tests |
 
 8a is the one worth doing early — it is the difference between a demo that
 needs a rebuild per ROM and something a person can actually use, and it needs
@@ -643,7 +643,86 @@ callers.
 
 1. Video output: auto-detect a VGA box, or expose it as a setting?
 2. VMU save layout, and what to do when a FlashRAM title needs a whole card.
-3. Does 8a ship before Phase 4? (It can — `bfont` needs no renderer.)
+
+---
+
+## Gap plan (audit 2026-09-20)
+
+Menu 8a–8d is in tree and HOST-tested. The remaining work is not more UI
+chrome. Ordered by what actually unblocks a playable disc; do not start
+later items to avoid the earlier ones.
+
+### P0 — commercial ROM still never reaches VI
+
+Mario Golf passes IPL3, then an `ERET` to `EPC=0x400`. That value is sitting
+in RDRAM at `0x800c833c` (`lw k1, 0x11c(k0)` with `k0=0x800c8220`). A thread
+entry should be `0x80xxxxxx`; `0x400` looks like the high bits were lost.
+
+**Do not** start at `TLBWI`/`TLBWR` — the hash cache is unused for the whole
+run. Dump with the **byte view** (`rdramb`), not `rdram[addr>>2]`.
+
+Host-testable: scripted dump of who writes `0x800c833c`, then a targeted
+interpreter fix with a regression beside CPUTEST. Until `VI origin` is
+non-zero, Phase 4/7 graphics work is optional polish on a presenter that
+games never feed.
+
+### P1 — KallistiOS ELF actually boots the menu
+
+`dc_draw_kos.c` has never been compiled. First `make -f Makefile.dc` will
+need a `bfont` fix. Overlay and ROM browser both call `dc_draw_*`; if KOS
+init fails, Start+A+B is a black screen.
+
+Needs Docker `KOS_BASE`. Not HOST-testable beyond keeping `dc_draw.h` stable.
+
+### P2 — audio is a write-only ring
+
+`AiLenChanged` copies into 64 KiB; `AiReadLength` always returns 0;
+`AiUpdate` is empty; there is no AICA/`snd_stream` drain. Games that wait
+on AI DMA complete will spin. Settings “Audio” only gates the memcpy.
+
+Host: make `AiReadLength` report remaining ring space (mupen64plus does
+this) and cover it in the existing AI smoke. Hardware: drain the ring.
+
+### P3 — native EEPROM/SRAM/Flash never touch disk on DC
+
+`autoSave` / `autoLoadSave` are INI rows, but `loadEeprom` / `saveSram` are
+only called from the Wii `gui/menu.c` path. Overlay Reset/Return-to-menu
+does not flush SRAM. Savestates dump flashram *infos* (24 bytes), not the
+128 KiB array, and do not dump EEPROM/SRAM/mempak at all.
+
+Host-testable: boot CPUTEST, poke EEPROM, leave via overlay, reboot, load.
+Keep VMU layout as a human call; SD files first (`saves/<name>.eep` etc.).
+
+### P4 — savestate leftovers (after v2 polish)
+
+Still missing: per-ROM filenames (slots are global `not64.stN`), EEPROM/
+SRAM/flash contents, mempak, overlay “wrong ROM” copy vs generic fail,
+atomic apply (CRC avoids truncated files; a CRC-passing mid-apply I/O
+error can still tear state). Do this after P3 so native saves and dumps
+share accessors.
+
+### P5 — input/paks
+
+Rumble and Controller Pak are stubs. Jump Pack / VMU need KOS. Overlay
+and in-game maps are done; four Maple ports exist but pak backends do not.
+
+### P6 — graphics after a real VI
+
+`VIDEO=pvr` is a VI textured-quad presenter, not a TA/RDP backend. `GFX=soft`
+rasterizes F3DEX2 into RDRAM. Raw DPC, coverage, and VI filter are open.
+Do not start a TA renderer until P0 produces a framebuffer worth presenting.
+
+### P7 — last, and locked until a human says otherwise
+
+SH4 dynarec (`r4300/sh4/`), Expansion Pak, skipMenu as a UI toggle (would
+lock hardware `argc<=1` out of the browser), merge to `master`.
+
+### What not to do next
+
+- Restyle Wii `libgui/` / GX
+- Invent a second menu toolkit
+- Treat HOST `CPUTEST PASS` as hardware evidence
+- “Fix” Wii `fast_mem_access` / `blocks[]` / PPC JIT as part of DC work
 
 ---
 

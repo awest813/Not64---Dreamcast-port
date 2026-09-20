@@ -51,13 +51,13 @@ static void refresh_status(void)
 {
 	snprintf(status, sizeof(status), "Slot %u %s",
 		 savestates_get_slot(),
-		 savestates_exists(SAVESTATE) ? "(file present)" : "(empty / no dump)");
+		 savestates_exists(SAVESTATE) ? "(file present)" : "(empty)");
 }
 
 void dc_overlay_enter(void)
 {
 	cursor = 0;
-	prev = 0;
+	prev = ~0; /* swallow the Start+A+B hold that opened this screen */
 	action = DC_OVERLAY_NONE;
 	refresh_status();
 }
@@ -218,6 +218,14 @@ int dc_overlay_take_action(void)
 }
 
 #ifdef DC_HOST_STUB
+static void overlay_release(void)
+{
+	BUTTONS k;
+
+	memset(&k, 0, sizeof(k));
+	dc_overlay_step(&k);
+}
+
 int dc_overlay_selftest(void)
 {
 	int fails = 0;
@@ -225,6 +233,16 @@ int dc_overlay_selftest(void)
 	const char *row;
 
 	stop = 0;
+	dc_overlay_enter();
+	memset(&k, 0, sizeof(k));
+	k.A_BUTTON = 1;
+	k.B_BUTTON = 1;
+	k.START_BUTTON = 1;
+	if (!dc_overlay_step(&k)) {
+		printf("overlay FAIL: opening combo must not select Continue\n");
+		fails++;
+	}
+	overlay_release();
 	dc_draw_init();
 	dc_overlay_draw();
 	row = dc_draw_host_row(0);
@@ -267,6 +285,7 @@ int dc_overlay_selftest(void)
 	}
 	remove(savestates_filename());
 	dc_overlay_enter();
+	overlay_release();
 	memset(&k, 0, sizeof(k));
 	k.A_BUTTON = 1;
 	if (dc_overlay_step(&k) || dc_overlay_take_action() != DC_OVERLAY_CONTINUE) {
@@ -274,6 +293,7 @@ int dc_overlay_selftest(void)
 		fails++;
 	}
 	dc_overlay_enter();
+	overlay_release();
 	memset(&k, 0, sizeof(k));
 	k.D_DPAD = 1;
 	dc_overlay_step(&k);
