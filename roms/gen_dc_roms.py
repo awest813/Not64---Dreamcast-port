@@ -86,6 +86,27 @@ def main():
             i_type(35, 5, 6, 0),
             i_type(8, 3, 10, 1),
             i_type(10, 10, 11, 0x2000),
+            # --- 32-bit shift / divide block ---------------------------------
+            # These caught real LP64 bugs in pure_interp.c: `long` is 32-bit on
+            # SH4 and PPC but 64-bit on the host, so SRL/SRLV/DIVU shifted or
+            # divided a sign-extended 64-bit value. A negative operand is the
+            # whole point of this block - a positive one passes either way.
+            i_type(15, 0, 12, 0x95F2),      # lui  r12, 0x95F2
+            i_type(13, 12, 12, 0x08B7),     # ori  r12, r12, 0x08B7 -> 0x95F208B7
+            i_type(13, 0, 13, 4),           # ori  r13, r0, 4
+            special(0, 12, 14, 4, 0x02),    # srl  r14, r12, 4   -> 0x095F208B
+            special(13, 12, 15, 0, 0x06),   # srlv r15, r12, r13  -> 0x095F208B
+            special(0, 12, 16, 4, 0x03),    # sra  r16, r12, 4   -> 0xF95F208B
+            special(13, 12, 17, 0, 0x07),   # srav r17, r12, r13  -> 0xF95F208B
+            special(13, 1, 18, 0, 0x04),    # sllv r18, r1, r13   -> 0x00012340
+            special(0, 1, 19, 0, 0x23),     # subu r19, r0, r1    -> 0xFFFFEDCC
+            special(12, 13, 0, 0, 0x1B),    # divu r12, r13
+            special(0, 0, 20, 0, 0x12),     # mflo r20            -> 0x257C822D
+            special(0, 0, 21, 0, 0x10),     # mfhi r21            -> 3
+            # Result whose bit 31 is set: the FULL 64-bit register must be the
+            # sign extension. sign_extended() is a no-op on an LP64 host unless
+            # it truncates to 32 bits first, and only a 64-bit check sees that.
+            special(0, 12, 22, 8, 0x00),    # sll  r22, r12, 8 -> 0xFFFFFFFFF208B700
             i_type(5, 1, 1, 1),
             0,
             i_type(4, 0, 0, -1),

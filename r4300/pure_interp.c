@@ -82,42 +82,42 @@ static void NI()
 
 static void SLL()
 {
-   rrd32 = (unsigned long)(rrt32) << rsa;
+   rrd32 = (unsigned int)(rrt32) << rsa;
    sign_extended(rrd);
    interp_addr+=4;
 }
 
 static void SRL()
 {
-   rrd32 = (unsigned long)rrt32 >> rsa;
+   rrd32 = (unsigned int)rrt32 >> rsa;
    sign_extended(rrd);
    interp_addr+=4;
 }
 
 static void SRA()
 {
-   rrd32 = (signed long)rrt32 >> rsa;
+   rrd32 = (signed int)rrt32 >> rsa;
    sign_extended(rrd);
    interp_addr+=4;
 }
 
 static void SLLV()
 {
-   rrd32 = (unsigned long)(rrt32) << (rrs32&0x1F);
+   rrd32 = (unsigned int)(rrt32) << (rrs32&0x1F);
    sign_extended(rrd);
    interp_addr+=4;
 }
 
 static void SRLV()
 {
-   rrd32 = (unsigned long)rrt32 >> (rrs32 & 0x1F);
+   rrd32 = (unsigned int)rrt32 >> (rrs32 & 0x1F);
    sign_extended(rrd);
    interp_addr+=4;
 }
 
 static void SRAV()
 {
-   rrd32 = (signed long)rrt32 >> (rrs32 & 0x1F);
+   rrd32 = (signed int)rrt32 >> (rrs32 & 0x1F);
    sign_extended(rrd);
    interp_addr+=4;
 }
@@ -272,8 +272,8 @@ static void DIVU()
 {
    if (rrt32)
      {
-	lo = (unsigned long)rrs32 / (unsigned long)rrt32;
-	hi = (unsigned long)rrs32 % (unsigned long)rrt32;
+	lo = (unsigned int)rrs32 / (unsigned int)rrt32;
+	hi = (unsigned int)rrs32 % (unsigned int)rrt32;
 	sign_extended(lo);
 	sign_extended(hi);
      }

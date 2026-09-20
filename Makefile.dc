@@ -81,9 +81,13 @@ endif
 CFLAGS  ?= -std=gnu11 -fgnu89-inline -Wall -Wextra -Wno-unused-parameter \
 	-Wno-missing-field-initializers -Wno-unused-function \
 	-Wno-unused-variable -Wno-pointer-sign -Wno-multichar -O1
-CPPFLAGS = $(DC_DEFS) -DDC_HOST_STUB
+# -MMD -MP: let the compiler track header deps. Hand-listed rules kept missing
+# headers (macros.h was absent, so editing it silently reused stale objects and
+# produced runs that disagreed with the source).
+CPPFLAGS = $(DC_DEFS) -DDC_HOST_STUB -MMD -MP
 TARGET   = not64-dc-bringup
 LIBS     = -lm
+DEPS     = $(OBJS:.o=.d)
 
 .PHONY: all clean run test roms
 
@@ -103,8 +107,7 @@ gc_input/input.o: gc_input/input.c
 %.o: %.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
-r4300/pure_interp.o gc_memory/memory.o: gc_memory/memory.h
-r4300/r4300.o platform/dc_recomp_stubs.o: r4300/recomp.h
+-include $(DEPS)
 
 run: $(TARGET) $(ROMS)
 	./$(TARGET)
@@ -114,7 +117,7 @@ test: $(TARGET) $(ROMS)
 	./$(TARGET) roms/dc_dummy.z64
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(DEPS) $(TARGET)
 
 else
 
@@ -124,8 +127,9 @@ endif
 
 include $(KOS_BASE)/Makefile.rules
 
-KOS_CFLAGS += $(DC_DEFS) -I$(CURDIR)
+KOS_CFLAGS += $(DC_DEFS) -I$(CURDIR) -MMD -MP
 TARGET = not64-dc.elf
+DEPS = $(OBJS:.o=.d)
 
 .PHONY: all clean
 
@@ -140,7 +144,9 @@ gc_input/input.o: gc_input/input.c
 %.o: %.c
 	$(KOS_CC) $(KOS_CFLAGS) -c -o $@ $<
 
+-include $(DEPS)
+
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(DEPS) $(TARGET)
 
 endif

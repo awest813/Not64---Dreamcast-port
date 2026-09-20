@@ -55,7 +55,7 @@ The Wii/GC product still builds from `Makefile.menu2_*`. Dreamcast is a **third 
 | `gc_input/controller-DC.c` | Maple `controller_t`; trigger/shift map (see below); host inject `controller_DC_host_set*` |
 | `gc_audio/audio-dc.c` | AI DMA → ring; no AICA yet |
 | `roms/gen_dc_roms.py` | Regenerates dummy + CPUTEST `.z64` |
-| `roms/dc_cputest.z64` | IPL: ORI/ADDU/XOR/ANDI/SLL/LUI/SW/LW/ADDI/SLTI/BNE + BEQ spin; header carries `'DO'` / `'E'` / v1 to exercise the DC header un-swap |
+| `roms/dc_cputest.z64` | IPL: ALU + SW/LW + **SRL/SRLV/SRA/SRAV/SLLV/SUBU/DIVU/MFLO/MFHI on a negative operand** + a 64-bit sign-extension check + BEQ spin; header carries `'DO'` / `'E'` / v1 for the DC header un-swap |
 | `roms/dc_dummy.z64` | IPL: `B -1` |
 | (your own dump) | `./not64-dc-bringup game.z64 50000000` — see Phase 3.5 in `PORTING.md` |
 
@@ -72,8 +72,9 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
 5. **Host I/O smokes** — `./saves/dc_host.txt`, injected A + analog, 64-byte AI DMA into the ring.
 6. **PIF/Maple host** — `native_ReadController` → `internal_ReadController`; `update_pif_write` status `0x05`; `update_pif_read` A + analog 72/48.
 7. **Audit polish** — DC-only KSEG1/`n64_addr`; Wii `fast_mem_access` **unchanged**; ROM cache clipped; teardown after run; no x86 assembler in DC `recomp.h`.
-8. **Controller map** — triggers carry Z/R, `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons. See **Controller mapping** below.
-9. **Second audit polish** — host stub builds under clang/macOS (`gc_input/input.c` nested functions removed, `<malloc.h>` guarded, `invalidate_func` declared); DC ROM-header byte order fixed and asserted; PIF joybus store made alignment- and LP64-safe; ROM cache bounds/LRU/NULL fixes; AI DMA clamped to RDRAM; `PC` no longer leaked per run; recursive `mkdir` for `/sd/not64/...`; `get_savespath()` correct on KOS.
+8. **Interpreter LP64 fixes** — `macros.h` + `pure_interp.c` 32-bit ops; a real ROM now boots past IPL3. CPUTEST covers all of it (each fix fails the test when reverted).
+9. **Controller map** — triggers carry Z/R, `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons. See **Controller mapping** below.
+10. **Second audit polish** — host stub builds under clang/macOS (`gc_input/input.c` nested functions removed, `<malloc.h>` guarded, `invalidate_func` declared); DC ROM-header byte order fixed and asserted; PIF joybus store made alignment- and LP64-safe; ROM cache bounds/LRU/NULL fixes; AI DMA clamped to RDRAM; `PC` no longer leaked per run; recursive `mkdir` for `/sd/not64/...`; `get_savespath()` correct on KOS.
 
 ---
 
@@ -100,7 +101,9 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
 | Segfault on `SW` to `0x80000000` on x86_64 | `address` is 64-bit; `0x80000000` sign-extends; `rwmem[address>>16]` explodes | `n64_addr()` in `gc_memory/memory.h` (**DC only**) |
 | Boot executes RDRAM not IPL | Wii `fast_mem_access` treats only `0x8/0x9` as unmapped; `0xa4000040` TLB-misses | KSEG0+KSEG1 unmapped **on DC only** — do not change the Wii `#else` |
 | `src` undeclared in stubs | Copied `prefetch_opcode` from `recomp.c` (`src`/`dst` live there) | Stubs decode locally; no `src`/`dst` |
-| Host `.o` stale after `memory.h` change | Macros inlined into `pure_interp.c` | `Makefile.dc` lists `r4300/pure_interp.o: gc_memory/memory.h` |
+| Host `.o` stale after a header change | The hand-written dep list omitted `macros.h`; edits silently reused stale objects and produced runs that disagreed with the source | `Makefile.dc` uses `-MMD -MP` and `-include $(DEPS)`. **If a result looks impossible, `make -f Makefile.dc HOST=1 clean` first.** |
+| Real ROM dead-loops at `0x800001c8` (`BGEZAL r0,-1`) | IPL3's CIC checksum failed. `long` is 32-bit on SH4/PPC but 64-bit on an LP64 host, so `sign_extended()` stopped truncating and `SRL`/`SRLV`/`DIVU` shifted a sign-extended value | `int`/`unsigned int` in `r4300/macros.h` and `r4300/pure_interp.c`. Identical codegen on GC/Wii. See Phase 3.5 |
+| A 32-bit op looks right but breaks a real ROM | Only the **low** 32 bits were checked; the high half held garbage, and IPL3 compares 64-bit registers with `SLTU` | CPUTEST checks `r22` as a full 64-bit value, and exercises shifts on a **negative** operand |
 | `error: function definition is not allowed here` in `input.c` | GCC nested functions in `load_configurations` | Replaced with `read_config_pointer()` + local macros; call sites unchanged |
 | `malloc.h: file not found` on macOS | Darwin/BSD have no `<malloc.h>` | Guarded in `r4300/r4300.c` and `gc_memory/dma.c` |
 | `call to undeclared function 'invalidate_func'` | Only declared by `r4300/ppc/Wrappers.h` | Declared in `dma.c` under `__DREAMCAST__` |
@@ -164,7 +167,7 @@ held during C-presses.
 
 1. **KallistiOS ELF** — install `sh-elf-gcc` + KOS (`KOS_BASE`, `environ.sh`). `make -f Makefile.dc` → `not64-dc.elf`. Same bring-up on lxdream/redream or hardware. Cloud image does not have this yet (`environment.json` when someone can install it).
 2. **AICA** — `audio-dc.c` only fills a ring. Host smoke is enough; hardware needs `snd_stream` (or equivalent) draining that ring.
-3. **Get a real ROM to VI** — *this is the live problem.* A retail 32 MiB cart now loads, runs IPL3, PI-DMAs the game into RDRAM at its header PC, and retires **50M instructions with no exception, no NI and no unmapped fetch** — then loops in real code at `0x80000130`-`0x80000188` and never sets `VI origin`. Full evidence, including what is ruled out, is **Phase 3.5 in `PORTING.md`**. Start there: `EPC` is untouched so it is not an exception loop, and the PI DMA is verified correct, so suspect the boot handshake the loop is polling (`PIF_RAM[0x3C]` is all zeros where hardware leaves a CIC/PIF value).
+3. **Get a real ROM to VI** — *this is the live problem.* A retail 32 MiB cart now **passes IPL3's CIC boot checksum and runs game code**; after 600M instructions it takes a **TLB store miss** (`Cause=0x0c`, `EPC=0x800afbe4`) and vectors to `0x80000000`, and `VI origin` is still 0. Start at the TLB refill path — DC builds `USE_TLB_CACHE` (`TLB-Cache-hash.c`) and nothing has stressed it. Full evidence in **Phase 3.5 of `PORTING.md`**.
 4. **Menu step 8a** — ROM browser over `/sd/not64/roms` on KOS `bfont`. Needs no renderer, so it can land right after the KOS ELF and replaces the argv path. Design (screens, which `dc_config.c` settings survive on DC, why `libgui/` does not port) is **Phase 8 in `PORTING.md`** — read it before writing menu code.
 5. **Software first frame** (Phase 4) — only after a ROM actually hits RDP/VI. Start from `mupen64_soft_gfx/` / `GX_gfx/`, not glN64.
 6. **SH4 dynarec** — last. New `r4300/sh4/`. PPC JIT is not a template you search-replace.

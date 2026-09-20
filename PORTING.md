@@ -35,7 +35,7 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | Host I/O smoke | Save file, injected Maple A, AI ring DMA, PIF joybus read/write |
 | ROM header decode on DC | Fixed — `dc_fix_header_byte_order()` un-swaps Name/Cartridge_ID/Country_code; asserted by CPUTEST |
 | Maple → N64 button map | Done — triggers carry Z/R, `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons; 10 host cases in `smoke_map()` |
-| First commercial ROM (host) | Boots IPL3, PI-DMAs the game in, retires 50M instructions — but never reaches VI. See Phase 3.5 |
+| First commercial ROM (host) | **Passes the CIC boot checksum and runs game code**; stops at a TLB store miss, still no VI. See Phase 3.5 |
 | Software / PVR renderer | Not started (blocked: no ROM has reached VI yet) |
 | Dreamcast menu | Designed only (Phase 8 below); no code. `libgui/` does not port |
 | SH4 dynarec | Not started |
@@ -146,7 +146,7 @@ Phase 0  Decisions + environment     (decisions locked; KOS still missing here)
 Phase 1  KOS / host bring-up         (done on host stub)
 Phase 2  Interpreter core links      (done on host: dummy + CPUTEST)
 Phase 3  I/O wired into emulator     (host PIF/Maple/AI/save; AICA on hardware next)
-Phase 3.5 First real commercial ROM   (loads + 50M instructions; does NOT reach VI yet)
+Phase 3.5 First real commercial ROM   (boots past IPL3 into game code; stops at a TLB miss)
 Phase 4  First emulated frame        (next: software renderer)
 Phase 5  Memory map hardening        (ROM stream, cache sizes)
 Phase 6  SH4 dynarec                 (performance)
@@ -248,45 +248,86 @@ through the core, and it exercised paths nothing else had.
 - [x] **PI DMA cart -> RDRAM**: `cart=0x10001000 dram=0x00025c00 len=0x100000`,
       and the landing word is `3c08800d` (`LUI r8,0x800d`) — real game code, at
       the address the header's PC points at
-- [x] **50,000,000 MIPS instructions retired** with no exception, no `NI`
-      opcode and no unmapped fetch
+- [x] **IPL3's CIC boot checksum passes** (both CRC1 and CRC2) and IPL3 jumps
+      to the game — see the LP64 section below for what this took
+- [x] 600,000,000 MIPS instructions retired, no `NI` opcode, no unmapped fetch
 
-**Does not work — the ROM never reaches video.** `VI origin` stays 0, so the
-Phase 4 renderer has nothing to draw and Phase 4 is not yet unblocked.
+**Does not work yet — the ROM still never reaches video.** `VI origin` stays 0,
+so Phase 4 is not unblocked. But the failure has moved two layers deeper.
 
-Final state after 50M steps:
+#### What was wrong: LP64 bugs in the pure interpreter
+
+The boot dead-ended at `0x800001c8` — `BGEZAL r0,-1`, IPL3's **CIC checksum
+failure loop**. It was reached from:
 
 ```
-COP0   Count=0x0b6e2352 Compare=0 Status=0x34000000 Cause=0 EPC=0xffffffff
-MI     intr=0x00000018 (VI|PI pending)  mask=0x00000000 (all masked)
+800001a4  LUI  r11, 0xb000
+800001a8  LW   r8, 0x10(r11)     ; header CRC1
+800001ac  BNE  r7, r8, +6        ; -> dead loop
+800001b4  LW   r8, 0x14(r11)     ; header CRC2
+800001b8  BNE  r16, r8, +3       ; -> dead loop
+```
+
+The data was never the problem. Both were verified byte-exact against the raw
+file: every `ROMCache_pointer()` read (including across the 1 MiB window
+boundary, at 2 MiB and at 16 MiB), and the whole DMA'd 1 MiB in RDRAM
+(262,144 words, matching sum, xor, first and last word). **The arithmetic was
+wrong.**
+
+`long` is 32 bits on SH4 and PPC32 but 64 on an LP64 host, and the interpreter
+uses `long` as "the 32-bit MIPS word":
+
+| Site | Bug on LP64 |
+|------|-------------|
+| `macros.h` `sign_extended(a) = (long long)((signed long)a)` | No-op — 32-bit results never truncated, so the upper half of a register held garbage |
+| `macros.h` `rrt32/rrd32/rrs32/irs32/irt32 = *((long*)…)` | Read/write all 64 bits instead of the low word |
+| `pure_interp.c` `SRL`, `SRLV` | `(unsigned long)rrt32` sign-extends a negative operand, then shifts the high `0xFFFFFFFF` down into the result |
+| `pure_interp.c` `DIVU` | Same: divides a sign-extended 64-bit value |
+| `pure_interp.c` `SLL/SLLV/SRA/SRAV` | Correct by truncation, but made explicitly 32-bit |
+
+All are fixed by using `int`/`unsigned int`, which is 32 bits on SH4, PPC32
+**and** LP64 — identical codegen for GC/Wii, correct for the host stub.
+
+**None of these would have failed on real Dreamcast hardware**, where `long`
+is 32 bits. They are host-stub fidelity bugs — and the reason the stub could
+not run a real ROM. Not64 on Wii never hit them because it runs the PPC
+dynarec, not `pure_interp.c`.
+
+Result, in order:
+
+1. Both macros fixes -> CRC1 passes (`r7 = 0x664ba3d4`), CRC2 still fails
+2. Plus the shift/divide fixes -> **both checksums pass, IPL3 jumps to the game**
+3. 600M instructions later the PC is in game code, then takes a **TLB store
+   miss** (`Cause=0x0c`, `EPC=0x800afbe4`) and vectors to `0x80000000`
+
+#### Where it stands now
+
+```
+COP0   Count=0x4b052e98 Status=0x00000282 (EXL) Cause=0x0000000c (TLBS) EPC=0x800afbe4
+MI     intr=0x0000000a (SI|VI)  mask=0x00000002 (SI)
 VI     origin=0 width=0
-SP     status=0x00000001 (halted)   DPC start/end/current = 0
 ```
 
-Execution loops inside `0x80000130`-`0x80000188`. That is **real code, not
-NOPs** — `0x80000130: 10000003` (`BEQ r0,r0,+3`), `0x134: 3c09b000`
-(`LUI r9,0xb000`, the cart domain), then `SW`/`ADDIU` stepping by `0x1000`
-and reading back. It looks like a memory sizing/clearing routine, and the
-words above `0x158` have been zeroed while it ran.
+The game now enables interrupts and uses the TLB. Next owner starts at the TLB
+store miss from `0x800afbe4` and the refill path at `0x80000000` — DC builds
+with `USE_TLB_CACHE` (`TLB-Cache-hash.c`), which nothing has stressed yet.
 
-Evidence narrowing the fault:
+Throughput on this host is ~126M interpreted instructions/sec. An SH4 at
+200 MHz will be one to two orders of magnitude slower, which is the
+quantitative case for Phase 6.
 
-- `EPC` is still `0xffffffff` and `Status.EXL` is clear, so **no exception has
-  ever been taken** — this is not an exception loop.
-- `Status.IE = 0` and `MI mask = 0`: the ROM has not enabled interrupts, yet
-  `MI intr = 0x18` shows VI and PI events were raised and never acknowledged.
-- The PI DMA completed correctly, so this is *not* a ROM-cache or byte-swap
-  bug. Suspect the boot handshake the ROM is polling for: `PIF_RAM[0x3C]` is
-  `00 00 00 00`, where hardware leaves a CIC/PIF boot value.
+#### Test coverage added
 
-Next step for whoever picks this up: trace what the `0x80000130` loop is
-polling (`LUI r9,0xb000` points at the cart domain), and check the PIF boot
-handshake in `cpu_init()` / `gc_memory/pif.c` against the CIC-6102 sequence.
+CPUTEST now runs `SRL/SRLV/SRA/SRAV/SLLV/SUBU/DIVU/MFLO/MFHI` **on a negative
+operand** (`0x95F208B7`) — a positive one passes with or without the bugs,
+which is why this went unnoticed. It also checks one full 64-bit register
+(`r22 = 0xFFFFFFFFF208B700`): the low half looks right even when the high half
+is garbage, so only a 64-bit check catches the `macros.h` fault. Each fix was
+verified to fail the test when reverted.
 
-Note the host stub caveat still applies: `unsigned long` is 64-bit here and
-32-bit on SH4. `interp_addr` came back sign-extended
-(`0xffffffff80000130`) — harmless on SH4, and the bring-up now prints it
-truncated, but it is a reminder that host agreement is not hardware evidence.
+`Makefile.dc` now uses `-MMD -MP`. The hand-written dep list omitted
+`macros.h`, so editing it silently reused stale objects and produced runs that
+disagreed with the source.
 
 ---
 

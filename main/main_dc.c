@@ -338,14 +338,42 @@ static int check_cputest(const char *path)
 	DC_EXPECT_REG(9, 0x0030);
 	DC_EXPECT_REG(10, 0x1334);
 	DC_EXPECT_REG(11, 0x0001);
+	/* 32-bit shift/divide on a NEGATIVE operand. `long` is 32-bit on SH4 and
+	 * PPC but 64-bit on an LP64 host, where SRL/SRLV/DIVU used to shift or
+	 * divide a sign-extended 64-bit value and drag the high bits down. A
+	 * positive operand passes either way, which is why this went unnoticed
+	 * until a real ROM's boot checksum failed. */
+	DC_EXPECT_REG(12, 0x95F208B7u);   /* lui+ori                       */
+	DC_EXPECT_REG(13, 0x00000004);    /* shift amount                  */
+	DC_EXPECT_REG(14, 0x095F208Bu);   /* srl  - logical, zero-filled   */
+	DC_EXPECT_REG(15, 0x095F208Bu);   /* srlv - same, variable amount  */
+	DC_EXPECT_REG(16, 0xF95F208Bu);   /* sra  - arithmetic, sign-filled*/
+	DC_EXPECT_REG(17, 0xF95F208Bu);   /* srav                          */
+	DC_EXPECT_REG(18, 0x00012340u);   /* sllv                          */
+	DC_EXPECT_REG(19, 0xFFFFEDCCu);   /* subu r0 - 0x1234              */
+	DC_EXPECT_REG(20, 0x257C822Du);   /* mflo: 0x95F208B7 / 4          */
+	DC_EXPECT_REG(21, 0x00000003);    /* mfhi: remainder               */
 #undef DC_EXPECT_REG
+
+	/* Full 64-bit check. A 32-bit op whose result has bit 31 set must leave
+	 * the register sign-extended; the low half alone looks right even when
+	 * the high half is garbage, which is how the r4300/macros.h LP64 bug
+	 * survived every low-32 check here. IPL3's checksum compares 64-bit
+	 * registers with SLTU, so the high half is load-bearing. */
+	if ((unsigned long long)reg[22] != 0xFFFFFFFFF208B700ull) {
+		printf("CPUTEST r22=0x%016llx want 0xFFFFFFFFF208B700 "
+		       "(32-bit result not sign-extended)\n",
+		       (unsigned long long)reg[22]);
+		fail = 1;
+	}
 
 	got = (unsigned long)(rdram[0] & 0xffffffffu);
 	if (got != 0x1333u) {
 		printf("CPUTEST rdram[0]=0x%lx want 0x1333\n", got);
 		fail = 1;
 	}
-	if (interp_addr != 0xa4000074 && interp_addr != 0xa4000078) {
+	/* IPL spin; move these if gen_dc_roms.py changes the instruction count. */
+	if (interp_addr != 0xa40000a8 && interp_addr != 0xa40000ac) {
 		printf("CPUTEST interp_addr=0x%08lx (expected IPL BEQ spin)\n",
 		       interp_addr);
 		fail = 1;
