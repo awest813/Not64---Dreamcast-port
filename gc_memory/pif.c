@@ -141,6 +141,18 @@ unsigned char dc_eeprom_debug_get(unsigned int off)
 }
 #endif
 
+#ifdef __DREAMCAST__
+unsigned char *dc_cart_eeprom(void)
+{
+	return eeprom;
+}
+
+unsigned char *dc_cart_mempak(void)
+{
+	return &mempack[0][0];
+}
+#endif
+
 //#define DEBUG_PIF
 #ifdef DEBUG_PIF
 void print_pif()

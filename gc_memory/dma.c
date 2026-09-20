@@ -77,6 +77,13 @@ static unsigned char sram[0x8000] __attribute__((aligned(32)));
 
 BOOL sramWritten = FALSE;
 
+#ifdef __DREAMCAST__
+unsigned char *dc_cart_sram(void)
+{
+	return sram;
+}
+#endif
+
 int loadSram(fileBrowser_file* savepath){
 	int i, result = 0;
 	fileBrowser_file saveFile;

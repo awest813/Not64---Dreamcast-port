@@ -296,8 +296,9 @@ Follow **Gap plan** in `PORTING.md`. Short form:
 2. **P1 — KOS ELF / `dc_draw_kos.c` bfont** when `KOS_BASE` exists.
 3. ~~**P2 — `AiReadLength` + ring drain**~~ — host shipped; AICA/`snd_stream` still open.
 4. ~~**P3 — native EEPROM/SRAM/Flash on SD**~~ — host shipped; VMU still a human call.
-5. Menu 8a–8d is done (v2 dumps: ROM id + CRC32). `dc_draw_kos.c` still uncompiled.
-6. Software/TA/dynarec only after P0 produces a VI framebuffer.
+5. ~~**P4 — per-ROM savestate names + cart blobs**~~ — host shipped (`NOT64ST` v3). Atomic apply still open.
+6. Menu 8a–8d is done. `dc_draw_kos.c` still uncompiled.
+7. Software/TA/dynarec only after P0 produces a VI framebuffer.
 
 Skip SH4 dynarec and TA/RDP until 1–3 have a ROM that is more than a BEQ spin.
 
@@ -339,6 +340,6 @@ Checks live in `check_cputest()` in `main/main_dc.c`. Keep them if you change th
 
 ## Suggested first message for the next agent
 
-> Continue the Not64 Dreamcast port from `AGENT_HANDOFF.md` and the Gap plan in `PORTING.md`. Run `make -f Makefile.dc HOST=1 test` first. P0 is the live problem: who writes `0x400` to `0x800c833c` (byte-view dumps; not TLBWI). If KOS is available, P1 is `dc_draw_kos.c` / bfont. Do not start TA/RDP or SH4 dynarec.
+> Continue the Not64 Dreamcast port from `AGENT_HANDOFF.md` and the Gap plan in `PORTING.md`. Run `make -f Makefile.dc HOST=1 test` first. P0–P4 host work is done or blocked (P0 no cart, P1 no KOS). Next is P5 rumble/paks (needs KOS) or leftover P4 atomic apply. Do not start TA/RDP or SH4 dynarec.
 
 Update **this file** and `PORTING.md` current-status when a phase actually finishes.

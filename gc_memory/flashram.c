@@ -73,6 +73,13 @@ static unsigned long erase_offset, write_pointer;
 
 BOOL flashramWritten = FALSE;
 
+#ifdef __DREAMCAST__
+unsigned char *dc_cart_flashram(void)
+{
+	return flashram;
+}
+#endif
+
 int loadFlashram(fileBrowser_file* savepath){
 	int i, result = 0;
 	fileBrowser_file saveFile;

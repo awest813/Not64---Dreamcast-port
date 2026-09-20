@@ -69,7 +69,7 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | Rumble / VMU pak | **Not started** — `rumble_ctl()` is a no-op; Jump Pack and VMU are the natural N64 Rumble/Controller Pak analogues. Needs KOS to write |
 | First commercial ROM (host) | **Passes the CIC boot checksum and runs game code**; dies on an `ERET` to `0x400`, still no VI. **Not a TLB bug** — see Phase 3.5 |
 | Software / PVR renderer | **VI presenter shipped** (`VIDEO=software` CPU blit, `VIDEO=pvr` textured quad). `GFX=soft` rasterizes F3DEX2 into RDRAM then uses the same presenter. Raw RDP / TA geometry is not started — see Phase 7 |
-| Dreamcast menu | **8a/8b/8c/8d shipped** — ROM browser, pause overlay (Start+A+B), mupen64plus-style settings, little-endian savestate dumps (`saves/not64.stN`). `libgui/` does not port |
+| Dreamcast menu | **8a/8b/8c/8d shipped** — ROM browser, pause overlay (Start+A+B), mupen64plus-style settings, little-endian savestate dumps (`saves/<goodname>.stN`). `libgui/` does not port |
 | TLB hash cache (`gc_memory/TLB-Cache-hash.c`) | Rehashed and de-tombstoned; ~173x faster lookup, covered by `smoke_tlbcache()` |
 | SH4 dynarec | Not started |
 | Cloud environment KOS toolchain | **Missing** (`sh-elf-gcc` not installed) |
@@ -587,7 +587,7 @@ Each step is independently useful; none blocks the emulator core.
 | **8a** | ROM browser only: list `/sd/not64/roms`, pick, boot. Replaces the argv path. | KOS ELF (Phase 1) + `bfont`. **Not** the software renderer. | **Shipped** — see below |
 | **8b** | In-game overlay: return to menu, reset, save/load state. | Phase 4 framebuffer | **Shipped** — Start+A+B pause overlay; slots 0–9 |
 | **8c** | Settings INI / controls legend (`platform/dc_settings.c`). | 8a | **Shipped** — mupen64plus.cfg layout, Y/X screens from the ROM browser, skipMenu file-only |
-| **8d** | Savestate dump/restore (`platform/dc_savestates.c`). | 8b | **Shipped** — `NOT64ST` v2 LE dumps, ROM name+CRC1, CRC32 footer, HOST roundtrip / reject tests |
+| **8d** | Savestate dump/restore (`platform/dc_savestates.c`). | 8b | **Shipped** — `NOT64ST` v3 LE dumps, per-ROM names, cart blobs, CRC32 footer, HOST roundtrip / reject tests |
 
 8a is the one worth doing early — it is the difference between a demo that
 needs a rebuild per ROM and something a person can actually use, and it needs
@@ -685,13 +685,13 @@ new DMA. Hardware still needs `snd_stream` / AICA.
 `dc_nativesave_load/save` run after `cpu_init` and when leaving a ROM.
 Settings Auto-load/save now do something. VMU layout is still a human call.
 
-### P4 — savestate leftovers (after v2 polish)
+### P4 — savestate leftovers (host shipped)
 
-Still missing: per-ROM filenames (slots are global `not64.stN`), EEPROM/
-SRAM/flash contents, mempak, overlay “wrong ROM” copy vs generic fail,
-atomic apply (CRC avoids truncated files; a CRC-passing mid-apply I/O
-error can still tear state). Do this after P3 so native saves and dumps
-share accessors.
+v3 `NOT64ST` dumps: per-ROM `saves/<sanitized-goodname>.stN`, EEPROM/SRAM/
+Flash/mempak blobs in the body, overlay shows `savestates_error()`
+("wrong ROM" / "truncated" / "missing"). v2 dumps will not load. Atomic
+apply is still open: CRC rejects truncated files; a CRC-passing mid-apply
+I/O error can still tear state. Extra 4 MB scratch is not in the DC budget.
 
 ### P5 — input/paks
 

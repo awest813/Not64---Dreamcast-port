@@ -5,9 +5,10 @@
  * portable SH4/host format. This file is uncompressed little-endian with
  * explicit field widths so ILP32 HOST tests and KOS share one dump.
  *
- * NOT64ST v2: ROM goodname + cart CRC1 in the header, CRC32 of the body
- * so a truncated file is rejected before RDRAM is touched. Slots are still
- * global `not64.stN` (per-ROM names are P4 in the gap plan).
+ * NOT64ST v3: ROM goodname + cart CRC1 in the header, CRC32 of the body
+ * so a truncated file is rejected before RDRAM is touched. Slots are
+ * `saves/<sanitized-goodname>.stN`. EEPROM/SRAM/Flash/mempak blobs sit in
+ * the body after the 24-byte flashram info block. v2 dumps will not load.
  */
 
 #include "../main/winlnxdefs.h"
@@ -15,6 +16,7 @@
 #include "../fileBrowser/fileBrowser.h"
 #include "../gc_memory/memory.h"
 #include "../gc_memory/flashram.h"
+#include "../gc_memory/Saves.h"
 #include "../gc_memory/TLB-Cache.h"
 #include "../gc_memory/tlb.h"
 #include "../r4300/r4300.h"
@@ -29,18 +31,21 @@
 #include <string.h>
 #ifdef DC_HOST_STUB
 #include <unistd.h>
+#include "../gc_memory/pif.h"
 #endif
 
-extern char *get_savespath(void);
+extern BOOL eepromWritten, sramWritten, flashramWritten, mempakWritten;
 
 #define SS_MAGIC "NOT64ST\n"
-#define SS_VERSION 2u
+#define SS_VERSION 3u
 #define SS_NAME_LEN 32
+#define SS_STEM_LEN 24
 
 int savestates_job;
 
 static unsigned slot;
 static int last_ok;
+static char last_err[40];
 static uint32_t crc_state;
 static int crc_on;
 
@@ -64,14 +69,41 @@ static void cart_name(char *dst)
 	strncpy(dst, ROM_SETTINGS.goodname, SS_NAME_LEN - 1);
 }
 
+static void file_stem(char *dst, size_t n)
+{
+	const char *s = ROM_SETTINGS.goodname;
+	size_t i = 0;
+
+	if (n == 0)
+		return;
+	while (*s && i + 1 < n) {
+		unsigned char c = (unsigned char)*s++;
+		if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+		    (c >= '0' && c <= '9'))
+			dst[i++] = (char)c;
+		else if (i > 0 && dst[i - 1] != '_')
+			dst[i++] = '_';
+	}
+	while (i > 0 && dst[i - 1] == '_')
+		i--;
+	if (i == 0) {
+		strncpy(dst, "cart", n - 1);
+		dst[n - 1] = 0;
+		return;
+	}
+	dst[i] = 0;
+}
+
 static const char *slot_path(void)
 {
 	static char path[FILE_BROWSER_MAX_PATH_LEN];
+	char stem[SS_STEM_LEN];
 	const char *dir = get_savespath();
 
 	if (!dir)
 		dir = "./saves";
-	snprintf(path, sizeof(path), "%s/not64.st%u", dir, slot);
+	file_stem(stem, sizeof(stem));
+	snprintf(path, sizeof(path), "%s/%s.st%u", dir, stem, slot);
 	return path;
 }
 
@@ -88,6 +120,11 @@ const char *savestates_filename(void)
 int savestates_ok(void)
 {
 	return last_ok;
+}
+
+const char *savestates_error(void)
+{
+	return last_err;
 }
 
 static int wr_mem(FILE *f, const void *p, size_t n)
@@ -537,6 +574,11 @@ static int write_state(FILE *f)
 	save_flashram_infos(flash);
 	if (wr_mem(f, flash, 24))
 		return -1;
+	if (wr_mem(f, dc_cart_eeprom(), DC_EEPROM_SIZE) ||
+	    wr_mem(f, dc_cart_sram(), DC_SRAM_SIZE) ||
+	    wr_mem(f, dc_cart_flashram(), DC_FLASH_SIZE) ||
+	    wr_mem(f, dc_cart_mempak(), DC_MEMPAK_SIZE))
+		return -1;
 	{
 		long tlb_at = ftell(f);
 
@@ -616,12 +658,16 @@ static int read_state(FILE *f)
 	if (rd_mem(f, name, SS_NAME_LEN) || rd_mem(f, &crc1, 4))
 		return -1;
 	cart_name(expect);
-	if (memcmp(name, expect, SS_NAME_LEN) != 0 || crc1 != ROM_HEADER.CRC1)
+	if (memcmp(name, expect, SS_NAME_LEN) != 0 || crc1 != ROM_HEADER.CRC1) {
+		snprintf(last_err, sizeof(last_err), "wrong ROM");
 		return -1;
+	}
 	body_off = ftell(f);
 	if (body_off < 0 || file_crc_ok(f, body_off) ||
-	    fseek(f, body_off, SEEK_SET) != 0)
+	    fseek(f, body_off, SEEK_SET) != 0) {
+		snprintf(last_err, sizeof(last_err), "truncated");
 		return -1;
+	}
 	if (rd_mmio(f))
 		return -1;
 	if (rd_mem(f, rdramb, DC_N64_RDRAM_SIZE) ||
@@ -631,6 +677,15 @@ static int read_state(FILE *f)
 	if (rd_mem(f, flash, 24))
 		return -1;
 	load_flashram_infos(flash);
+	if (rd_mem(f, dc_cart_eeprom(), DC_EEPROM_SIZE) ||
+	    rd_mem(f, dc_cart_sram(), DC_SRAM_SIZE) ||
+	    rd_mem(f, dc_cart_flashram(), DC_FLASH_SIZE) ||
+	    rd_mem(f, dc_cart_mempak(), DC_MEMPAK_SIZE))
+		return -1;
+	eepromWritten = TRUE;
+	sramWritten = TRUE;
+	flashramWritten = TRUE;
+	mempakWritten = TRUE;
 	if (TLBCache_fread(f))
 		return -1;
 	if (rd_cpu(f) || rd_events(f))
@@ -645,6 +700,7 @@ void savestates_save(void)
 
 	savestates_job &= ~SAVESTATE;
 	last_ok = 0;
+	last_err[0] = 0;
 	if (!rdramb) {
 		dc_log(DC_LOG_ERROR, "savestate: save slot %u: no RDRAM", slot);
 		return;
@@ -678,12 +734,14 @@ void savestates_load(void)
 
 	savestates_job &= ~LOADSTATE;
 	last_ok = 0;
+	last_err[0] = 0;
 	if (!rdramb) {
 		dc_log(DC_LOG_ERROR, "savestate: load slot %u: no RDRAM", slot);
 		return;
 	}
 	fp = fopen(path, "rb");
 	if (!fp) {
+		snprintf(last_err, sizeof(last_err), "missing");
 		dc_log(DC_LOG_ERROR, "savestate: load slot %u: missing %s",
 		       slot, path);
 		return;
@@ -732,11 +790,13 @@ int savestates_selftest(void)
 {
 	int fails = 0;
 	unsigned old_slot = slot;
-	unsigned char old_byte;
+	unsigned char old_byte, old_eep0, old_eep1, old_sram;
+	BOOL old_ew, old_sw;
 	unsigned long old_pc;
 	long long old_r1;
 	unsigned long old_vi;
 	const char *path;
+	char stem[SS_STEM_LEN];
 
 	if (!rdramb) {
 		printf("savestate FAIL: RDRAM not initialised\n");
@@ -745,17 +805,34 @@ int savestates_selftest(void)
 
 	savestates_select_slot(9);
 	path = slot_path();
+	file_stem(stem, sizeof(stem));
 	remove(path);
+
+	if (!strstr(path, stem) || !strstr(path, ".st9") ||
+	    strstr(path, "not64.st")) {
+		printf("savestate FAIL: per-ROM path '%s' (stem '%s')\n",
+		       path, stem);
+		fails++;
+	}
 
 	old_byte = rdramb[0x200];
 	old_pc = interp_addr;
 	old_r1 = reg[1];
 	old_vi = vi_register.vi_origin;
+	old_eep0 = dc_eeprom_debug_get(0);
+	old_eep1 = dc_eeprom_debug_get(1);
+	old_sram = dc_cart_sram()[0];
+	old_ew = eepromWritten;
+	old_sw = sramWritten;
 
 	rdramb[0x200] = 0xA5;
 	interp_addr = 0xa4000040ul;
 	reg[1] = 0x1111;
 	vi_register.vi_origin = 0x00100000ul;
+	dc_eeprom_debug_set(0, 0x3C);
+	dc_eeprom_debug_set(1, 0xA5);
+	dc_cart_sram()[0] = 0x5A;
+	sramWritten = TRUE;
 	savestates_save();
 	if (!last_ok || !savestates_exists(SAVESTATE)) {
 		printf("savestate FAIL: did not write %s\n", path);
@@ -766,6 +843,8 @@ int savestates_selftest(void)
 	interp_addr = 0;
 	reg[1] = 0;
 	vi_register.vi_origin = 0;
+	init_eeprom();
+	dc_cart_sram()[0] = 0;
 	savestates_load();
 	if (!last_ok) {
 		printf("savestate FAIL: load reported error\n");
@@ -790,10 +869,26 @@ int savestates_selftest(void)
 		       vi_register.vi_origin);
 		fails++;
 	}
+	if (dc_eeprom_debug_get(0) != 0x3C || dc_eeprom_debug_get(1) != 0xA5) {
+		printf("savestate FAIL: EEPROM %02x %02x want 3c a5\n",
+		       dc_eeprom_debug_get(0), dc_eeprom_debug_get(1));
+		fails++;
+	}
+	if (dc_cart_sram()[0] != 0x5A) {
+		printf("savestate FAIL: SRAM 0x%02x want 0x5A\n",
+		       dc_cart_sram()[0]);
+		fails++;
+	}
 
 	remove(path);
 	if (savestates_exists(SAVESTATE)) {
 		printf("savestate FAIL: %s still present after unlink\n", path);
+		fails++;
+	}
+
+	savestates_load();
+	if (last_ok || strcmp(last_err, "missing") != 0) {
+		printf("savestate FAIL: missing dump err='%s'\n", last_err);
 		fails++;
 	}
 
@@ -815,29 +910,40 @@ int savestates_selftest(void)
 		interp_addr = 0xa4000040ul;
 		reg[1] = 0x1111;
 		vi_register.vi_origin = 0x00100000ul;
+		dc_eeprom_debug_set(0, 0x3C);
 		savestates_save();
 		old = rdramb[0x200];
 		{
-			char saved_name[256];
+			FILE *patch = fopen(path, "r+b");
+			char other[SS_NAME_LEN];
 
-			strncpy(saved_name, ROM_SETTINGS.goodname,
-				sizeof(saved_name) - 1);
-			saved_name[sizeof(saved_name) - 1] = 0;
-			strcpy(ROM_SETTINGS.goodname, "OTHER ROM");
+			memset(other, 0, sizeof(other));
+			strncpy(other, "OTHER ROM", sizeof(other) - 1);
+			if (!patch || fseek(patch, 16, SEEK_SET) != 0 ||
+			    fwrite(other, 1, SS_NAME_LEN, patch) != SS_NAME_LEN) {
+				printf("savestate FAIL: could not patch dump header\n");
+				fails++;
+			}
+			if (patch)
+				fclose(patch);
 			rdramb[0x200] = 0x11;
 			savestates_load();
 			if (last_ok) {
 				printf("savestate FAIL: loaded dump from another ROM name\n");
 				fails++;
 			}
+			if (strcmp(last_err, "wrong ROM") != 0) {
+				printf("savestate FAIL: wrong-ROM err='%s'\n", last_err);
+				fails++;
+			}
 			if (rdramb[0x200] != 0x11) {
 				printf("savestate FAIL: rejected load still mutated RDRAM\n");
 				fails++;
 			}
-			strncpy(ROM_SETTINGS.goodname, saved_name,
-				sizeof(ROM_SETTINGS.goodname) - 1);
-			ROM_SETTINGS.goodname[sizeof(ROM_SETTINGS.goodname) - 1] = 0;
 		}
+		remove(path);
+		rdramb[0x200] = old;
+		savestates_save();
 		{
 			FILE *cut = fopen(path, "r+b");
 
@@ -850,6 +956,10 @@ int savestates_selftest(void)
 			savestates_load();
 			if (last_ok) {
 				printf("savestate FAIL: truncated dump loaded\n");
+				fails++;
+			}
+			if (strcmp(last_err, "truncated") != 0) {
+				printf("savestate FAIL: truncated err='%s'\n", last_err);
 				fails++;
 			}
 			if (rdramb[0x200] != old) {
@@ -865,6 +975,11 @@ int savestates_selftest(void)
 	interp_addr = old_pc;
 	reg[1] = old_r1;
 	vi_register.vi_origin = old_vi;
+	dc_cart_eeprom()[0] = old_eep0;
+	dc_cart_eeprom()[1] = old_eep1;
+	dc_cart_sram()[0] = old_sram;
+	eepromWritten = old_ew;
+	sramWritten = old_sw;
 	savestates_select_slot(old_slot);
 
 	printf("savestate selftest: %s (%d failure(s))\n",

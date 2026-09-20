@@ -50,5 +50,16 @@ int saveSram(fileBrowser_file* savepath);
 int loadFlashram(fileBrowser_file* savepath);
 int saveFlashram(fileBrowser_file* savepath);
 
+#ifdef __DREAMCAST__
+#define DC_EEPROM_SIZE  0x800
+#define DC_SRAM_SIZE    0x8000
+#define DC_FLASH_SIZE   0x20000
+#define DC_MEMPAK_SIZE  (0x8000 * 4)
+unsigned char *dc_cart_eeprom(void);
+unsigned char *dc_cart_sram(void);
+unsigned char *dc_cart_flashram(void);
+unsigned char *dc_cart_mempak(void);
+#endif
+
 #endif
 

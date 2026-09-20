@@ -5,9 +5,10 @@
  * mupen64plus: CurrentStateSlot 0–9, pause from the front-end.
  * Flycast: Start opens a small in-game menu over the current frame.
  *
- * Save/Load write and restore `saves/not64.stN` (Phase 8d). Reset and
- * Return-to-menu stop the interpreter so main() can reload or show the
- * ROM browser.
+ * Save/Load write and restore `saves/<goodname>.stN` (Phase 8d/P4). Reset
+ * and Return-to-menu stop the interpreter so main() can reload or show the
+ * ROM browser. Load failures surface savestates_error() (wrong ROM,
+ * truncated, missing).
  */
 
 #include "dc_overlay.h"
@@ -127,12 +128,19 @@ int dc_overlay_step(const BUTTONS *keys)
 					 "Load slot %u: no file",
 					 savestates_get_slot());
 			else {
+				const char *why;
+
 				savestates_job = LOADSTATE;
 				savestates_load();
+				why = savestates_error();
 				if (savestates_ok())
 					snprintf(status, sizeof(status),
 						 "Slot %u restored",
 						 savestates_get_slot());
+				else if (why && why[0])
+					snprintf(status, sizeof(status),
+						 "Load slot %u: %s",
+						 savestates_get_slot(), why);
 				else
 					snprintf(status, sizeof(status),
 						 "Load slot %u failed",
@@ -282,6 +290,30 @@ int dc_overlay_selftest(void)
 		printf("overlay FAIL: save did not create %s\n",
 		       savestates_filename());
 		fails++;
+	}
+	{
+		FILE *patch = fopen(savestates_filename(), "r+b");
+		char other[32];
+
+		memset(other, 0, sizeof(other));
+		strncpy(other, "OTHER ROM", sizeof(other) - 1);
+		if (patch) {
+			if (fseek(patch, 16, SEEK_SET) == 0)
+				fwrite(other, 1, 32, patch);
+			fclose(patch);
+		}
+		memset(&k, 0, sizeof(k));
+		dc_overlay_step(&k);
+		k.D_DPAD = 1;
+		dc_overlay_step(&k);
+		memset(&k, 0, sizeof(k));
+		dc_overlay_step(&k);
+		k.A_BUTTON = 1;
+		dc_overlay_step(&k);
+		if (!strstr(status, "wrong ROM")) {
+			printf("overlay FAIL: wrong-ROM load status '%s'\n", status);
+			fails++;
+		}
 	}
 	remove(savestates_filename());
 	dc_overlay_enter();

@@ -7,7 +7,7 @@
  * Phase 8b pause overlay. Wii64 used GetKeys' exit combo to set stop=1 and
  * drop back into libgui. Here Start+A+B (the default Maple exit combo) opens
  * an immediate-mode screen: Continue, Reset, return to the ROM browser,
- * and savestate slot UI. Slots write `saves/not64.stN` (little-endian dump).
+ * and savestate slot UI. Slots write `saves/<goodname>.stN` (little-endian dump).
  */
 
 enum {
