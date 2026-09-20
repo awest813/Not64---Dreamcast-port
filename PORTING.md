@@ -27,19 +27,20 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | Dreamcast memory budget (`platform/dc_memory.h`) | Started (paper map) |
 | `Makefile.dc` (KOS + host stub) | Host `HOST=1` links the interpreter (gcc or clang, Linux/macOS); KOS still needs `KOS_BASE` |
 | Bring-up `main/main_dc.c` | Dummy + CPUTEST, 10000 interpreter steps, host I/O + PIF smokes |
-| `fileBrowser-kos` | Started |
+| `fileBrowser-kos` | Started; read handle held open across calls (was one `fopen` per 64 KiB page-in) |
 | Maple controller (`controller-DC.c`) | Started |
 | AICA audio stub (`audio-dc.c`) | Started |
 | Interpreter-only core link | **Host verified** (`CPUTEST PASS`) |
-| ROM stream (`main/ROM-Cache-dc.c`) | 1 MiB window; z64 words swapped to LE |
+| ROM stream (`main/ROM-Cache-dc.c`) | 1 MiB window; z64 words swapped to LE; O(1) LRU, covered by `smoke_romcache()` |
 | Host I/O smoke | Save file, injected Maple A, AI ring DMA, PIF joybus read/write |
 | ROM header decode on DC | Fixed — `dc_fix_header_byte_order()` un-swaps Name/Cartridge_ID/Country_code; asserted by CPUTEST |
 | Maple → N64 button map | Done — triggers carry Z/R, `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons |
 | Analog stick | Done — scaled to the N64 ±80 range with a 10-count deadzone; 10 button + 8 analog cases in `smoke_map()` |
 | Rumble / VMU pak | **Not started** — `rumble_ctl()` is a no-op; Jump Pack and VMU are the natural N64 Rumble/Controller Pak analogues. Needs KOS to write |
-| First commercial ROM (host) | **Passes the CIC boot checksum and runs game code**; stops at a TLB store miss, still no VI. See Phase 3.5 |
+| First commercial ROM (host) | **Passes the CIC boot checksum and runs game code**; dies on an `ERET` to `0x400`, still no VI. **Not a TLB bug** — see Phase 3.5 |
 | Software / PVR renderer | Not started. **No PVR code exists**; DC gfx plugin is empty stubs. Blocked behind Phase 4 and a ROM reaching VI — see Phase 7 |
-| Dreamcast menu | Designed only (Phase 8 below); no code. `libgui/` does not port |
+| Dreamcast menu | **8a shipped** — ROM browser in `platform/dc_menu/`, tested on the host; `dc_draw_kos.c` never compiled. 8b/8c designed only. `libgui/` does not port |
+| TLB hash cache (`gc_memory/TLB-Cache-hash.c`) | Rehashed and de-tombstoned; ~173x faster lookup, covered by `smoke_tlbcache()` |
 | SH4 dynarec | Not started |
 | Cloud environment KOS toolchain | **Missing** (`sh-elf-gcc` not installed) |
 
@@ -310,29 +311,45 @@ MI     intr=0x0000000a (SI|VI)  mask=0x00000002 (SI)
 VI     origin=0 width=0
 ```
 
-Narrowed further — it is an **infinite TLB refill loop**, not a hang:
+Narrowed further. The loop is real, but it is **fallout, not the fault**. An
+earlier pass called this "an infinite TLB refill loop ... the TLB entry the
+handler writes is not taking effect" and sent the reader at `TLBWR`/`TLBWI`
+and `TLB-Cache-hash.c`. That is a dead end, and here is why:
 
-- `BadVAddr = 0x00048240`, `EntryHi = 0x00048000` — a KUSEG address, so the
-  game legitimately uses the TLB.
-- The refill vector is **not** empty. `0x80000000` holds
-  `LUI r26,0x800b` / `ADDIU r26,r26,0xfba0` / `JR r26`, so the game's own
-  handler is installed and jumps to `0x800afba0`.
-- Sampling the PC at 600M / 620M / 700M steps gives `0x80000000`,
-  `0x800afbe4`, `0x800afbd4`: it cycles between the vector and the faulting
-  store forever. The handler runs, retries the store at `0x800afbe4`, and
-  misses on the same address again.
+- **`TLBCache_set_r/w` is never called at all.** Counting entries into the
+  cache over a 20M-step run gives 681,075 lookups and **zero** stores, so
+  `TLBWI`/`TLBWR` never execute. No entry is written, so no entry can fail to
+  take effect. (The dispatch is fine: `interp_cop0[16]` -> `TLB` ->
+  `interp_tlb[op & 0x3F]`, with `TLBWI` at 2 and `TLBWR` at 6.)
+- **The first fault is an instruction fetch, not a store.** Logging the first
+  `TLB_refill_exception` gives `addr=0x00000400 w=2 pc=0x00000400` — the CPU
+  jumped to `0x400`. Every later fault is the `0x00048240` store.
+- **It comes straight out of an `ERET`.** The instruction retired immediately
+  before is `0x42000018` at `0x800b04e4`.
+- **`EPC` held `0x400`.** There is exactly one `MTC0 $14` in the whole run, at
+  `0x800b0444`, and it writes `0x400`. No `exception_general` runs before it,
+  so nothing had set `EPC` behind it.
+- **The value is genuinely in memory.** `0x800b0440` is
+  `lw k1, 0x11c(k0)` with `k0 = 0x800c8220`, and `0x800c833c` really does
+  contain `0x00000400`. Around it: `+0x118 = 0x00000280` (a plausible saved
+  `Status`), `+0x120 = 0x002501ff`, `+0x124 = 0x000e0204`.
 
-So the TLB entry the handler writes is not taking effect for the subsequent
-store. Start at `TLBWR`/`TLBWI` in `r4300/pure_interp.c` (or `cop0.c`) and at
-`gc_memory/TLB-Cache-hash.c`, which DC uses via `USE_TLB_CACHE` instead of the
-8 MiB LUT and which nothing had exercised before this ROM. Note the DC
-`#ifdef`s in that file only stub the zlib savestate dumpers — the lookup path
-is unmodified, so suspect the write/invalidate path rather than those guards.
-`dump_run_state()` prints `BadVAddr`/`EntryHi`/`Index`/`Wired` to help.
+So `0x800b0440` is an OS thread dispatcher restoring a saved context, and the
+saved PC it restores is `0x00000400`. **The question is who wrote `0x400`
+into `0x800c833c`, and what it should have been** — an `osCreateThread` entry
+point would be a `0x80xxxxxx` address, and `0x400` looks like one with its
+top bits gone. Start there, not at the TLB.
 
-Throughput on this host is ~126M interpreted instructions/sec. An SH4 at
-200 MHz will be one to two orders of magnitude slower, which is the
-quantitative case for Phase 6.
+Everything after is the consequence: the vector at `0x80000000` is
+`LUI k0,0x800b` / `ADDIU k0,k0,0xfba0` / `JR k0`, so the game's own handler at
+`0x800afba0` runs, saves registers, and re-faults on `BadVAddr = 0x00048240`
+forever.
+
+Throughput on this host measures ~130M interpreted instructions/sec, but
+treat that as a ceiling, not a figure for real game code: past ~20M steps
+this ROM is spinning in the handler loop above, which is a handful of
+cache-resident instructions. An SH4 at 200 MHz will be one to two orders of
+magnitude slower either way, which is the quantitative case for Phase 6.
 
 #### Test coverage added
 
@@ -420,7 +437,7 @@ optional upgrade, with the software path kept as the reference to diff against.
 
 ---
 
-### Phase 8 — Dreamcast menu (design, no code yet)
+### Phase 8 — Dreamcast menu (8a shipped; 8b/8c still design)
 
 The Wii/GC menu is `libgui/` (34 files, ~5.5k lines) + `menu/` (26 files,
 ~5.2k lines) + `gui/` (~3.6k lines). **None of it ports.** `GraphicsGX.cpp`
@@ -496,15 +513,61 @@ Hard constraints:
 
 Each step is independently useful; none blocks the emulator core.
 
-| Step | Scope | Depends on |
-|------|-------|-----------|
-| **8a** | ROM browser only: list `/sd/not64/roms`, pick, boot. Replaces the argv path. | KOS ELF (Phase 1) + `bfont`. **Not** the software renderer. |
-| **8b** | In-game overlay: return to menu, reset, save/load state. | Phase 4 framebuffer; `platform/dc_savestates.c` is still a stub |
-| **8c** | Settings, button/shift config, persistence to `/sd/not64/settings.cfg`. | 8a |
+| Step | Scope | Depends on | State |
+|------|-------|-----------|-------|
+| **8a** | ROM browser only: list `/sd/not64/roms`, pick, boot. Replaces the argv path. | KOS ELF (Phase 1) + `bfont`. **Not** the software renderer. | **Shipped** — see below |
+| **8b** | In-game overlay: return to menu, reset, save/load state. | Phase 4 framebuffer; `platform/dc_savestates.c` is still a stub | Not started |
+| **8c** | Settings, button/shift config, persistence to `/sd/not64/settings.cfg`. | 8a | Not started |
 
 8a is the one worth doing early — it is the difference between a demo that
 needs a rebuild per ROM and something a person can actually use, and it needs
 no renderer.
+
+#### 8a as built
+
+`platform/dc_menu/`, immediate mode, drawing through the three `dc_draw.h`
+calls exactly as designed above.
+
+| File | Role |
+|------|------|
+| `dc_draw.h` | the surface: fill_rect / text / blit, plus screen and glyph metrics |
+| `dc_draw_kos.c` | KOS `bfont` into `vram_s`. **Never compiled** — no sh-elf-gcc here |
+| `dc_draw_host.c` | a 53x20 character grid in memory, so the host stub can test the menu |
+| `dc_menu.c/.h` | list, filter, sort, cursor, scroll window, draw, `dc_menu_run()` |
+
+Splitting the backends is what makes the menu testable without a Dreamcast.
+`smoke_menu()` in `main_dc.c` drives `dc_menu_step()` with synthetic pad words
+and reads the grid back, so the filter, the sort, edge detection, auto-repeat,
+wrapping, the scroll window, trigger paging, pick/cancel, the empty list and
+`dc_menu_run()` end to end are all covered on the host. Only the pixels are
+not. Each of those was verified to fail when the behaviour is removed.
+
+Controls: D-pad or stick moves (20 frames before auto-repeat, so one press is
+one row); Z and R page, which on the DC map are the two analog triggers; A or
+Start runs the highlighted ROM; B exits.
+
+`./not64-dc-bringup --menu` runs the browser on the host and prints the screen
+it drew — the only way to see it without hardware:
+
+```
+| Not64  -  choose a ROM                              |
+|                                                     |
+| > dc_cputest.z64                               4 KiB|
+|   dc_dummy.z64                                 4 KiB|
+|   game.z64                                    32 MiB|
+...
+| 1/3   A start   B exit   Z/R page                   |
+```
+
+The menu stayed optional as required: `skipMenu` is 1 on the host and an
+explicit ROM argument forces it, so `make -f Makefile.dc HOST=1 test` never
+enters the browser. On hardware there is no argv, so it is the default.
+
+One trap worth keeping: `assign_controller()` writes through
+`control_info.Controls`, so `auto_assign_controllers()` segfaults if that
+pointer has not been set. The menu polls the pad before a ROM exists, so
+`init_controllers()` in `main_dc.c` now does the whole bring-up for both
+callers.
 
 #### Decisions still owed by a human
 

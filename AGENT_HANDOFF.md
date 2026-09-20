@@ -8,7 +8,7 @@
 | Branch | `cursor/dreamcast-port-plan-fc3a` |
 | Base | `master` |
 | PR | https://github.com/awest813/Not64---Dreamcast-port/pull/1 (draft) |
-| HEAD at handoff | After PIF/Maple host smoke + CPUTEST ADDI/SLTI/BNE (see git log) |
+| HEAD at handoff | After the TLB/ROM-cache hot-path work and the Phase 8a ROM browser (see git log) |
 | License | GPL v2 |
 | Cloud env | **No KallistiOS / `sh-elf-gcc`.** Host stub only. The stub now builds with gcc **or** clang, on Linux and macOS; `Makefile.dc` still defaults to `gcc` because an older clang ICE'd on `r4300.c`. Override with `make -f Makefile.dc HOST=1 CC=clang`. |
 
@@ -20,7 +20,13 @@
 make -f Makefile.dc HOST=1 test
 ```
 
-Must print **`CPUTEST PASS`** and **`pif smoke PASS`**, then exit 0. Second process is `roms/dc_dummy.z64` (IPL spin at `0xa4000040`).
+Must print **`CPUTEST PASS`** and, per process, **`map smoke PASS`**,
+**`menu smoke PASS`**, **`tlb cache smoke PASS`** and **`pif smoke PASS`**,
+then exit 0. Second process is `roms/dc_dummy.z64` (IPL spin at `0xa4000040`).
+
+`rom cache smoke` reports **SKIP** on the 4 KiB bring-up images — it needs a
+ROM larger than the 1 MiB stream window. Drop a real dump in `./roms` to run
+it for real; it then reports the sweep, the page-ins and the file opens.
 
 ```sh
 make -f Makefile.dc HOST=1
@@ -53,6 +59,7 @@ The Wii/GC product still builds from `Makefile.menu2_*`. Dreamcast is a **third 
 | `platform/dc_*.c`, `dc_types.h`, `dc_memory.h` | Types, budget, plugins/savestate/timer stubs, `prefetch_opcode` |
 | `fileBrowser/fileBrowser-kos.c` | POSIX `./roms` `./saves`; KOS `/sd/not64/...` |
 | `gc_input/controller-DC.c` | Maple `controller_t`; trigger/shift map (see below); host inject `controller_DC_host_set*` |
+| `platform/dc_menu/` | Phase 8a ROM browser. `dc_draw.h` surface; `dc_draw_kos.c` (bfont, **never compiled**) / `dc_draw_host.c` (character grid, for tests); `dc_menu.c` logic |
 | `gc_audio/audio-dc.c` | AI DMA → ring; no AICA yet |
 | `roms/gen_dc_roms.py` | Regenerates dummy + CPUTEST `.z64` |
 | `roms/dc_cputest.z64` | IPL: ALU + SW/LW + **SRL/SRLV/SRA/SRAV/SLLV/SUBU/DIVU/MFLO/MFHI on a negative operand** + a 64-bit sign-extension check + BEQ spin; header carries `'DO'` / `'E'` / v1 for the DC header un-swap |
@@ -75,6 +82,12 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
 8. **Interpreter LP64 fixes** — `macros.h` + `pure_interp.c` 32-bit ops; a real ROM now boots past IPL3. CPUTEST covers all of it (each fix fails the test when reverted).
 9. **Controller map** — triggers carry Z/R, `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons. See **Controller mapping** below.
 10. **Second audit polish** — host stub builds under clang/macOS (`gc_input/input.c` nested functions removed, `<malloc.h>` guarded, `invalidate_func` declared); DC ROM-header byte order fixed and asserted; PIF joybus store made alignment- and LP64-safe; ROM cache bounds/LRU/NULL fixes; AI DMA clamped to RDRAM; `PC` no longer leaked per run; recursive `mkdir` for `/sd/not64/...`; `get_savespath()` correct on KOS.
+11. **Hot-path performance.** Three places did linear work per access; none of it shows on a 3 GHz host, all of it matters on a 200 MHz SH4 with 16 MB.
+    - `TLB-Cache-hash.c` hashed the page by its **top** bits, so 16,384 consecutive pages shared a bucket; storing 0 left a tombstone node forever (heap heading for ~16 MB). Now keyed on mixed low bits over 1024 slots, stores of 0 unlink, re-maps update in place, freed nodes recycle. Lookup 260.2 ns -> 1.5 ns, full re-map 633.3 us -> 2.65 us, both versions returning an identical checksum over 20M lookups.
+    - `ROMCache_read`/`_write` bumped an age counter for all 1024 blocks **per call** — 4 KiB of writes for a four-byte cart read. Now an O(1) monotonic clock.
+    - `fileBrowser_kos_readFile` did `fopen`/`fseek`/`fclose` per call, one per 64 KiB page-in. Read handle now held open: sweeping a 32 MiB ROM went 514 opens -> 2 for the same 496 page-ins. Writes still open and close, so saves are unchanged.
+    `smoke_tlbcache()` and `smoke_romcache()` cover both; each was verified to fail when the behaviour is reverted.
+12. **Phase 8a ROM browser** — `platform/dc_menu/`. Lists the ROM dir, pad picks, boots. Optional and never load-bearing: `skipMenu` is 1 on the host, an explicit ROM argument forces it, and `make ... test` never enters it. `smoke_menu()` covers the filter, sort, edge detection, auto-repeat, wrap, scroll window, paging, pick/cancel, empty list and `dc_menu_run()` end to end. `./not64-dc-bringup --menu` prints the screen it drew. See Phase 8 in `PORTING.md`.
 
 ---
 
@@ -109,6 +122,8 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
 | `call to undeclared function 'invalidate_func'` | Only declared by `r4300/ppc/Wrappers.h` | Declared in `dma.c` under `__DREAMCAST__` |
 | Garbage `Cartridge_ID` / `Country_code` / region | ROM words stored byte-reversed, so the header's byte/halfword fields scramble while its 32-bit fields stay correct | `dc_fix_header_byte_order()` in `rom_dc.c`; CPUTEST asserts `'DO'`/`0x45`/`isEEPROM16k` |
 | CPUTEST "passes" after a loader regression | Checks were gated on `goodname == "DC CPUTEST"`, which a broken loader never produces | `check_cputest(path)` fails when the CPUTEST image was requested but did not decode |
+| Memory dumps read as zeros while the interpreter clearly executes that memory | `rdram` is declared `unsigned long rdram[SIZE/4]`, and `unsigned long` is **8 bytes** on an LP64 host, so `rdram[addr>>2]` walks at double stride. The emulator does not use it that way: `read_rdram()` is `*(unsigned long*)(rdramb + (address & MEMMASK))`, a **byte** offset | Inspect N64 memory as `*(unsigned int *)(rdramb + (addr & MEMMASK))`. Getting this wrong produced three confident, wrong conclusions in one sitting ("RDRAM is all zeros", "the thread pointer is zero") before a dump of known-good code came back zero too |
+| A behaviour change "has no effect", or a reverted change still fails | `cp`/edit within the same second as the last build leaves the `.o` newer than the source, so make skips it. This is the stale-object landmine again, in a faster form | `rm -f <the>.o` (or `make clean`) between A/B runs. Any A/B result where the *restored* version also fails is this, not the test |
 | (hardware, not yet hit) unaligned 32-bit store | `pif.c` wrote `*(unsigned long*)(Command+3)`; **SH4 faults on unaligned access** and `DWORD` is 8 bytes on an LP64 host | DC branch does a 4-byte `memcpy` |
 
 Other constraints:
@@ -166,8 +181,8 @@ analog cases (centre, both deadzone edges, all four extremes).
 1. **Rumble and paks are stubs.** `rumble_ctl()` does nothing and `pakMode[4]` has no backend. The Dreamcast Jump Pack (`MAPLE_FUNC_PURUPURU`) is the natural N64 Rumble Pak analogue and the VMU (`MAPLE_FUNC_MEMCARD`) the natural Controller Pak. Both need KOS headers, so they cannot be written or verified from the host stub — do them alongside the Phase 1 ELF.
 2. **`poll_pad()` on the host stub reports every port present** while `refreshAvailable()` reports only port 0. Harmless today (only pad 0 is injected), but make them agree before multi-pad injection.
 3. **`last_joyx` / `last_joyy` are written and never read** — `controller_DC_lastButtons()` exposes only the button word. Expose the stick too or drop them.
-4. **`fileBrowser_kos_readFile` does `fopen`/`fseek`/`fclose` per call.** The ROM cache streams in 64 KiB blocks, so every page-in reopens the file. Fine on a host filesystem, likely unacceptable on Dreamcast SD/GD — cache the handle before Phase 3 performance work.
-5. **Host stub is not an SH4 model.** `unsigned long` is 64-bit on an LP64 host and 32-bit on SH4, so `rdram[]`, `reg[]` and every `read_*_in_memory()` differ in width and layout. `CPUTEST PASS` on the host is a link/logic check, not evidence about hardware. The alignment and LP64 bugs found in `pif.c` are exactly the class the host stub cannot catch by itself.
+4. ~~**`fileBrowser_kos_readFile` does `fopen`/`fseek`/`fclose` per call.**~~ **Fixed** — the read handle is held open (item 11 above). Writes still open and close on purpose, so a save reaches the card the moment it is written.
+5. **Host stub is not an SH4 model.** `unsigned long` is 64-bit on an LP64 host and 32-bit on SH4, so `rdram[]`, `reg[]` and every `read_*_in_memory()` differ in width and layout. Concretely: `rdram[addr>>2]` is **not** how to read N64 memory here — see the byte-view landmine above. `CPUTEST PASS` on the host is a link/logic check, not evidence about hardware. The alignment and LP64 bugs found in `pif.c` are exactly the class the host stub cannot catch by itself.
 
 ---
 
@@ -175,12 +190,43 @@ analog cases (centre, both deadzone edges, all four extremes).
 
 1. **KallistiOS ELF** — install `sh-elf-gcc` + KOS (`KOS_BASE`, `environ.sh`). `make -f Makefile.dc` → `not64-dc.elf`. Same bring-up on lxdream/redream or hardware. Cloud image does not have this yet (`environment.json` when someone can install it).
 2. **AICA** — `audio-dc.c` only fills a ring. Host smoke is enough; hardware needs `snd_stream` (or equivalent) draining that ring.
-3. **Get a real ROM to VI** — *this is the live problem.* A retail 32 MiB cart now **passes IPL3's CIC boot checksum and runs game code**; after 600M instructions it takes a **TLB store miss** (`Cause=0x0c`, `EPC=0x800afbe4`) and vectors to `0x80000000`, and `VI origin` is still 0. It is an **infinite TLB refill loop**: `BadVAddr=0x00048240` (KUSEG), the game's handler *is* installed at the vector (`JR` to `0x800afba0`), and the PC cycles vector -> faulting store -> vector forever. The entry the handler writes is not taking effect. Start at `TLBWR`/`TLBWI` and `gc_memory/TLB-Cache-hash.c` (DC uses `USE_TLB_CACHE`; its DC `#ifdef`s only stub zlib savestate dumpers, so suspect the write path). Full evidence in **Phase 3.5 of `PORTING.md`**.
-4. **Menu step 8a** — ROM browser over `/sd/not64/roms` on KOS `bfont`. Needs no renderer, so it can land right after the KOS ELF and replaces the argv path. Design (screens, which `dc_config.c` settings survive on DC, why `libgui/` does not port) is **Phase 8 in `PORTING.md`** — read it before writing menu code.
+3. **Get a real ROM to VI** — *this is the live problem.* A retail 32 MiB cart
+   passes IPL3's CIC boot checksum and runs game code, then dies. **The earlier
+   "infinite TLB refill loop, start at `TLBWR`/`TLBWI` and `TLB-Cache-hash.c`"
+   diagnosis was wrong — do not start there.** `TLBCache_set_r/w` is never
+   called once in a whole run (681,075 lookups, zero stores), so `TLBWI`/`TLBWR`
+   never execute and no TLB entry is ever written.
+
+   What actually happens: the **first** exception is an instruction fetch at
+   `0x00000400` (`TLB_refill_exception addr=0x00000400 w=2 pc=0x00000400`),
+   immediately after the run's only `ERET` (`0x42000018` at `0x800b04e4`). That
+   `ERET` used an `EPC` of `0x400`, written by the run's only `MTC0 $14`, at
+   `0x800b0444`. `0x800b0440` is `lw k1, 0x11c(k0)` with `k0 = 0x800c8220`, and
+   `0x800c833c` genuinely contains `0x00000400`.
+
+   So an OS thread dispatcher restores a saved context whose PC is `0x400`.
+   **Find who wrote `0x400` to `0x800c833c` and what it should have been** — a
+   thread entry point is a `0x80xxxxxx` address, and `0x400` looks like one
+   with its high bits gone, which is the same class of bug as the LP64 fixes in
+   item 8. Everything after is fallout: the vector at `0x80000000`
+   (`LUI k0,0x800b` / `ADDIU k0,k0,0xfba0` / `JR k0`) reaches the game's handler
+   at `0x800afba0`, which re-faults on `BadVAddr = 0x00048240` forever.
+
+   Full evidence in **Phase 3.5 of `PORTING.md`**. Read the byte-view landmine
+   before dumping any N64 memory to check this.
+
+4. ~~**Menu step 8a**~~ — **done** (item 12 above). `platform/dc_menu/` lists
+   the ROM dir and boots the pick, tested on the host stub. Two things remain:
+   `dc_draw_kos.c` has never been compiled, so expect to fix the `bfont` call
+   on the first KOS build; and **8b** (in-game overlay, needs Phase 4) and
+   **8c** (settings, button/shift config, `/sd/not64/settings.cfg`) are still
+   design only. Phase 8 in `PORTING.md` also lists three decisions owed by a
+   human: video output mode, VMU save layout, and FlashRAM on a 128 KiB card.
+
 5. **Software first frame** (Phase 4) — only after a ROM actually hits RDP/VI. Start from `mupen64_soft_gfx/` (27 files, least GX coupling — 4 files touch `GX_*`), not `glN64_GX/` (73 files, 41 touching `GX_*`). **Not PVR:** no PVR code exists anywhere in this tree, and **Phase 7 in `PORTING.md`** records why it is not next and what it will have to solve (tile-based deferred rendering vs immediate-mode display lists, no cheap framebuffer read-back, 8 MB VRAM, RDP combiner semantics).
 6. **SH4 dynarec** — last. New `r4300/sh4/`. PPC JIT is not a template you search-replace.
 
-Skip 5–6 until 1–3 have a ROM that is more than a BEQ spin. 8a (step 4) is independent of all of them once the KOS ELF exists.
+Skip 5–6 until 1–3 have a ROM that is more than a BEQ spin.
 
 ---
 
@@ -220,6 +266,6 @@ Checks live in `check_cputest()` in `main/main_dc.c`. Keep them if you change th
 
 ## Suggested first message for the next agent
 
-> Continue the Not64 Dreamcast port from `AGENT_HANDOFF.md`. Run `make -f Makefile.dc HOST=1 test` first. Do not start PVR or SH4 dynarec. If KOS is available, produce `not64-dc.elf`; otherwise add a tiny homebrew `.z64` past IPL, or AICA drain. Software renderer only after a ROM hits RDP/VI.
+> Continue the Not64 Dreamcast port from `AGENT_HANDOFF.md`. Run `make -f Makefile.dc HOST=1 test` first. Do not start PVR or SH4 dynarec, and do not go looking at `TLBWR`/`TLBWI` for the boot failure — next-work item 3 says why. If KOS is available, produce `not64-dc.elf` and expect to fix the `bfont` call in `platform/dc_menu/dc_draw_kos.c`, the one file here that has never been compiled; otherwise chase item 3, or the AICA drain. Software renderer only after a ROM hits RDP/VI.
 
 Update **this file** and `PORTING.md` current-status when a phase actually finishes.
