@@ -84,6 +84,10 @@ dc_menu_action dc_menu_step(dc_menu_state *st, const BUTTONS *keys);
 /* Draws the current state through dc_draw.h. */
 void dc_menu_draw(const dc_menu_state *st, const char *title);
 
+/* A single status line on an otherwise empty screen, same chrome as the
+ * browser. Used for "Loading ..." while a cart streams off the disc. */
+void dc_menu_message(const char *title, const char *message);
+
 /* The whole browser: open the surface, loop until the pad picks or cancels,
  * free everything. Returns 1 on a pick (out is filled), 0 on cancel, negative
  * on error. `dir` is normally romFile_topLevel. */

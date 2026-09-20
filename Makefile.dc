@@ -63,13 +63,21 @@ CORE_OBJS = \
 
 # MENU_OBJS is set per branch below: the menu draws through dc_draw.h, and the
 # two backends (KOS bfont, host character grid) are mutually exclusive.
-OBJS = main/main_dc.o \
+#
+# OBJPATHS is the source-relative list; OBJS prefixes it with a per-target
+# OBJDIR. The host stub and the KOS ELF used to write to the SAME .o paths, so
+# alternating `make HOST=1` and `make` silently linked objects from the other
+# architecture -- "file format not recognized" for the SH4 ones, or an ELF
+# built from stale x86 objects. Separate trees make that impossible.
+OBJPATHS = main/main_dc.o \
 	fileBrowser/fileBrowser.o \
 	fileBrowser/fileBrowser-kos.o \
 	gc_input/controller-DC.o \
 	gc_audio/audio-dc.o \
 	$(MENU_OBJS) \
 	$(CORE_OBJS)
+
+OBJS = $(addprefix $(OBJDIR)/,$(OBJPATHS))
 
 DC_DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DUSE_TLB_CACHE -DPIXEL_FORMAT=RGB565
 
@@ -89,6 +97,7 @@ CFLAGS  ?= -std=gnu11 -fgnu89-inline -Wall -Wextra -Wno-unused-parameter \
 # produced runs that disagreed with the source).
 CPPFLAGS = $(DC_DEFS) -DDC_HOST_STUB -MMD -MP
 MENU_OBJS = platform/dc_menu/dc_menu.o platform/dc_menu/dc_draw_host.o
+OBJDIR   = obj/host
 TARGET   = not64-dc-bringup
 LIBS     = -lm
 DEPS     = $(OBJS:.o=.d)
@@ -105,10 +114,8 @@ $(ROMS): roms/gen_dc_roms.py
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LIBS)
 
-gc_input/input.o: gc_input/input.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
-
-%.o: %.c
+$(OBJDIR)/%.o: %.c
+	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
 -include $(DEPS)
@@ -121,7 +128,7 @@ test: $(TARGET) $(ROMS)
 	./$(TARGET) roms/dc_dummy.z64
 
 clean:
-	rm -f $(OBJS) $(DEPS) $(TARGET)
+	rm -rf $(OBJDIR) $(TARGET)
 
 else
 
@@ -131,8 +138,19 @@ endif
 
 include $(KOS_BASE)/Makefile.rules
 
-KOS_CFLAGS += $(DC_DEFS) -I$(CURDIR) -MMD -MP
+# Makefile.rules defines targets of its own, so it wins the default goal and
+# a bare `make -f Makefile.dc` reports "Nothing to be done for 'subdirs'".
+.DEFAULT_GOAL := all
+
+# -fgnu89-inline is not optional. This tree declares its hot functions as
+# `void inline f()` in the header AND defines them the same way in the .c
+# (TLBCache_get_r/set_r, invalid_code_set, ...). Under C99 inline semantics,
+# which gcc 9 defaults to, that emits no external symbol and the link fails
+# with "undefined reference to _TLBCache_set_r". The host branch already
+# passes this flag; the KOS branch has to as well.
+KOS_CFLAGS += $(DC_DEFS) -I$(CURDIR) -MMD -MP -fgnu89-inline
 MENU_OBJS = platform/dc_menu/dc_menu.o platform/dc_menu/dc_draw_kos.o
+OBJDIR = obj/dc
 TARGET = not64-dc.elf
 DEPS = $(OBJS:.o=.d)
 
@@ -143,15 +161,13 @@ all: $(TARGET)
 $(TARGET): $(OBJS)
 	$(KOS_CC) $(KOS_CFLAGS) $(KOS_LDFLAGS) -o $@ $(KOS_START) $(OBJS) $(OBJEXTRA) $(KOS_LIBS) -lm
 
-gc_input/input.o: gc_input/input.c
-	$(KOS_CC) $(KOS_CFLAGS) -c -o $@ $<
-
-%.o: %.c
+$(OBJDIR)/%.o: %.c
+	@mkdir -p $(dir $@)
 	$(KOS_CC) $(KOS_CFLAGS) -c -o $@ $<
 
 -include $(DEPS)
 
 clean:
-	rm -f $(OBJS) $(DEPS) $(TARGET)
+	rm -rf $(OBJDIR) $(TARGET)
 
 endif

@@ -28,6 +28,11 @@ void dc_draw_shutdown(void);
 void dc_draw_begin(uint16_t clear_rgb565);
 void dc_draw_end(void);
 
+/* Wait one display frame without presenting anything. The browser only
+ * repaints when the selection moves, so this is what paces input polling on
+ * the frames it skips. */
+void dc_draw_wait(void);
+
 void dc_draw_fill_rect(int x, int y, int w, int h, uint16_t rgb565);
 void dc_draw_text(int x, int y, uint16_t rgb565, const char *str);
 void dc_draw_blit(int x, int y, int w, int h, const uint16_t *src);

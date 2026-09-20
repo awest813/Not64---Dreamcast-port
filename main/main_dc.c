@@ -8,6 +8,7 @@
 
 #ifndef DC_HOST_STUB
 #include <kos.h>
+#include <dc/fb_console.h>
 #endif
 
 #include "../platform/dc_memory.h"
@@ -142,7 +143,7 @@ static int smoke_io(void)
 	int fail = 0;
 
 #ifdef DC_HOST_STUB
-	controller_DC_host_set(0, DC_CONT_A, 200, 80); /* A + analog */
+	controller_DC_host_set(0, DC_CONT_A, 72, -48); /* A + analog */
 #endif
 	memset(&keys, 0, sizeof(keys));
 	getKeys(0, &keys);
@@ -208,15 +209,19 @@ struct dc_axis_case {
 	int want_x, want_y;
 };
 
+/* Stick inputs are CENTRED, the way KOS's cont_state_t reports them: 0 at
+ * rest, -128..+127 at the extremes. These used to be written as 0-255 with
+ * 128 for centre, which is the raw Maple byte, not what the driver receives --
+ * so the test agreed with the code and both were wrong. */
 static const struct dc_axis_case dc_axis_cases[] = {
-	{ "centre",            128, 128,   0,   0 },
-	{ "inside deadzone",   135, 121,   0,   0 },
-	{ "just past deadzone",139, 128,   1,   0 },
-	{ "full left",           0, 128, -80,   0 },
-	{ "full right",        255, 128,  79,   0 },
-	{ "full up",           128,   0,   0,  80 },
-	{ "full down",         128, 255,   0, -79 },
-	{ "host inject",       200,  80,  42,  26 },
+	{ "centre",              0,   0,   0,   0 },
+	{ "inside deadzone",     7,  -7,   0,   0 },
+	{ "just past deadzone", 11,   0,   1,   0 },
+	{ "full left",        -128,   0, -80,   0 },
+	{ "full right",        127,   0,  79,   0 },
+	{ "full up",             0, -128,  0,  80 },
+	{ "full down",           0, 127,   0, -79 },
+	{ "host inject",        72, -48,  42,  26 },
 };
 
 static int smoke_map(void)
@@ -228,7 +233,7 @@ static int smoke_map(void)
 		const struct dc_map_case *t = &dc_map_cases[i];
 		BUTTONS k;
 
-		controller_DC_host_set(0, t->buttons, 128, 128);
+		controller_DC_host_set(0, t->buttons, 0, 0);
 		controller_DC_host_set_triggers(0, t->ltrig, t->rtrig);
 		memset(&k, 0, sizeof(k));
 		getKeys(0, &k);
@@ -269,7 +274,7 @@ static int smoke_map(void)
 
 	/* Leave pad 0 as the other smokes expect to find it. */
 	controller_DC_host_set_triggers(0, 0, 0);
-	controller_DC_host_set(0, DC_CONT_A, 200, 80);
+	controller_DC_host_set(0, DC_CONT_A, 72, -48);
 	printf("map smoke %s (%u button + %u analog cases)\n",
 	       fail ? "FAIL" : "PASS",
 	       (unsigned)(sizeof(dc_map_cases) / sizeof(dc_map_cases[0])),
@@ -679,7 +684,7 @@ static int smoke_menu(void)
 		int picked;
 
 		controller_DC_host_set_triggers(0, 0, 0);
-		controller_DC_host_set(0, DC_CONT_A, 128, 128);
+		controller_DC_host_set(0, DC_CONT_A, 0, 0);
 		memset(&choice, 0, sizeof(choice));
 		picked = dc_menu_run(romFile_topLevel, &choice);
 		if (picked != 1) {
@@ -702,7 +707,7 @@ static int smoke_menu(void)
 
 	/* Leave pad 0 where smoke_map left it: the I/O and PIF smokes read it. */
 	controller_DC_host_set_triggers(0, 0, 0);
-	controller_DC_host_set(0, DC_CONT_A, 200, 80);
+	controller_DC_host_set(0, DC_CONT_A, 72, -48);
 
 	printf("menu smoke %s (%d ROMs listed)\n", fail ? "FAIL" : "PASS", n);
 	return fail;
@@ -716,7 +721,7 @@ static int smoke_pif(void)
 	unsigned char status_type = 0;
 
 #ifdef DC_HOST_STUB
-	controller_DC_host_set(0, DC_CONT_A, 200, 80);
+	controller_DC_host_set(0, DC_CONT_A, 72, -48);
 #endif
 
 	if (!Controls[0].Present) {
@@ -1138,6 +1143,10 @@ int main(int argc, char **argv)
 
 #ifndef DC_HOST_STUB
 	vid_set_mode(DM_640x480, PM_RGB565);
+	/* Put KOS's stdout on the framebuffer. Without this the Dreamcast build
+	 * boots to a black screen and every diagnostic the bring-up prints goes
+	 * nowhere -- there is no serial cable and no dcload in an emulator. */
+	dbgio_dev_select("fb");
 #endif
 
 	/* Phase 8: the menu is optional and never load-bearing. On the host the

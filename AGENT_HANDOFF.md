@@ -10,7 +10,8 @@
 | PR | https://github.com/awest813/Not64---Dreamcast-port/pull/1 (draft) |
 | HEAD at handoff | After the TLB/ROM-cache hot-path work and the Phase 8a ROM browser (see git log) |
 | License | GPL v2 |
-| Cloud env | **No KallistiOS / `sh-elf-gcc`.** Host stub only. The stub now builds with gcc **or** clang, on Linux and macOS; `Makefile.dc` still defaults to `gcc` because an older clang ICE'd on `r4300.c`. Override with `make -f Makefile.dc HOST=1 CC=clang`. |
+| Cloud env | Host stub builds with gcc **or** clang, Linux and macOS; `Makefile.dc` defaults to `gcc` because an older clang ICE'd on `r4300.c`. Override with `CC=clang`. |
+| KOS toolchain | **Docker.** `einsteinx2/dcdev-kos-toolchain:latest` has sh-elf-gcc 9.3.0 + KOS 2.x and ships a native arm64 image. `not64-dc.elf` builds and boots. |
 
 ---
 
@@ -33,9 +34,34 @@ pulling 32 MiB off the card before every boot on hardware. `smoke_tlbcache()`
 does run on KOS — it is a few thousand operations, and it is worth checking
 the structure where `unsigned long` is 32-bit.
 
+### Dreamcast build (the real one)
+
+```sh
+docker run --rm -v "$PWD":/src -w /src --user "$(id -u):$(id -g)" \
+    einsteinx2/dcdev-kos-toolchain:latest \
+    bash -lc 'source /opt/toolchains/dc/kos/environ.sh && make -f Makefile.dc'
+```
+
+That produces `not64-dc.elf`. **Do not hand the .elf to an emulator** -- the
+KOS framebuffer examples come up black that way too, so it is the loader, not
+us. Build a disc instead, which is how it would ship anyway:
+
+```sh
+docker run --rm -v "$PWD":/src -v /tmp/out:/out -w /src --user "$(id -u):$(id -g)" \
+    einsteinx2/dcdev-kos-toolchain:latest \
+    bash -lc 'source /opt/toolchains/dc/kos/environ.sh && \
+              platform/dc_menu/mkdisc.sh /out/not64.cdi roms/*.z64'
+```
+
+Everything after the output path lands on the disc as `/cd/roms`, which is the
+first place the browser looks. Flycast boots the `.cdi` with its HLE BIOS; set
+`Dynarec.Enabled = no` in `emu.cfg` if its SH4 driver asserts on startup (the
+check is memory-layout dependent and fails on roughly two runs in three).
+
 ```sh
 make -f Makefile.dc HOST=1
 ./not64-dc-bringup                          # default: roms/dc_cputest.z64
+./not64-dc-bringup --menu                   # run the browser, print the screen
 ./not64-dc-bringup roms/dc_dummy.z64
 ./not64-dc-bringup /path/to/game.z64 50000000   # argv[2] = step budget
 ```

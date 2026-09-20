@@ -37,19 +37,27 @@ enum {
 #define DC_TRIG_THRESHOLD 48
 
 /*
- * Maple reports each stick axis as 0-255 with 128 at rest. An N64 stick
- * saturates near +/-80, which is what the rest of this tree assumes (the
- * D-pad-as-analog path below, and controller-Classic.c, both use 80). Handing
- * the raw -128..+127 straight over reads as permanent full deflection, so
- * scale it, and drop a small deadzone first because DC sticks rest off-centre.
+ * Stick axes arrive ALREADY CENTRED. KOS's cont_state_t declares them as
+ * `int joyx` and its header states "joyx, joyy ... are all 0 based (0 is
+ * centered)" -- it re-centres the raw 0-255 Maple byte for us. Treating 128
+ * as the rest position, as this did, means a stick sitting still reports
+ * -128, which scales to full deflection: the menu cursor runs away on its own
+ * and every game behaves as though the stick is jammed into a corner. Only
+ * running on hardware showed it, because the host stub injected 0-255 values
+ * and the smoke test encoded that same wrong assumption.
+ *
+ * An N64 stick saturates near +/-80, which is what the rest of this tree
+ * assumes (the D-pad-as-analog path below, and controller-Classic.c, both use
+ * 80). Full scale stays asymmetric (-80 / +79) because the axis runs
+ * -128..+127. A small deadzone comes off first, because DC sticks rest a
+ * little off-centre.
  */
-#define DC_STICK_CENTER   128
+#define DC_STICK_FULL     128	/* magnitude of full deflection */
 #define DC_STICK_DEADZONE 10
 #define DC_STICK_MAX      80
 
-static int scale_axis(int raw)
+static int scale_axis(int v)
 {
-	int v = raw - DC_STICK_CENTER;
 	int mag, travel;
 
 	if (v > -DC_STICK_DEADZONE && v < DC_STICK_DEADZONE)
@@ -59,7 +67,7 @@ static int scale_axis(int raw)
 	/* Subtract the deadzone so the remaining travel still reaches full
 	 * range, rather than losing the first 10 counts off the top. */
 	mag -= DC_STICK_DEADZONE;
-	travel = DC_STICK_CENTER - DC_STICK_DEADZONE;
+	travel = DC_STICK_FULL - DC_STICK_DEADZONE;
 	if (mag > travel)
 		mag = travel;
 	mag = (mag * DC_STICK_MAX + travel / 2) / travel;
@@ -124,8 +132,9 @@ static int last_joyx[4];
 static int last_joyy[4];
 #ifdef DC_HOST_STUB
 static unsigned int host_buttons[4];
-static int host_joyx[4] = {128, 128, 128, 128};
-static int host_joyy[4] = {128, 128, 128, 128};
+/* Centred, like KOS hands them over. */
+static int host_joyx[4];
+static int host_joyy[4];
 static int host_ltrig[4];
 static int host_rtrig[4];
 
@@ -250,7 +259,8 @@ static int _GetKeys(int Control, BUTTONS *Keys, controller_config_t *config)
 		if (config->analog->mask == STICK_AS_ANALOG) {
 			/* Y is inverted: Maple counts down-positive, N64 up-positive. */
 			c->X_AXIS = (signed char)scale_axis(jx);
-			c->Y_AXIS = (signed char)scale_axis(2 * DC_STICK_CENTER - jy);
+			/* DC reports +Y downward, N64 expects +Y up. */
+			c->Y_AXIS = (signed char)scale_axis(-jy);
 		} else if (config->analog->mask == DPAD_AS_ANALOG) {
 			if (b & CONT_DPAD_RIGHT)
 				c->X_AXIS = +80;

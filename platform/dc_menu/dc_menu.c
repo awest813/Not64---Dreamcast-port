@@ -161,6 +161,70 @@ void dc_menu_list_free(dc_menu_list *list)
 	list->count = 0;
 }
 
+#ifndef DC_HOST_STUB
+/* Where a Dreamcast keeps ROMs, in the order worth trying. Burning a CD-R is
+ * how most people run homebrew, so the disc comes first; /sd/not64/roms is the
+ * SD-adapter layout; /pc is dcload over serial or BBA while developing.
+ * A console with no SD adapter simply has no /sd, which is why a directory
+ * that will not open has to mean "nothing here", not "give up". */
+static const char *const dc_rom_dirs[] = {
+	"/cd/roms",
+	"/cd",
+	"/sd/not64/roms",
+	"/pc/roms"
+};
+#define DC_ROM_DIR_COUNT (sizeof(dc_rom_dirs) / sizeof(dc_rom_dirs[0]))
+#endif
+
+/* Try the configured directory, then the usual Dreamcast ones. Returns the
+ * entry count, and on 0 leaves list->dir holding what was searched so the
+ * empty screen can say where it looked. */
+static int dc_menu_find_roms(dc_menu_list *list, fileBrowser_file *dir)
+{
+	int n = dc_menu_list_load(list, dir);
+	char tried[FILE_BROWSER_MAX_PATH_LEN];
+
+	if (n > 0)
+		return n;
+
+	tried[0] = '\0';
+	strncpy(tried, dir->name, sizeof(tried) - 1);
+
+#ifndef DC_HOST_STUB
+	{
+		unsigned int i;
+
+		for (i = 0; i < DC_ROM_DIR_COUNT; ++i) {
+			fileBrowser_file probe;
+
+			if (strcmp(dir->name, dc_rom_dirs[i]) == 0)
+				continue;
+
+			memset(&probe, 0, sizeof(probe));
+			strncpy(probe.name, dc_rom_dirs[i],
+				FILE_BROWSER_MAX_PATH_LEN - 1);
+			/* No DIR attr on purpose: romFile_init() would try to
+			 * create it, and probing must not mkdir its way around
+			 * the filesystem. */
+			n = dc_menu_list_load(list, &probe);
+			if (n > 0)
+				return n;
+
+			if (strlen(tried) + strlen(dc_rom_dirs[i]) + 3 < sizeof(tried)) {
+				strcat(tried, ", ");
+				strcat(tried, dc_rom_dirs[i]);
+			}
+		}
+	}
+#endif
+
+	list->items = NULL;
+	list->count = 0;
+	strncpy(list->dir, tried, sizeof(list->dir) - 1);
+	list->dir[sizeof(list->dir) - 1] = '\0';
+	return 0;
+}
+
 /* ---- input ------------------------------------------------------------ */
 
 void dc_menu_state_init(dc_menu_state *st, const dc_menu_list *list, int rows)
@@ -318,9 +382,12 @@ void dc_menu_draw(const dc_menu_state *st, const char *title)
 
 	if (!st->list || st->list->count == 0) {
 		dc_draw_text(cw, ch * 2, COL_TEXT, "No ROMs found.");
-		snprintf(line, sizeof(line), "Put .z64/.n64/.v64 files in %s",
-			 (st->list && st->list->dir[0]) ? st->list->dir : "the ROM folder");
-		dc_draw_text(cw, ch * 3, COL_HINT, line);
+		if (st->list && st->list->dir[0]) {
+			snprintf(line, sizeof(line), "Looked in: %s", st->list->dir);
+			dc_draw_text(cw, ch * 3, COL_HINT, line);
+		}
+		dc_draw_text(cw, ch * 4, COL_HINT,
+			     "Put .z64/.n64/.v64 files there, then restart.");
 		/* Still say how to leave: B is the only thing that works here. */
 		dc_draw_text(cw, dc_draw_height() - ch, COL_HINT, "B exit");
 		dc_draw_end();
@@ -359,6 +426,19 @@ void dc_menu_draw(const dc_menu_state *st, const char *title)
 	dc_draw_end();
 }
 
+void dc_menu_message(const char *title, const char *message)
+{
+	const int cw = dc_draw_char_w();
+	const int ch = dc_draw_char_h();
+
+	dc_draw_begin(COL_BG);
+	dc_draw_fill_rect(0, 0, dc_draw_width(), ch, COL_BAR);
+	dc_draw_text(cw, 0, COL_TITLE, title ? title : "Not64");
+	if (message)
+		dc_draw_text(cw, ch * 2, COL_TEXT, message);
+	dc_draw_end();
+}
+
 /* ---- the browser ------------------------------------------------------ */
 
 int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out)
@@ -367,13 +447,16 @@ int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out)
 	dc_menu_state st;
 	int found, rows, result = 0;
 	int frames = 0;
+	int dirty = 1;
 
 	if (!out)
 		return FILE_BROWSER_ERROR;
 
-	found = dc_menu_list_load(&list, dir);
-	if (found < 0)
-		return found;
+	/* A directory that will not open is not a failure -- it means no ROMs
+	 * there. The browser still opens and says where it looked; refusing to
+	 * draw left a Dreamcast with no SD adapter staring at a black screen. */
+	found = dc_menu_find_roms(&list, dir);
+	(void)found;
 
 	if (dc_draw_init() != 0) {
 		dc_menu_list_free(&list);
@@ -386,18 +469,37 @@ int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out)
 	rows = dc_draw_height() / dc_draw_char_h() - 3;
 	dc_menu_state_init(&st, &list, rows);
 
+	/* Repaint only when the selection actually moves. The picture is
+	 * identical otherwise, and on a Dreamcast a repaint is a 600 KiB blit --
+	 * no reason to spend that sixty times a second on a static list. */
 	for (;;) {
 		BUTTONS keys;
 		dc_menu_action act;
+		int was_cursor = st.cursor, was_top = st.top;
 
-		dc_menu_draw(&st, "Not64  -  choose a ROM");
+		if (dirty) {
+			dc_menu_draw(&st, "Not64  -  choose a ROM");
+			dirty = 0;
+		} else {
+			dc_draw_wait();
+		}
 
 		memset(&keys, 0, sizeof(keys));
 		getKeys(0, &keys);
 		act = dc_menu_step(&st, &keys);
+		if (st.cursor != was_cursor || st.top != was_top)
+			dirty = 1;
 
 		if (act == DC_MENU_PICK) {
+			char msg[128];
+
 			*out = list.items[st.cursor];
+			/* Pulling a 32 MiB cart off a CD takes seconds, and the
+			 * bring-up console is not visible behind the menu. Without
+			 * this the screen simply goes dark after the button press,
+			 * which reads as a crash. */
+			snprintf(msg, sizeof(msg), "Loading %s ...", out->label);
+			dc_menu_message("Not64", msg);
 			result = 1;
 			break;
 		}

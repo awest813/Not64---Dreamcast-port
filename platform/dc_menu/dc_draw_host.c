@@ -51,6 +51,11 @@ void dc_draw_end(void)
 {
 }
 
+void dc_draw_wait(void)
+{
+	/* No display to wait for. */
+}
+
 void dc_draw_fill_rect(int x, int y, int w, int h, uint16_t rgb565)
 {
 	(void)x; (void)y; (void)w; (void)h; (void)rgb565;

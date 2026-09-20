@@ -2,7 +2,9 @@
 /not64-dc-bringup
 /not64-dc.elf
 *.o
-*.d
+# Only the DC build's objects and deps. A bare *.d would also ignore
+# mupen64_soft_gfx/rsp.d, which the original project tracks.
+/obj/
 /saves/dc_host.txt
 
 # Drop-in ROMs: keep the generated bring-up images, never commit a game dump.

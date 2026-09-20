@@ -1,21 +1,31 @@
 /**
- * KallistiOS backend for the menu drawing surface: BIOS font into vram.
+ * KallistiOS backend for the menu drawing surface: BIOS font into a back
+ * buffer, blitted to vram once a frame.
  *
- * NOT YET COMPILED. The environment this was written in has no sh-elf-gcc and
- * no KallistiOS, so every other DC file here is reached through the host stub
- * and this one is not reachable at all. It is written against the conventional
- * KOS 2.x API (vram_s, vid_set_mode, bfont_draw_str, BFONT_THIN_WIDTH,
- * BFONT_HEIGHT). Expect to fix the bfont call signature on first build -- KOS
- * has changed it across versions, and bfont_draw_str_ex exists in newer trees.
- * Nothing above this file depends on those details: dc_menu.c only uses
- * dc_draw.h, and the host backend exercises the same interface.
+ * Built and run: sh-elf-gcc 9.3.0 / KOS 2.x, booted from a CD image in
+ * Flycast. Three things only showed up once it was on screen:
  *
- * v1 draws straight into the visible framebuffer. There is no double buffer,
- * so dc_draw_begin() clears and the frame is built in view; at menu redraw
- * rates that is what the Wii menu's software path did too. Phase 7 can put a
- * PVR surface behind the same three calls.
+ *  - The first version drew straight into the visible framebuffer, so every
+ *    frame was cleared and repainted in full view of the scanout. It tore
+ *    badly: captures routinely caught half a menu, rows missing and a name
+ *    cut off mid-word.
+ *  - Page flipping fixes the tearing, but vid_flip() always leaves vram_s
+ *    pointing at the buffer that is NOT on screen, and KOS's framebuffer
+ *    console writes through vram_s. Everything the bring-up printed after
+ *    the menu went into the hidden buffer. Collapsing back to one buffer
+ *    does not help either, because vid_set_mode_ex() clears vram, which
+ *    throws away whatever was last drawn.
+ *  - So: own back buffer, one blit per frame. vram_s stays the visible
+ *    framebuffer throughout, the console keeps working, and the last frame
+ *    drawn (the "Loading ..." message) survives shutdown because nothing
+ *    clears it. The buffer is freed in dc_draw_shutdown(), which is what
+ *    Phase 8 means by the menu releasing everything before go().
+ *  - bfont_draw_str() takes a non-const char *, so the string has to be cast.
+ *
+ * Phase 7 can put a PVR surface behind the same three calls.
  */
 
+#include <stdlib.h>
 #include <string.h>
 
 #include <kos.h>
@@ -29,12 +39,19 @@
 #define KOS_CHAR_W BFONT_THIN_WIDTH
 #define KOS_CHAR_H BFONT_HEIGHT
 
-static int started;
+static uint16_t *back;
+static int       started;
 
 int dc_draw_init(void)
 {
 	if (started)
 		return 0;
+
+	back = (uint16_t *)malloc((size_t)KOS_W * KOS_H * sizeof(uint16_t));
+	if (!back)
+		return -1;
+	memset(back, 0, (size_t)KOS_W * KOS_H * sizeof(uint16_t));
+
 	vid_set_mode(DM_640x480, PM_RGB565);
 	started = 1;
 	return 0;
@@ -42,8 +59,13 @@ int dc_draw_init(void)
 
 void dc_draw_shutdown(void)
 {
-	/* The core sets its own mode when a ROM starts; just stop drawing. */
+	if (!started)
+		return;
 	started = 0;
+	/* Leave the last frame on screen: it is the "Loading ..." message, and
+	 * the console prints on top of it from here. */
+	free(back);
+	back = NULL;
 }
 
 void dc_draw_begin(uint16_t clear_rgb565)
@@ -54,6 +76,16 @@ void dc_draw_begin(uint16_t clear_rgb565)
 }
 
 void dc_draw_end(void)
+{
+	if (!started)
+		return;
+	/* One blit on the blanking interval, so a frame never appears partly
+	 * drawn. */
+	vid_waitvbl();
+	memcpy(vram_s, back, (size_t)KOS_W * KOS_H * sizeof(uint16_t));
+}
+
+void dc_draw_wait(void)
 {
 	if (started)
 		vid_waitvbl();
@@ -73,7 +105,7 @@ void dc_draw_fill_rect(int x, int y, int w, int h, uint16_t rgb565)
 	if (y + h > KOS_H) h = KOS_H - y;
 
 	for (row = 0; row < h; ++row) {
-		uint16_t *dst = vram_s + (y + row) * KOS_W + x;
+		uint16_t *dst = back + (y + row) * KOS_W + x;
 		int col;
 		for (col = 0; col < w; ++col)
 			dst[col] = rgb565;
@@ -89,8 +121,9 @@ void dc_draw_text(int x, int y, uint16_t rgb565, const char *str)
 
 	bfont_set_foreground_color(rgb565);
 	/* opaque = 0: leave the background alone, so text can sit on a filled
-	 * selection bar without punching a box through it. */
-	bfont_draw_str(vram_s + y * KOS_W + x, KOS_W, 0, str);
+	 * selection bar without punching a box through it.
+	 * KOS declares the string parameter as char *, not const char *. */
+	bfont_draw_str(back + y * KOS_W + x, KOS_W, 0, (char *)str);
 }
 
 void dc_draw_blit(int x, int y, int w, int h, const uint16_t *src)
@@ -105,7 +138,7 @@ void dc_draw_blit(int x, int y, int w, int h, const uint16_t *src)
 		return;
 
 	for (row = 0; row < h; ++row)
-		memcpy(vram_s + (y + row) * KOS_W + x,
+		memcpy(back + (y + row) * KOS_W + x,
 		       src + (size_t)row * w,
 		       (size_t)w * sizeof(uint16_t));
 }
