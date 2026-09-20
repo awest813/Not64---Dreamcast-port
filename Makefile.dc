@@ -122,6 +122,13 @@ test: $(TARGET) $(ROMS)
 	./$(TARGET) --menu-test
 	./$(TARGET) roms/dc_cputest.z64
 	./$(TARGET) roms/dc_dummy.z64
+	@if command -v clang >/dev/null 2>&1; then \
+		echo "clang -fsyntax-only (menu/settings/debug)"; \
+		clang -fsyntax-only -std=gnu11 -Wall -Wextra -Wno-unused-parameter \
+			-Wno-missing-field-initializers $(CPPFLAGS) \
+			platform/dc_menu/dc_draw.c platform/dc_settings.c \
+			platform/dc_debug.c platform/dc_pvr.c; \
+	else echo "clang not installed; skip syntax-only"; fi
 
 clean:
 	rm -f $(OBJS) $(DEPS) $(TARGET)

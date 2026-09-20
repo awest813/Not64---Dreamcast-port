@@ -150,6 +150,8 @@ void controller_DC_host_set_triggers(int Control, int ltrig, int rtrig)
 static int poll_pad(int Control, unsigned int *buttons_out, int *jx, int *jy,
 		    int *ltrig, int *rtrig)
 {
+	if (Control < 0 || Control > 3)
+		return 0;
 #ifdef DC_HOST_STUB
 	*buttons_out = host_buttons[Control];
 	*jx = host_joyx[Control];

@@ -11,7 +11,7 @@
 #include "dc_draw.h"
 #include "../dc_settings.h"
 #include "../dc_pvr.h"
-#include "../../gui/DEBUG.h"
+#include "../dc_debug.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -787,23 +787,27 @@ int dc_menu_pick_rom(char *out_path, size_t out_len, unsigned int max_frames)
 			if (applied == DC_MENU_QUIT)
 				scr = SCR_HOME;
 		} else if (scr == SCR_SETTINGS) {
+			int nset = dc_settings_visible_count();
+			if (nset < 1)
+				nset = 1;
 			if (act == DC_MENU_ACT_UP)
-				set_cur = (set_cur + DC_SET_COUNT - 1) % DC_SET_COUNT;
+				set_cur = (set_cur + nset - 1) % nset;
 			else if (act == DC_MENU_ACT_DOWN)
-				set_cur = (set_cur + 1) % DC_SET_COUNT;
+				set_cur = (set_cur + 1) % nset;
 			else if (act == DC_MENU_ACT_PAGE_UP)
 				dc_settings_cycle(set_cur, -1);
 			else if (act == DC_MENU_ACT_PAGE_DOWN ||
 				 act == DC_MENU_ACT_CONFIRM)
 				dc_settings_cycle(set_cur, 1);
-			else if (act == DC_MENU_ACT_BACK) {
-				dc_settings_save(NULL);
+			else if (act == DC_MENU_ACT_BACK)
 				scr = SCR_HOME;
-			}
 		} else if (scr == SCR_CONTROLS) {
+			int nctrl = dc_controls_row_count();
+			int vis = 9;
+			int max_scroll = (nctrl > vis) ? nctrl - vis : 0;
 			if (act == DC_MENU_ACT_UP && ctrl_scroll > 0)
 				ctrl_scroll--;
-			else if (act == DC_MENU_ACT_DOWN)
+			else if (act == DC_MENU_ACT_DOWN && ctrl_scroll < max_scroll)
 				ctrl_scroll++;
 			else if (act == DC_MENU_ACT_BACK)
 				scr = SCR_HOME;
@@ -813,6 +817,7 @@ int dc_menu_pick_rom(char *out_path, size_t out_len, unsigned int max_frames)
 #ifdef DC_HOST_STUB
 	host_input_end();
 #endif
+	dc_settings_save(NULL);
 	dc_menu_browser_destroy(b);
 	dc_draw_shutdown();
 	return result;
@@ -1093,13 +1098,8 @@ int dc_menu_selftest(void)
 	}
 
 	fails += dc_settings_selftest();
+	fails += dc_debug_selftest();
 	expect(&fails, !dc_pvr_available(), "PVR backend absent (honest stub)");
-	DEBUG_print("menu-test log line\n", -1);
-	expect(&fails, DEBUG_get_text() != NULL, "debug ring");
-	expect(&fails, strstr(DEBUG_get_text()[0], "menu-test") != NULL ||
-			       strstr(DEBUG_get_text()[1], "menu-test") != NULL ||
-			       DEBUG_get_text()[0][0] != '\0',
-	       "debug ring captured a line");
 
 	if (dc_draw_init() == 0) {
 		dc_settings_defaults();

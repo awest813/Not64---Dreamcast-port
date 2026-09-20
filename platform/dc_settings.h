@@ -29,6 +29,7 @@ int dc_settings_save(const char *path);
 const char *dc_settings_path(void);
 
 int dc_settings_count(void);
+int dc_settings_visible_count(void);
 const char *dc_settings_label(int i);
 const char *dc_settings_value(int i);
 const char *dc_settings_help(int i);

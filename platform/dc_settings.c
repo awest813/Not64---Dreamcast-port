@@ -17,6 +17,7 @@
 #include "../main/wii64config.h"
 #include "../main/timers.h"
 #include "../fileBrowser/fileBrowser.h"
+#include "../fileBrowser/fileBrowser-kos.h"
 
 extern char audioEnabled;
 extern char printToSD;
@@ -121,6 +122,13 @@ int dc_settings_count(void)
 	return DC_SET_COUNT;
 }
 
+int dc_settings_visible_count(void)
+{
+	/* skipMenu is file-only: turning it On from the UI would lock a
+	 * hardware boot out of the menu (argc<=1). Edit settings.cfg. */
+	return DC_SET_SKIPMENU;
+}
+
 const char *dc_settings_label(int i)
 {
 	if (i < 0 || i >= DC_SET_COUNT)
@@ -178,6 +186,10 @@ int dc_settings_save(const char *path)
 	FILE *fp;
 	int i;
 
+	fileBrowser_kos_bind();
+	if (saveFile_dir)
+		fileBrowser_kos_init(saveFile_dir);
+
 	if (!path)
 		path = dc_settings_path();
 	fp = fopen(path, "w");
@@ -206,6 +218,9 @@ int dc_settings_load(const char *path)
 		int i, v;
 
 		nl = strchr(line, '\n');
+		if (nl)
+			*nl = '\0';
+		nl = strchr(line, '\r');
 		if (nl)
 			*nl = '\0';
 		if (line[0] == '#' || line[0] == '\0') {
@@ -241,12 +256,17 @@ void dc_settings_draw(int cursor)
 	dc_draw_fill_rect(0, 0, DC_FB_W, 56, DC_COL_BG2);
 	dc_draw_fill_rect(0, 0, 8, 56, DC_COL_ACCENT);
 	dc_draw_text_scaled(24, 10, DC_COL_TEXT, "Settings", 2);
-	dc_draw_text(24, 40, DC_COL_DIM, "Inspired by mupen64plus.cfg, not Wii64 structs");
+	dc_draw_text(24, 40, DC_COL_DIM, "Audio, video, saves");
 
 	dc_draw_fill_rect(16, 68, DC_FB_W - 32, 320, DC_COL_PANEL);
 	dc_draw_rect(16, 68, DC_FB_W - 32, 320, DC_COL_LINE);
 
-	for (i = 0; i < DC_SET_COUNT; ++i) {
+	if (cursor < 0)
+		cursor = 0;
+	if (cursor >= dc_settings_visible_count())
+		cursor = dc_settings_visible_count() - 1;
+
+	for (i = 0; i < dc_settings_visible_count(); ++i) {
 		int sel = (i == cursor);
 		y = 80 + i * 22;
 		if (sel)
@@ -261,7 +281,7 @@ void dc_settings_draw(int cursor)
 	dc_draw_text(32, 360, DC_COL_WARN, dc_settings_help(cursor));
 	dc_draw_fill_rect(0, 424, DC_FB_W, 56, DC_COL_BG2);
 	dc_draw_fill_rect(0, 424, DC_FB_W, 2, DC_COL_LINE);
-	dc_draw_text(24, 440, DC_COL_DIM, "A/Left/Right change    B back (saves)");
+	dc_draw_text(24, 440, DC_COL_DIM, "A or D-pad Left/Right changes value    B back");
 }
 
 struct dc_ctrl_row {
@@ -278,7 +298,7 @@ static const struct dc_ctrl_row controls[] = {
 	{ "Y + left trigger",  "L" },
 	{ "Both triggers + D-pad", "C-Up / C-Down / C-Left / C-Right" },
 	{ "X",                 "unassigned" },
-	{ "Start + A + B",     "Return to menu (once 8b exists)" },
+	{ "Start + A + B",     "Return to menu (not wired yet)" },
 };
 
 int dc_controls_row_count(void)
@@ -293,10 +313,10 @@ void dc_controls_draw(int scroll)
 
 	if (scroll < 0)
 		scroll = 0;
-	if (scroll > n - vis && n > vis)
-		scroll = n - vis;
 	if (n <= vis)
 		scroll = 0;
+	else if (scroll > n - vis)
+		scroll = n - vis;
 
 	dc_draw_clear(DC_COL_BG);
 	dc_draw_fill_rect(0, 0, DC_FB_W, 56, DC_COL_BG2);
@@ -321,7 +341,7 @@ void dc_controls_draw(int scroll)
 		     "Both triggers withhold Z+R so a C-press is not also Z+R.");
 	dc_draw_fill_rect(0, 424, DC_FB_W, 56, DC_COL_BG2);
 	dc_draw_fill_rect(0, 424, DC_FB_W, 2, DC_COL_LINE);
-	dc_draw_text(24, 440, DC_COL_DIM, "B back    This screen is the map; 8c slots come later");
+	dc_draw_text(24, 440, DC_COL_DIM, "B back    Shifts are fixed; remap slots later");
 }
 
 #ifdef DC_HOST_STUB
@@ -376,6 +396,12 @@ int dc_settings_selftest(void)
 	}
 	if (dc_controls_row_count() < 7) {
 		printf("settings FAIL: controls legend\n");
+		fails++;
+	}
+	if (dc_settings_visible_count() >= dc_settings_count() ||
+	    !strcmp(dc_settings_label(dc_settings_visible_count() - 1),
+		    "Skip menu")) {
+		printf("settings FAIL: skipMenu must stay off the screen\n");
 		fails++;
 	}
 	remove(path);

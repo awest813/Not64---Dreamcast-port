@@ -500,9 +500,11 @@ dc_draw_text(x, y, rgb565, const char *)
 dc_draw_blit(x, y, w, h, const uint16_t *)
 ```
 
-v1 backs that with KOS `bfont` straight into the framebuffer — the BIOS font
-ships in the console, so no font asset and no renderer are needed. Phase 7
-can repoint the same three calls at PVR without touching menu logic.
+v1 draws through `dc_draw_*` into an RGB565 buffer with a built-in 8x8
+font so the host stub can snapshot the same pixels KOS will blit to
+`vram_s`. A later PVR backend can replace those three calls without
+touching menu logic. (KOS `bfont` is not used; it is not available on
+the host.)
 
 Hard constraints:
 
