@@ -406,14 +406,25 @@ void apply_pak_modes(void)
 	if (!control_info.Controls)
 		return;
 	for (i = 0; i < 4; ++i) {
+		int want;
+
 		if (!control_info.Controls[i].Present)
 			continue;
-		control_info.Controls[i].Plugin =
-			(pakMode[i] == PAKMODE_MEMPAK) ? PLUGIN_MEMPAK : PLUGIN_RAW;
+		want = (pakMode[i] == PAKMODE_MEMPAK) ? PLUGIN_MEMPAK : PLUGIN_RAW;
+		if (control_info.Controls[i].Plugin == PLUGIN_RAW &&
+		    want != PLUGIN_RAW &&
+		    virtualControllers[i].inUse &&
+		    virtualControllers[i].control)
+			virtualControllers[i].control->rumble(
+				virtualControllers[i].number, 0);
+		control_info.Controls[i].Plugin = want;
 	}
 }
 
 void unassign_controller(int wv){
+	if (virtualControllers[wv].inUse && virtualControllers[wv].control)
+		virtualControllers[wv].control->rumble(
+			virtualControllers[wv].number, 0);
 	virtualControllers[wv].control = NULL;
 	virtualControllers[wv].inUse   = 0;
 	virtualControllers[wv].number  = -1;

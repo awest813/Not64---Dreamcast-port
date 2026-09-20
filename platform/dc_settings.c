@@ -428,6 +428,11 @@ int dc_controls_step(const BUTTONS *keys)
 	if (keys->R_DPAD) now |= 8u;
 	if (keys->U_DPAD) now |= 16u;
 	if (keys->D_DPAD) now |= 32u;
+	{
+		int x = (int)(signed char)keys->X_AXIS;
+		if (x <= -40) now |= 4u;
+		if (x >= 40) now |= 8u;
+	}
 	pressed = now & ~(unsigned)ctl_prev;
 	ctl_prev = (int)now;
 	if (pressed & 1u)

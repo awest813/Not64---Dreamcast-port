@@ -340,7 +340,7 @@ static void rumble_ctl(int Control, int rumble)
 	if (Control < 0 || Control > 3)
 		return;
 	rumble_on[Control] = rumble ? 1 : 0;
-	/* Jump Pack (MAPLE_FUNC_PURUPURU) still needs KOS_BASE to send. */
+	/* HOST latches for tests. Jump Pack send still needs KOS_BASE. */
 }
 
 #ifdef DC_HOST_STUB

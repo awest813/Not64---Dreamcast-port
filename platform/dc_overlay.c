@@ -113,13 +113,22 @@ int dc_overlay_step(const BUTTONS *keys)
 		case OV_SAVE:
 			savestates_job = SAVESTATE;
 			savestates_save();
-			if (savestates_ok())
-				snprintf(status, sizeof(status),
-					 "Slot %u saved", savestates_get_slot());
-			else
-				snprintf(status, sizeof(status),
-					 "Save slot %u failed",
-					 savestates_get_slot());
+			{
+				const char *why = savestates_error();
+
+				if (savestates_ok())
+					snprintf(status, sizeof(status),
+						 "Slot %u saved",
+						 savestates_get_slot());
+				else if (why && why[0])
+					snprintf(status, sizeof(status),
+						 "Save slot %u: %s",
+						 savestates_get_slot(), why);
+				else
+					snprintf(status, sizeof(status),
+						 "Save slot %u failed",
+						 savestates_get_slot());
+			}
 			dc_log(DC_LOG_INFO, "%s", status);
 			break;
 		case OV_LOAD:

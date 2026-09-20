@@ -68,7 +68,7 @@ void dc_nativesave_save(void)
 int dc_nativesave_selftest(void)
 {
 	int fails = 0;
-	char path[FILE_BROWSER_MAX_PATH_LEN];
+	char path[512];
 	char old_auto_save = autoSave;
 	char old_auto_load = autoLoadSave;
 

@@ -128,6 +128,17 @@ const char *savestates_error(void)
 	return last_err;
 }
 
+static int buf_not_fill(const unsigned char *p, size_t n, unsigned char v)
+{
+	size_t i;
+
+	for (i = 0; i < n; ++i) {
+		if (p[i] != v)
+			return 1;
+	}
+	return 0;
+}
+
 static int wr_mem(FILE *f, const void *p, size_t n)
 {
 	if (crc_on)
@@ -650,12 +661,18 @@ static int read_state(FILE *f)
 	long body_off;
 
 	crc_on = 0;
-	if (rd_mem(f, magic, 8) || memcmp(magic, SS_MAGIC, 8) != 0)
+	if (rd_mem(f, magic, 8) || memcmp(magic, SS_MAGIC, 8) != 0) {
+		snprintf(last_err, sizeof(last_err), "bad dump");
 		return -1;
-	if (rd_mem(f, &ver, 4) || ver != SS_VERSION)
+	}
+	if (rd_mem(f, &ver, 4) || ver != SS_VERSION) {
+		snprintf(last_err, sizeof(last_err), "bad dump");
 		return -1;
-	if (rd_mem(f, &rdram_bytes, 4) || rdram_bytes != DC_N64_RDRAM_SIZE)
+	}
+	if (rd_mem(f, &rdram_bytes, 4) || rdram_bytes != DC_N64_RDRAM_SIZE) {
+		snprintf(last_err, sizeof(last_err), "bad dump");
 		return -1;
+	}
 	if (rd_mem(f, name, SS_NAME_LEN) || rd_mem(f, &crc1, 4))
 		return -1;
 	cart_name(expect);
@@ -683,9 +700,9 @@ static int read_state(FILE *f)
 	    rd_mem(f, dc_cart_flashram(), DC_FLASH_SIZE) ||
 	    rd_mem(f, dc_cart_mempak(), DC_MEMPAK_SIZE))
 		return -1;
-	eepromWritten = TRUE;
-	sramWritten = TRUE;
-	flashramWritten = TRUE;
+	eepromWritten = buf_not_fill(dc_cart_eeprom(), DC_EEPROM_SIZE, 0xFF);
+	sramWritten = buf_not_fill(dc_cart_sram(), DC_SRAM_SIZE, 0x00);
+	flashramWritten = buf_not_fill(dc_cart_flashram(), DC_FLASH_SIZE, 0xFF);
 	mempakWritten = TRUE;
 	if (TLBCache_fread(f))
 		return -1;
@@ -703,11 +720,13 @@ void savestates_save(void)
 	last_ok = 0;
 	last_err[0] = 0;
 	if (!rdramb) {
+		snprintf(last_err, sizeof(last_err), "no RDRAM");
 		dc_log(DC_LOG_ERROR, "savestate: save slot %u: no RDRAM", slot);
 		return;
 	}
 	fp = fopen(path, "w+b");
 	if (!fp) {
+		snprintf(last_err, sizeof(last_err), "cannot open");
 		dc_log(DC_LOG_ERROR, "savestate: save slot %u: cannot open %s",
 		       slot, path);
 		return;
@@ -715,6 +734,7 @@ void savestates_save(void)
 	if (write_state(fp)) {
 		fclose(fp);
 		remove(path);
+		snprintf(last_err, sizeof(last_err), "write failed");
 		dc_log(DC_LOG_ERROR, "savestate: save slot %u failed (%s)",
 		       slot, path);
 		return;
@@ -880,6 +900,10 @@ int savestates_selftest(void)
 		       dc_cart_sram()[0]);
 		fails++;
 	}
+	if (!eepromWritten || !sramWritten) {
+		printf("savestate FAIL: dirty cart saves not marked written\n");
+		fails++;
+	}
 
 	remove(path);
 	if (savestates_exists(SAVESTATE)) {
@@ -903,6 +927,11 @@ int savestates_selftest(void)
 		}
 		if (savestates_exists(SAVESTATE)) {
 			printf("savestate FAIL: garbage file counted as a dump\n");
+			fails++;
+		}
+		savestates_load();
+		if (last_ok || strcmp(last_err, "bad dump") != 0) {
+			printf("savestate FAIL: garbage err='%s'\n", last_err);
 			fails++;
 		}
 		remove(path);

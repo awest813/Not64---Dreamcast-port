@@ -894,6 +894,28 @@ static int smoke_pak(void)
 		fail = 1;
 	}
 
+	pakMode[0] = PAKMODE_MEMPAK;
+	apply_pak_modes();
+	if (Controls[0].Plugin != PLUGIN_MEMPAK) {
+		printf("pak smoke: Mem Pak after rumble Plugin=%d\n",
+		       Controls[0].Plugin);
+		fail = 1;
+	}
+	if (controller_DC_rumble_state(0) != 0) {
+		printf("pak smoke: rumble still on after Mem Pak\n");
+		fail = 1;
+	}
+
+	pakMode[0] = PAKMODE_RUMBLEPAK;
+	apply_pak_modes();
+	PIF_RAMb[5] = 0x01;
+	update_pif_write();
+	update_pif_read();
+	if (controller_DC_rumble_state(0) != 1) {
+		printf("pak smoke: rumble on after re-select not latched\n");
+		fail = 1;
+	}
+
 	PIF_RAMb[5] = 0x00;
 	update_pif_write();
 	update_pif_read();
