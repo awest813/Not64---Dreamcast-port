@@ -333,11 +333,24 @@ static void resume_ctl(int Control)
 	(void)Control;
 }
 
+static int rumble_on[4];
+
 static void rumble_ctl(int Control, int rumble)
 {
-	(void)Control;
-	(void)rumble;
+	if (Control < 0 || Control > 3)
+		return;
+	rumble_on[Control] = rumble ? 1 : 0;
+	/* Jump Pack (MAPLE_FUNC_PURUPURU) still needs KOS_BASE to send. */
 }
+
+#ifdef DC_HOST_STUB
+int controller_DC_rumble_state(int Control)
+{
+	if (Control < 0 || Control > 3)
+		return 0;
+	return rumble_on[Control];
+}
+#endif
 
 static void configure(int Control, controller_config_t *config)
 {

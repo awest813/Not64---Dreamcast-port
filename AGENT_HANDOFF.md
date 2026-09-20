@@ -282,7 +282,7 @@ held during C-presses.
 
 ## Open findings (audited, deliberately not changed)
 
-1. **Rumble and paks are stubs.** `rumble_ctl()` does nothing and `pakMode[4]` has no backend. The Dreamcast Jump Pack (`MAPLE_FUNC_PURUPURU`) is the natural N64 Rumble Pak analogue and the VMU (`MAPLE_FUNC_MEMCARD`) the natural Controller Pak. Both need KOS headers, so they cannot be written or verified from the host stub — do them alongside the Phase 1 ELF.
+1. **Rumble and paks.** Jump Pack send (`MAPLE_FUNC_PURUPURU`) and VMU Controller Pak layout still need KOS. HOST now latches rumble, persists `pakMode`, and round-trips Joybus mempak.
 2. ~~**`fileBrowser_kos_readFile` does `fopen`/`fseek`/`fclose` per call.**~~ **Fixed** — the read handle is held open (item 11 above). Writes still open and close on purpose, so a save reaches the card the moment it is written.
 3. **Host stub is not an SH4 model.** `unsigned long` is 64-bit on an LP64 host and 32-bit on SH4, so `rdram[]`, `reg[]` and every `read_*_in_memory()` differ in width and layout. Concretely: `rdram[addr>>2]` is **not** how to read N64 memory here — see the byte-view landmine above. `CPUTEST PASS` on the host is a link/logic check, not evidence about hardware. The alignment and LP64 bugs found in `pif.c` are exactly the class the host stub cannot catch by itself.
 
@@ -297,8 +297,9 @@ Follow **Gap plan** in `PORTING.md`. Short form:
 3. ~~**P2 — `AiReadLength` + ring drain**~~ — host shipped; AICA/`snd_stream` still open.
 4. ~~**P3 — native EEPROM/SRAM/Flash on SD**~~ — host shipped; VMU still a human call.
 5. ~~**P4 — per-ROM savestate names + cart blobs**~~ — host shipped (`NOT64ST` v3). Atomic apply still open.
-6. Menu 8a–8d is done. `dc_draw_kos.c` still uncompiled.
-7. Software/TA/dynarec only after P0 produces a VI framebuffer.
+6. ~~**P5 — pakMode + Joybus mempak/rumble latch**~~ — host shipped; Jump Pack send and VMU still need KOS.
+7. Menu 8a–8d is done. `dc_draw_kos.c` still uncompiled.
+8. Software/TA/dynarec only after P0 produces a VI framebuffer.
 
 Skip SH4 dynarec and TA/RDP until 1–3 have a ROM that is more than a BEQ spin.
 
@@ -340,6 +341,6 @@ Checks live in `check_cputest()` in `main/main_dc.c`. Keep them if you change th
 
 ## Suggested first message for the next agent
 
-> Continue the Not64 Dreamcast port from `AGENT_HANDOFF.md` and the Gap plan in `PORTING.md`. Run `make -f Makefile.dc HOST=1 test` first. P0–P4 host work is done or blocked (P0 no cart, P1 no KOS). Next is P5 rumble/paks (needs KOS) or leftover P4 atomic apply. Do not start TA/RDP or SH4 dynarec.
+> Continue the Not64 Dreamcast port from `AGENT_HANDOFF.md` and the Gap plan in `PORTING.md`. Run `make -f Makefile.dc HOST=1 test` first. P0–P5 host work is done or blocked (P0 no cart, P1 no KOS). Next is P6 after a real VI, leftover P4 atomic apply, or Jump Pack/VMU when `KOS_BASE` exists. Do not start TA/RDP or SH4 dynarec.
 
 Update **this file** and `PORTING.md` current-status when a phase actually finishes.

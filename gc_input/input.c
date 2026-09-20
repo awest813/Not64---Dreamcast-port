@@ -399,6 +399,20 @@ void assign_controller(int wv, controller_t* type, int wp){
 	else								control_info.Controls[wv].Plugin  = PLUGIN_RAW;
 }
 
+void apply_pak_modes(void)
+{
+	int i;
+
+	if (!control_info.Controls)
+		return;
+	for (i = 0; i < 4; ++i) {
+		if (!control_info.Controls[i].Present)
+			continue;
+		control_info.Controls[i].Plugin =
+			(pakMode[i] == PAKMODE_MEMPAK) ? PLUGIN_MEMPAK : PLUGIN_RAW;
+	}
+}
+
 void unassign_controller(int wv){
 	virtualControllers[wv].control = NULL;
 	virtualControllers[wv].inUse   = 0;

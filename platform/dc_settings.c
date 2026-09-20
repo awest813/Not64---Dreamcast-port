@@ -61,7 +61,7 @@ static const struct dc_setting table[DC_SET_COUNT] = {
 #define COL_PICK  DC_RGB(0xFF, 0xFF, 0x80)
 #define COL_HINT  DC_RGB(0x80, 0x88, 0x98)
 
-static int set_cursor, set_prev, ctl_scroll, ctl_prev;
+static int set_cursor, set_prev, ctl_cursor, ctl_scroll, ctl_prev;
 
 static int get_int(int i)
 {
@@ -129,6 +129,13 @@ void dc_settings_defaults(void)
 	renderCpuFramebuffer = 0;
 	pixelClock = 0;
 	trapFilter = 0;
+	{
+		int i;
+
+		for (i = 0; i < 4; ++i)
+			pakMode[i] = PAKMODE_MEMPAK;
+	}
+	apply_pak_modes();
 }
 
 int dc_settings_count(void)
@@ -240,6 +247,11 @@ int dc_settings_save(const char *path)
 		fprintf(fp, "# %s\n", table[i].help);
 		fprintf(fp, "%s = %d\n", table[i].key, get_int(i));
 	}
+	fprintf(fp, "\n[Input]\n");
+	fprintf(fp, "# 0 = Mem Pak, 1 = Rumble Pak. Jump Pack send needs KOS.\n");
+	for (i = 0; i < 4; ++i)
+		fprintf(fp, "pak%d = %d\n", i + 1,
+			pakMode[i] == PAKMODE_RUMBLEPAK ? 1 : 0);
 	fclose(fp);
 	return 0;
 }
@@ -274,6 +286,12 @@ int dc_settings_load(const char *path)
 		key = trim(key);
 		val = trim(eq + 1);
 		v = parse_val(val);
+		if (!strncmp(key, "pak", 3) && key[3] >= '1' && key[3] <= '4' &&
+		    !key[4]) {
+			pakMode[key[3] - '1'] =
+				v ? PAKMODE_RUMBLEPAK : PAKMODE_MEMPAK;
+			continue;
+		}
 		for (i = 0; i < DC_SET_COUNT; ++i) {
 			if (!strcmp(key, table[i].key)) {
 				set_int(i, v);
@@ -282,6 +300,7 @@ int dc_settings_load(const char *path)
 		}
 	}
 	fclose(fp);
+	apply_pak_modes();
 	return 0;
 }
 
@@ -381,11 +400,12 @@ static const struct dc_ctrl_row controls[] = {
 
 int dc_controls_row_count(void)
 {
-	return (int)(sizeof(controls) / sizeof(controls[0]));
+	return 4 + (int)(sizeof(controls) / sizeof(controls[0]));
 }
 
 void dc_controls_enter(void)
 {
+	ctl_cursor = 0;
 	ctl_scroll = 0;
 	ctl_prev = 0;
 }
@@ -399,24 +419,43 @@ int dc_controls_step(const BUTTONS *keys)
 	if (!keys)
 		return 1;
 	rows = dc_draw_height() / dc_draw_char_h() - 3;
+	if (rows < 1)
+		rows = 1;
 	vis = n < rows ? n : rows;
 	if (keys->B_BUTTON) now |= 1u;
-	if (keys->U_DPAD) now |= 2u;
-	if (keys->D_DPAD) now |= 4u;
+	if (keys->A_BUTTON) now |= 2u;
+	if (keys->L_DPAD) now |= 4u;
+	if (keys->R_DPAD) now |= 8u;
+	if (keys->U_DPAD) now |= 16u;
+	if (keys->D_DPAD) now |= 32u;
 	pressed = now & ~(unsigned)ctl_prev;
 	ctl_prev = (int)now;
 	if (pressed & 1u)
 		return 0;
-	if (pressed & 2u)
-		ctl_scroll--;
-	if (pressed & 4u)
-		ctl_scroll++;
-	if (ctl_scroll < 0)
-		ctl_scroll = 0;
-	if (n <= vis)
-		ctl_scroll = 0;
-	else if (ctl_scroll > n - vis)
-		ctl_scroll = n - vis;
+	if (pressed & 16u)
+		ctl_cursor--;
+	if (pressed & 32u)
+		ctl_cursor++;
+	if (ctl_cursor < 0)
+		ctl_cursor = n - 1;
+	if (ctl_cursor >= n)
+		ctl_cursor = 0;
+	if (ctl_cursor < ctl_scroll)
+		ctl_scroll = ctl_cursor;
+	if (ctl_cursor >= ctl_scroll + vis)
+		ctl_scroll = ctl_cursor - vis + 1;
+	if ((pressed & (2u | 4u | 8u)) && ctl_cursor < 4) {
+		int dir = (pressed & 4u) ? -1 : 1;
+		int v = (pakMode[ctl_cursor] == PAKMODE_RUMBLEPAK) ? 1 : 0;
+
+		v += dir;
+		if (v < 0)
+			v = 1;
+		if (v > 1)
+			v = 0;
+		pakMode[ctl_cursor] = v ? PAKMODE_RUMBLEPAK : PAKMODE_MEMPAK;
+		apply_pak_modes();
+	}
 	return 1;
 }
 
@@ -427,18 +466,36 @@ void dc_controls_draw(void)
 	char line[128];
 	int i, n = dc_controls_row_count();
 	int rows = dc_draw_height() / ch - 3;
-	int vis = n < rows ? n : rows;
+	int vis;
+
+	if (rows < 1)
+		rows = 1;
+	vis = n < rows ? n : rows;
 
 	dc_draw_begin(COL_BG);
 	dc_draw_fill_rect(0, 0, dc_draw_width(), ch, COL_BAR);
 	dc_draw_text(cw, 0, COL_TITLE, "Controls");
 	for (i = 0; i < vis && ctl_scroll + i < n; ++i) {
-		const struct dc_ctrl_row *r = &controls[ctl_scroll + i];
-		snprintf(line, sizeof(line), "%-22.22s %s", r->dc, r->n64);
-		dc_draw_text(cw, ch * (i + 2), COL_TEXT, line);
+		int row = ctl_scroll + i;
+		int y = ch * (i + 2);
+		int pick = (row == ctl_cursor);
+
+		if (pick)
+			dc_draw_fill_rect(0, y, dc_draw_width(), ch, COL_BAR);
+		if (row < 4)
+			snprintf(line, sizeof(line), "%c Port %d pak       %s",
+				 pick ? '>' : ' ', row + 1,
+				 pakMode[row] == PAKMODE_RUMBLEPAK ?
+					 "Rumble Pak" : "Mem Pak");
+		else {
+			const struct dc_ctrl_row *r = &controls[row - 4];
+			snprintf(line, sizeof(line), "  %-22.22s %s",
+				 r->dc, r->n64);
+		}
+		dc_draw_text(cw, y, pick ? COL_PICK : COL_TEXT, line);
 	}
 	dc_draw_text(cw, dc_draw_height() - ch, COL_HINT,
-		     "Unshifted Maple in the menu   B back");
+		     "A/R pak   L previous   B back");
 	dc_draw_end();
 }
 
@@ -453,6 +510,10 @@ int dc_settings_selftest(void)
 	dc_settings_defaults();
 	if (audioEnabled != 1) {
 		printf("settings FAIL: default audio\n");
+		fails++;
+	}
+	if (pakMode[0] != PAKMODE_MEMPAK || pakMode[3] != PAKMODE_MEMPAK) {
+		printf("settings FAIL: default pak is Mem Pak\n");
 		fails++;
 	}
 	audio0 = audioEnabled;
@@ -491,6 +552,20 @@ int dc_settings_selftest(void)
 	}
 	if (!videoMode) {
 		printf("settings FAIL: load video\n");
+		fails++;
+	}
+	pakMode[0] = PAKMODE_RUMBLEPAK;
+	pakMode[1] = PAKMODE_MEMPAK;
+	if (dc_settings_save(path) != 0) {
+		printf("settings FAIL: save pak\n");
+		fails++;
+	}
+	dc_settings_defaults();
+	if (dc_settings_load(path) != 0 ||
+	    pakMode[0] != PAKMODE_RUMBLEPAK ||
+	    pakMode[1] != PAKMODE_MEMPAK) {
+		printf("settings FAIL: load pak %d %d\n",
+		       pakMode[0], pakMode[1]);
 		fails++;
 	}
 	fp = fopen(path, "w");
@@ -599,6 +674,20 @@ int dc_settings_selftest(void)
 				       row ? row : "(null)");
 				fails++;
 			}
+			row = dc_draw_host_row(2);
+			if (!row || !strstr(row, "Port 1") ||
+			    !strstr(row, "Mem Pak")) {
+				printf("settings FAIL: port 1 pak '%s'\n",
+				       row ? row : "(null)");
+				fails++;
+			}
+		}
+		memset(&k, 0, sizeof(k));
+		k.A_BUTTON = 1;
+		dc_controls_step(&k);
+		if (pakMode[0] != PAKMODE_RUMBLEPAK) {
+			printf("settings FAIL: A did not cycle Port 1 pak\n");
+			fails++;
 		}
 		dc_draw_shutdown();
 	}

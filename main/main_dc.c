@@ -830,6 +830,86 @@ static int smoke_pif(void)
 	return fail;
 }
 
+#ifdef DC_HOST_STUB
+static int smoke_pak(void)
+{
+	int fail = 0;
+	char old_pak = pakMode[0];
+	int old_plugin = Controls[0].Plugin;
+	int i;
+
+	if (!Controls[0].Present) {
+		printf("pak smoke: pad 0 not Present\n");
+		return 1;
+	}
+
+	pakMode[0] = PAKMODE_MEMPAK;
+	apply_pak_modes();
+	if (Controls[0].Plugin != PLUGIN_MEMPAK) {
+		printf("pak smoke: Mem Pak Plugin=%d\n", Controls[0].Plugin);
+		fail = 1;
+	}
+
+	memset(PIF_RAMb, 0, 0x40);
+	PIF_RAMb[0] = 0x23;
+	PIF_RAMb[1] = 0x01;
+	PIF_RAMb[2] = 0x03;
+	PIF_RAMb[3] = 0x00;
+	PIF_RAMb[4] = 0x00;
+	for (i = 0; i < 0x20; ++i)
+		PIF_RAMb[5 + i] = (unsigned char)(0xA0 + i);
+	update_pif_write();
+
+	memset(PIF_RAMb, 0, 0x40);
+	PIF_RAMb[0] = 0x03;
+	PIF_RAMb[1] = 0x21;
+	PIF_RAMb[2] = 0x02;
+	PIF_RAMb[3] = 0x00;
+	PIF_RAMb[4] = 0x00;
+	update_pif_write();
+	if (PIF_RAMb[5] != 0xA0 || PIF_RAMb[5 + 0x1F] != 0xBF) {
+		printf("pak smoke: mempak read %02x %02x want a0 bf\n",
+		       PIF_RAMb[5], PIF_RAMb[5 + 0x1F]);
+		fail = 1;
+	}
+
+	pakMode[0] = PAKMODE_RUMBLEPAK;
+	apply_pak_modes();
+	if (Controls[0].Plugin != PLUGIN_RAW) {
+		printf("pak smoke: Rumble Pak Plugin=%d\n", Controls[0].Plugin);
+		fail = 1;
+	}
+
+	memset(PIF_RAMb, 0, 0x40);
+	PIF_RAMb[0] = 0x23;
+	PIF_RAMb[1] = 0x01;
+	PIF_RAMb[2] = 0x03;
+	PIF_RAMb[3] = 0xC0;
+	PIF_RAMb[4] = 0x00;
+	PIF_RAMb[5] = 0x01;
+	update_pif_write();
+	update_pif_read();
+	if (controller_DC_rumble_state(0) != 1) {
+		printf("pak smoke: rumble on not latched\n");
+		fail = 1;
+	}
+
+	PIF_RAMb[5] = 0x00;
+	update_pif_write();
+	update_pif_read();
+	if (controller_DC_rumble_state(0) != 0) {
+		printf("pak smoke: rumble off not latched\n");
+		fail = 1;
+	}
+
+	pakMode[0] = old_pak;
+	Controls[0].Plugin = old_plugin;
+	apply_pak_modes();
+	printf("pak smoke %s (mempak + rumble latch)\n", fail ? "FAIL" : "PASS");
+	return fail;
+}
+#endif
+
 /* The CPUTEST checks key off the ROM's decoded name, so a loader regression
  * used to skip them silently. When the caller asked for the CPUTEST image,
  * a name that does not decode is itself a failure. */
@@ -1251,7 +1331,7 @@ static int load_and_step(const char *path, unsigned long steps)
 	       ROM_SETTINGS.goodname, ROM_HEADER.Country_code, CIC_Chip, ROM_HEADER.PC);
 
 #ifdef DC_HOST_STUB
-	if (!strncmp(ROM_SETTINGS.goodname, "DC ", 3) && (smoke_map() || smoke_menu() || smoke_tlbcache() || smoke_romcache() || smoke_io() || smoke_pif())) {
+	if (!strncmp(ROM_SETTINGS.goodname, "DC ", 3) && (smoke_map() || smoke_menu() || smoke_tlbcache() || smoke_romcache() || smoke_io() || smoke_pif() || smoke_pak())) {
 		romClosed_gfx();
 		closeDLL_gfx();
 		cpu_deinit();

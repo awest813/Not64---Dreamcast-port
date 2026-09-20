@@ -122,6 +122,7 @@ extern controller_t controller_DC;
 #ifdef DC_HOST_STUB
 void controller_DC_host_set(int Control, unsigned int buttons, int jx, int jy);
 void controller_DC_host_set_triggers(int Control, int ltrig, int rtrig);
+int controller_DC_rumble_state(int Control);
 #endif
 unsigned int controller_DC_lastButtons(int Control);
 int controller_DC_lastStick(int Control, int *jx, int *jy);
@@ -156,6 +157,7 @@ extern controller_t* controller_ts[num_controller_t];
 
 void init_controller_ts(void);
 void assign_controller(int whichVirtual, controller_t*, int whichPhysical);
+void apply_pak_modes(void);
 void unassign_controller(int whichVirtual);
 
 int load_configurations(FILE*, controller_t*);

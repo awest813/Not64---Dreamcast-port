@@ -576,6 +576,7 @@ int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out)
 			if (press & DC_CONT_X) {
 				run_until_back(dc_controls_enter, dc_controls_step,
 					       dc_controls_draw);
+				(void)dc_settings_save(NULL);
 				dirty = 1;
 				continue;
 			}

@@ -66,7 +66,7 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | ROM header decode on DC | Fixed — `dc_fix_header_byte_order()` un-swaps Name/Cartridge_ID/Country_code; asserted by CPUTEST |
 | Maple → N64 button map | Done — triggers carry Z/R, `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons |
 | Analog stick | Done — scaled to the N64 ±80 range with a 10-count deadzone; 10 button + 8 analog cases in `smoke_map()` |
-| Rumble / VMU pak | **Not started** — `rumble_ctl()` is a no-op; Jump Pack and VMU are the natural N64 Rumble/Controller Pak analogues. Needs KOS to write |
+| Rumble / VMU pak | **P5 host shipped** — `pakMode` Mem/Rumble, Joybus mempak r/w, rumble latch. Jump Pack send and VMU layout still need KOS |
 | First commercial ROM (host) | **Passes the CIC boot checksum and runs game code**; dies on an `ERET` to `0x400`, still no VI. **Not a TLB bug** — see Phase 3.5 |
 | Software / PVR renderer | **VI presenter shipped** (`VIDEO=software` CPU blit, `VIDEO=pvr` textured quad). `GFX=soft` rasterizes F3DEX2 into RDRAM then uses the same presenter. Raw RDP / TA geometry is not started — see Phase 7 |
 | Dreamcast menu | **8a/8b/8c/8d shipped** — ROM browser, pause overlay (Start+A+B), mupen64plus-style settings, little-endian savestate dumps (`saves/<goodname>.stN`). `libgui/` does not port |
@@ -693,10 +693,12 @@ Flash/mempak blobs in the body, overlay shows `savestates_error()`
 apply is still open: CRC rejects truncated files; a CRC-passing mid-apply
 I/O error can still tear state. Extra 4 MB scratch is not in the DC budget.
 
-### P5 — input/paks
+### P5 — input/paks (host shipped; Jump Pack / VMU open)
 
-Rumble and Controller Pak are stubs. Jump Pack / VMU need KOS. Overlay
-and in-game maps are done; four Maple ports exist but pak backends do not.
+`pakMode[4]` defaults to Mem Pak, persists as `pak1`–`pak4` in settings.cfg,
+and the Controls screen (X) cycles Mem Pak / Rumble Pak per port. Joybus
+mempak read/write and rumble-address writes are covered on HOST. Jump Pack
+(`MAPLE_FUNC_PURUPURU`) send and VMU Controller Pak layout still need KOS.
 
 ### P6 — graphics after a real VI
 
