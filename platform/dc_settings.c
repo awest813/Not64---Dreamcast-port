@@ -61,6 +61,29 @@ static const struct dc_setting table[DC_SET_COUNT] = {
 #define COL_PICK  DC_RGB(0xFF, 0xFF, 0x80)
 #define COL_HINT  DC_RGB(0x80, 0x88, 0x98)
 
+#define DC_PAK_PORTS 4
+#define DC_STICK_EDGE 40
+
+static unsigned menu_now(const BUTTONS *keys)
+{
+	unsigned now = 0;
+	int x, y;
+
+	if (keys->B_BUTTON) now |= 1u;
+	if (keys->A_BUTTON) now |= 2u;
+	if (keys->L_DPAD) now |= 4u;
+	if (keys->R_DPAD) now |= 8u;
+	if (keys->U_DPAD) now |= 16u;
+	if (keys->D_DPAD) now |= 32u;
+	x = (int)(signed char)keys->X_AXIS;
+	y = (int)(signed char)keys->Y_AXIS;
+	if (x <= -DC_STICK_EDGE) now |= 4u;
+	if (x >= DC_STICK_EDGE) now |= 8u;
+	if (y >= DC_STICK_EDGE) now |= 16u;
+	if (y <= -DC_STICK_EDGE) now |= 32u;
+	return now;
+}
+
 static int set_cursor, set_prev, ctl_cursor, ctl_scroll, ctl_prev;
 
 static int get_int(int i)
@@ -321,19 +344,10 @@ int dc_settings_step(const BUTTONS *keys)
 {
 	unsigned now = 0, pressed;
 	int vis = dc_settings_visible_count();
-	int x;
 
 	if (!keys)
 		return 1;
-	if (keys->B_BUTTON) now |= 1u;
-	if (keys->A_BUTTON) now |= 2u;
-	if (keys->L_DPAD) now |= 4u;
-	if (keys->R_DPAD) now |= 8u;
-	if (keys->U_DPAD) now |= 16u;
-	if (keys->D_DPAD) now |= 32u;
-	x = (int)(signed char)keys->X_AXIS;
-	if (x <= -40) now |= 4u;
-	if (x >= 40) now |= 8u;
+	now = menu_now(keys);
 	pressed = now & ~(unsigned)set_prev;
 	set_prev = (int)now;
 	if (pressed & 1u)
@@ -400,7 +414,7 @@ static const struct dc_ctrl_row controls[] = {
 
 int dc_controls_row_count(void)
 {
-	return 4 + (int)(sizeof(controls) / sizeof(controls[0]));
+	return DC_PAK_PORTS + (int)(sizeof(controls) / sizeof(controls[0]));
 }
 
 void dc_controls_enter(void)
@@ -422,17 +436,7 @@ int dc_controls_step(const BUTTONS *keys)
 	if (rows < 1)
 		rows = 1;
 	vis = n < rows ? n : rows;
-	if (keys->B_BUTTON) now |= 1u;
-	if (keys->A_BUTTON) now |= 2u;
-	if (keys->L_DPAD) now |= 4u;
-	if (keys->R_DPAD) now |= 8u;
-	if (keys->U_DPAD) now |= 16u;
-	if (keys->D_DPAD) now |= 32u;
-	{
-		int x = (int)(signed char)keys->X_AXIS;
-		if (x <= -40) now |= 4u;
-		if (x >= 40) now |= 8u;
-	}
+	now = menu_now(keys);
 	pressed = now & ~(unsigned)ctl_prev;
 	ctl_prev = (int)now;
 	if (pressed & 1u)
@@ -449,7 +453,7 @@ int dc_controls_step(const BUTTONS *keys)
 		ctl_scroll = ctl_cursor;
 	if (ctl_cursor >= ctl_scroll + vis)
 		ctl_scroll = ctl_cursor - vis + 1;
-	if ((pressed & (2u | 4u | 8u)) && ctl_cursor < 4) {
+	if ((pressed & (2u | 4u | 8u)) && ctl_cursor < DC_PAK_PORTS) {
 		int dir = (pressed & 4u) ? -1 : 1;
 		int v = (pakMode[ctl_cursor] == PAKMODE_RUMBLEPAK) ? 1 : 0;
 
@@ -487,15 +491,15 @@ void dc_controls_draw(void)
 
 		if (pick)
 			dc_draw_fill_rect(0, y, dc_draw_width(), ch, COL_BAR);
-		if (row < 4)
+		if (row < DC_PAK_PORTS)
 			snprintf(line, sizeof(line), "%c Port %d pak       %s",
 				 pick ? '>' : ' ', row + 1,
 				 pakMode[row] == PAKMODE_RUMBLEPAK ?
 					 "Rumble Pak" : "Mem Pak");
 		else {
-			const struct dc_ctrl_row *r = &controls[row - 4];
-			snprintf(line, sizeof(line), "  %-22.22s %s",
-				 r->dc, r->n64);
+			const struct dc_ctrl_row *r = &controls[row - DC_PAK_PORTS];
+			snprintf(line, sizeof(line), "%c %-22.22s %s",
+				 pick ? '>' : ' ', r->dc, r->n64);
 		}
 		dc_draw_text(cw, y, pick ? COL_PICK : COL_TEXT, line);
 	}
@@ -709,6 +713,26 @@ int dc_settings_selftest(void)
 		if (pakMode[0] != PAKMODE_RUMBLEPAK) {
 			printf("settings FAIL: A did not cycle Port 1 pak\n");
 			fails++;
+		}
+		{
+			int i;
+			const char *row;
+
+			memset(&k, 0, sizeof(k));
+			dc_controls_step(&k);
+			for (i = 0; i < DC_PAK_PORTS; ++i) {
+				k.D_DPAD = 1;
+				dc_controls_step(&k);
+				memset(&k, 0, sizeof(k));
+				dc_controls_step(&k);
+			}
+			dc_controls_draw();
+			row = dc_draw_host_row(2 + DC_PAK_PORTS);
+			if (!row || !strchr(row, '>') || !strstr(row, "A / B")) {
+				printf("settings FAIL: legend cursor '%s'\n",
+				       row ? row : "(null)");
+				fails++;
+			}
 		}
 		dc_draw_shutdown();
 	}

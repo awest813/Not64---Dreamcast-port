@@ -673,8 +673,10 @@ static int read_state(FILE *f)
 		snprintf(last_err, sizeof(last_err), "bad dump");
 		return -1;
 	}
-	if (rd_mem(f, name, SS_NAME_LEN) || rd_mem(f, &crc1, 4))
+	if (rd_mem(f, name, SS_NAME_LEN) || rd_mem(f, &crc1, 4)) {
+		snprintf(last_err, sizeof(last_err), "truncated");
 		return -1;
+	}
 	cart_name(expect);
 	if (memcmp(name, expect, SS_NAME_LEN) != 0 || crc1 != ROM_HEADER.CRC1) {
 		snprintf(last_err, sizeof(last_err), "wrong ROM");

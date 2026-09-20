@@ -76,6 +76,15 @@ int dc_overlay_step(const BUTTONS *keys)
 	if (keys->D_DPAD) now |= 8u;
 	if (keys->L_DPAD) now |= 16u;
 	if (keys->R_DPAD) now |= 32u;
+	{
+		int x = (int)(signed char)keys->X_AXIS;
+		int y = (int)(signed char)keys->Y_AXIS;
+
+		if (y >= 40) now |= 4u;
+		if (y <= -40) now |= 8u;
+		if (x <= -40) now |= 16u;
+		if (x >= 40) now |= 32u;
+	}
 	pressed = now & ~(unsigned)prev;
 	prev = (int)now;
 
