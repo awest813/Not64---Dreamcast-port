@@ -23,7 +23,7 @@ int init_byte_swap(unsigned int magicWord)
 		rom_byte_swap = BYTE_SWAP_BYTE;
 		break;
 	case 0x40123780: // aka little endian, aka halfswapped
-		rom_byte_swap = BYTE_SWAP_HALF;
+		rom_byte_swap = BYTE_SWAP_NONE;
 		break;
 	case 0x80371240:
 #ifdef __DREAMCAST__
@@ -57,11 +57,12 @@ void byte_swap(char* buffer, unsigned int length)
 				((v & 0xFF000000u) >> 24);
 		}
 	} else if (rom_byte_swap == BYTE_SWAP_BYTE) {
-		for (i = 0; i < (length & ~1u); i += 2) {
-			unsigned char a = (unsigned char)buffer[i];
-			buffer[i] = buffer[i + 1];
-			buffer[i + 1] = (char)a;
-		}
+        /* Pair-swapped dump -> native little-endian 32-bit words. */
+        for (i = 0; i < (length & ~3u); i += 4) {
+            unsigned char a=buffer[i], b=buffer[i+1];
+            buffer[i]=buffer[i+2]; buffer[i+1]=buffer[i+3];
+            buffer[i+2]=a; buffer[i+3]=b;
+        }
 	}
 }
 
@@ -144,8 +145,7 @@ static void dc_fix_header_byte_order(void)
 	unsigned int i;
 	unsigned char t;
 
-	if (rom_byte_swap != BYTE_SWAP_HALF)
-		return;
+	/* Every accepted dump format is normalized to native word order. */
 
 	reverse_word(h + 0x00);                  /* init_PI_BSB_DOM1_* */
 	for (i = 0x20; i < 0x34; i += 4)         /* Name[20] */

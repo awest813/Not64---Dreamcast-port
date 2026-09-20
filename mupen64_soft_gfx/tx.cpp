@@ -29,13 +29,18 @@
 
 #include <stdio.h>
 #include <math.h>
+#include <string.h>
 
 #include "tx.h"
 #include "global.h"
 
 TX::TX(GFX_INFO info) : gfxInfo(info)
 {
-   for(int i=0; i<8; i++) unpackTexel[i] = NULL;
+   memset(descriptor,0,sizeof(descriptor)); memset(tmem,0,sizeof(tmem));
+   memset(paletteData,0,sizeof(paletteData));
+   textureLUT=textureLOD=textureDetail=texturePersp=0;
+   tImg=NULL; format=size=width=0;
+   for(int i=0; i<8; i++) unpackTexel[i] = &TX::sample;
 }
 
 TX::~TX()
@@ -85,78 +90,37 @@ void TX::setTile(int f, int s, int l, int t, int tile, int p,
    descriptor[tile].masks   = ms;
    descriptor[tile].shifts  = ss;
    
-   switch(descriptor[tile].format)
-     {
-      case 0: // RGBA
-	switch(descriptor[tile].size)
-	  {
-	   case 0: // doesn't exist
-	     break;
-	   case 2: // RGBA16
-	     unpackTexel[tile] = &TX::unpack_RGBA16;
-	     break;
-	   default:
-	     printf("TX:unknown setTile RGBA size : %d\n", descriptor[tile].size);
-	  }
-	break;
-      case 2: // CI
-	switch(descriptor[tile].size)
-	  {
-	   case 1: // CI8
-	     if (textureLUT == 2)
-	       unpackTexel[tile] = &TX::unpack_CI8_RGBA16;
-	     else
-	       printf("TX:unknoqn setTile CI8 LUT format:%d\n", textureLUT);
-	     break;
-	   default:
-	     printf("TX:unknown setTile CI size : %d\n", descriptor[tile].size);
-	  }
-	break;
-      case 3: // IA
-	switch(descriptor[tile].size)
-	  {
-	   case 0: // IA4
-	     unpackTexel[tile] = &TX::unpack_IA4;
-	     break;
-	   case 1: // IA8
-	     unpackTexel[tile] = &TX::unpack_IA8;
-	     break;
-	   case 2: // IA16
-	     unpackTexel[tile] = &TX::unpack_IA16;
-	     break;
-	   default:
-	     printf("TX:unknown setTile IA size : %d\n", descriptor[tile].size);
-	  }
-	break;
-      default:
-	printf("TX:unknown setTile format : %d\n", descriptor[tile].format);
-     }
 }
 
 void TX::loadBlock(float uls, float ult, int tile, float lrs, int dxt)
 {
-   if ((int)uls != 0 || (int)ult != 0) printf("tx:unknown loadBlock\n");
-   for (int i=0; i<((int)lrs+1)*8; i++)
-     tmem[descriptor[tile].tmem*8+i] = ((unsigned char*)tImg)[i];
+   unsigned dst=descriptor[tile].tmem*8;
+   unsigned bits=4u<<descriptor[tile].size;
+   unsigned bytes=(((unsigned)lrs+1)*bits+7)/8;
+   unsigned src=(unsigned char *)tImg-gfxInfo.RDRAM;
+   src+=((unsigned)ult*width+(unsigned)uls)*bits/8;
+   if(dst>4096 || bytes>4096-dst || src>SOFT_RDRAM_BYTES || bytes>SOFT_RDRAM_BYTES-src) return;
+   for(unsigned i=0;i<bytes;i++) tmem[dst+i]=gfxInfo.RDRAM[(src+i)^S8];
 }
-
 void TX::loadTile(int tile, float uls, float ult, float lrs, float lrt)
 {
-   if (!size) printf("loadtile tries to load a 4 bit texture\n");
-   for (int i=(int)ult; i<=(int)lrt; i++)
-	{
-	   for (int j=(int)uls*size; j<=(int)lrs*size; j++)
-	     {
-		tmem[descriptor[tile].tmem*8+(i-(int)ult)*descriptor[tile].line*8+(j-(int)uls*size)^S8]
-		  = ((unsigned char*)tImg)[i*width*size+j^S8];
-	     }
-	}
+   unsigned bits=4u<<size;
+   if(lrs<uls || lrt<ult || uls<0 || ult<0) return;
+   unsigned bytes=(((unsigned)(lrs-uls)+1)*bits+7)/8;
+   unsigned base=(unsigned char *)tImg-gfxInfo.RDRAM;
+   for(unsigned y=0;y<=(unsigned)(lrt-ult);y++) {
+       unsigned src=base+(((unsigned)ult+y)*width+(unsigned)uls)*bits/8;
+       unsigned dst=descriptor[tile].tmem*8+y*descriptor[tile].line*8;
+       if(dst>4096 || bytes>4096-dst || src>SOFT_RDRAM_BYTES || bytes>SOFT_RDRAM_BYTES-src) return;
+       for(unsigned x=0;x<bytes;x++) tmem[dst+x]=gfxInfo.RDRAM[(src+x)^S8];
+   }
 }
-
 void TX::loadTLUT(int tile, int count)
 {
-   for (int i=0; i<count*8; i++)
-     tmem[descriptor[tile].tmem*8+i] = ((unsigned char*)tImg)[i];
+   int dst=descriptor[tile].tmem-256;
+   unsigned src=(unsigned char *)tImg-gfxInfo.RDRAM;
+   if(dst<0 || count<0 || dst+count>256 || src>SOFT_RDRAM_BYTES-(unsigned)count*2) return;
+   for(int i=0;i<count;i++) paletteData[dst+i]=(gfxInfo.RDRAM[(src+i*2)^S8]<<8)|gfxInfo.RDRAM[(src+i*2+1)^S8];
 }
 
 void TX::setTileSize(float uls, float ult, float lrs, float lrt, int tile)
@@ -220,71 +184,69 @@ Color32 TX::unpack_IA4(int tile, int s, int t)
 
 bool TX::translateCoordinates(int &s, int &t, int tile)
 {
-   if (textureLOD || textureDetail)
-     printf("TX:getTexel:textureLUT=%d,textureLOD=%d,textureDetail=%d\n",
-	    textureLUT, textureLOD, textureDetail);
-   if (descriptor[tile].shifts || descriptor[tile].shiftt)
-     printf("tx:getTexel:shifts=%d,shiftt=%d\n",
-	    descriptor[tile].shifts, descriptor[tile].shiftt);
-   
-   int w = (int)(descriptor[tile].lrs) - (int)(descriptor[tile].uls);
-   int h = (int)(descriptor[tile].lrt) - (int)(descriptor[tile].ult);
-   
-   bool invertedS = false, invertedT = false;
-   
-   if (descriptor[tile].cms & 2)
-     {
-	if(s < 0) s = 0;
-	if(s >= w) s = w-1;
-     }
-   if (descriptor[tile].cmt & 2)
-     {
-	if(t < 0) t = 0;
-	if(t >= h) t = h-1;
-     }
-   
-   if (descriptor[tile].cms & 1 && s & (1<<descriptor[tile].masks)) invertedS = true;
-   if (descriptor[tile].cmt & 1 && t & (1<<descriptor[tile].maskt)) invertedT = true;
-   if (descriptor[tile].masks) s &= (1<<descriptor[tile].masks)-1;
-   if (descriptor[tile].maskt) t &= (1<<descriptor[tile].maskt)-1;
-   if (invertedS) s = w - s;
-   if (invertedT) t = h - t;
-   
-   if ( s<0 || t<0 || s>w || t>h)
-     {
-	//printf("TX: out of texture read ?\n");
-	return false;
-     }
+   Descriptor &d=descriptor[tile];
+   int w=(int)(d.lrs-d.uls)+1, h=(int)(d.lrt-d.ult)+1;
+   if(w<=0 || h<=0) return false;
+   int *coords[2]={&s,&t};
+   int limits[2]={w,h}, modes[2]={d.cms,d.cmt}, masks[2]={d.masks,d.maskt};
+   for(int a=0;a<2;a++) {
+       int &c=*coords[a];
+       if(modes[a]&2) { if(c<0)c=0; if(c>=limits[a])c=limits[a]-1; }
+       if(masks[a]) { int span=1<<masks[a]; bool mirror=(modes[a]&1) && (c&span); c&=span-1; if(mirror)c=span-1-c; }
+       if(c<0) return false;
+   }
    return true;
+}
+
+Color32 TX::sample(int tile, int s, int t)
+{
+   if(!translateCoordinates(s,t,tile)) return Color32(0,0,0,0);
+   Descriptor &d=descriptor[tile];
+   unsigned addr=d.tmem*8+t*d.line*8+(s*(4u<<d.size))/8;
+   unsigned bytes=d.size==3?4:d.size==2?2:1;
+   if(addr>4096-bytes) return Color32(0,0,0,0);
+   unsigned v=tmem[addr];
+   if(d.size==0) v=(s&1)?v&15:v>>4;
+   if(d.size==2) v=(v<<8)|tmem[addr+1];
+   if(d.format==2) {
+       if(d.size>1) return Color32(0,0,0,0);
+       if(d.size==0) v+=d.palette*16;
+       v=paletteData[v&255];
+       if(textureLUT==3) return Color32(v>>8,v>>8,v>>8,v&255);
+   }
+   if(d.format==0 || d.format==2) {
+       if(d.format==0 && d.size==3) return Color32(tmem[addr],tmem[addr+1],tmem[addr+2],tmem[addr+3]);
+       unsigned r=(v>>11)&31,g=(v>>6)&31,b=(v>>1)&31;
+       return Color32((r<<3)|(r>>2),(g<<3)|(g>>2),(b<<3)|(b>>2),(v&1)?255:0);
+   }
+   if(d.format==3) {
+       unsigned i=d.size==0?(v>>1)*255/7:d.size==1?(v>>4)*17:v>>8;
+       unsigned a=d.size==0?(v&1)*255:d.size==1?(v&15)*17:v&255;
+       return Color32(i,i,i,a);
+   }
+   if(d.format==4) { unsigned i=d.size==0?v*17:v; return Color32(i,i,i,i); }
+   return Color32(0,0,0,0);
 }
 
 Color32 TX::getTexel(float _s, float _t, int tile, TF* tf)
 {
-   if (tf && tf->getTextureConvert() != 6)
-     printf("TX:textureConvert=%x\n", tf->getTextureConvert());
+   tile &= 7;
+   /* RGB texels do not require the YUV conversion coefficients. */
+   int ss=descriptor[tile].shifts, st=descriptor[tile].shiftt;
+   _s=ss<=10?_s/(1<<ss):_s*(1<<(16-ss));
+   _t=st<=10?_t/(1<<st):_t*(1<<(16-st));
    float s = _s - descriptor[tile].uls;
    float t = _t - descriptor[tile].ult;
    
    if(unpackTexel[tile] == NULL) return Color32(0,0,0,0);
 
-   if ((_s - floorf(_s)) == 0.0f && (_t - floorf(_t)) == 0.0f)
-     {
-	return (this->*unpackTexel[tile])(tile, (int)s, (int)t);
-     }
-   else
-     {
-	Color32 nearestTexels[4];
-	float nearestTexelsDistances[4];
-	
-	nearestTexels[0] = (this->*unpackTexel[tile])(tile, (int)s, (int)t);
-	nearestTexelsDistances[0] = (s - (int)s)*(s - (int)s) + (t - (int)t)*(t - (int)t);
-	nearestTexels[1] = (this->*unpackTexel[tile])(tile, (int)(s+1), (int)t);
-	nearestTexelsDistances[1] = ((int)(s+1) - s)*((int)(s+1) - s) + (t - (int)t)*(t - (int)t);
-	nearestTexels[2] = (this->*unpackTexel[tile])(tile, (int)(s+1), (int)(t+1));
-	nearestTexelsDistances[2] = ((int)(s+1) - s)*((int)(s+1) - s) + ((int)(t+1) - t)*((int)(t+1) - t);
-	nearestTexels[3] = (this->*unpackTexel[tile])(tile, (int)s, (int)(t+1));
-	nearestTexelsDistances[3] = (s - (int)s)*(s - (int)s) + ((int)(t+1) - t)*((int)(t+1) - t);
-	return tf->filter(nearestTexels, nearestTexelsDistances);
-     }
-   return 0;
+   if (!tf) return sample(tile,(int)floorf(s),(int)floorf(t));
+   float fs=floorf(s), ft=floorf(t);
+   if(s==fs && t==ft) return sample(tile,(int)fs,(int)ft);
+   Color32 texels[4]={sample(tile,(int)fs,(int)ft), sample(tile,(int)fs+1,(int)ft),
+                      sample(tile,(int)fs+1,(int)ft+1), sample(tile,(int)fs,(int)ft+1)};
+   float dx=s-fs,dy=t-ft;
+   float distance[4]={dx*dx+dy*dy,(1-dx)*(1-dx)+dy*dy,
+                      (1-dx)*(1-dx)+(1-dy)*(1-dy),dx*dx+(1-dy)*(1-dy)};
+   return tf->filter(texels,distance);
 }

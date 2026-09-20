@@ -29,11 +29,12 @@
 
 #include <stdio.h>
 #include <math.h>
+#include <string.h>
 
 #include "global.h"
 #include "rsp.h"
 
-RSP::RSP(GFX_INFO info) : gfxInfo(info), error(false), end(false)
+RSP::RSP(GFX_INFO info, RDP *shared) : gfxInfo(info), ownsRdp(!shared), error(false), end(false)
 {
    for (int i=0; i<0x100; i++) commands[i]=&RSP::NI;
    commands[0x00]=&RSP::SPNOOP;
@@ -58,6 +59,8 @@ RSP::RSP(GFX_INFO info) : gfxInfo(info), error(false), end(false)
    commands[0xe7]=&RSP::RDPPIPESYNC;
    commands[0xe8]=&RSP::RDPTILESYNC;
    commands[0xe9]=&RSP::RDPFULLSYNC;
+   commands[0xea]=commands[0xeb]=commands[0xec]=&RSP::COLORCONVERT;
+   commands[0xee]=&RSP::PRIMDEPTH;
    commands[0xed]=&RSP::SETSCISSOR;
    commands[0xf0]=&RSP::LOADTLUT;
    commands[0xf2]=&RSP::SETTILESIZE;
@@ -86,14 +89,51 @@ RSP::RSP(GFX_INFO info) : gfxInfo(info), error(false), end(false)
    zbuffer = false;
    geometryMode = 0;
    
-   rdp = new RDP(info);
+   memset(segments, 0, sizeof(segments));
+   memset(&viewport, 0, sizeof(viewport));
+   memset(&textureScales, 0, sizeof(textureScales));
+   numLight = 0;
+   for (int j=0;j<4;j++) for(int i=0;i<4;i++) {
+       modelView(j,i) = projection(j,i) = MP(j,i) = i == j ? 1.0f : 0.0f;
+   }
+   f3dex2 = false;
+#ifdef __DREAMCAST__
+   OSTask_t *task = (OSTask_t *)(info.DMEM+0xfc0);
+   char ucode[2049] = {0};
+   unsigned base = task->ucode_data & 0x1fffffff;
+   if (base <= SOFT_RDRAM_BYTES-2048) {
+       for(unsigned i=0;i<2048;i++) ucode[i] = info.RDRAM[(base+i)^3];
+       for(unsigned i=0;i<2040;i++) if(!strncmp(ucode+i,"RSP Gfx",7)) {
+           f3dex2 = strstr(ucode+i,"fifo 2.") != NULL;
+           break;
+       }
+   }
+   if (f3dex2) {
+       for(int i=0;i<0xe0;i++) commands[i]=&RSP::NI;
+       commands[0x00]=&RSP::SPNOOP;
+       commands[0x01]=&RSP::VTX;
+       commands[0x05]=&RSP::TRI1;
+       commands[0x06]=commands[0x07]=&RSP::TRI2;
+       commands[0xd7]=&RSP::TEXTURE;
+       commands[0xd8]=&RSP::POPMTX;
+       commands[0xd9]=&RSP::GEOMETRY2;
+       commands[0xda]=&RSP::MTX;
+       commands[0xdb]=&RSP::MOVEWORD;
+       commands[0xdc]=&RSP::MOVEMEM;
+       commands[0xe0]=commands[0xe1]=&RSP::SPNOOP;
+       commands[0xe2]=&RSP::SETOTHERMODE_L;
+       commands[0xe3]=&RSP::SETOTHERMODE_H;
+       commands[0xef]=&RSP::OTHERMODE;
+   }
+#endif
+   rdp = shared ? shared : new RDP(info);
    
    executeDList();
 }
 
 RSP::~RSP()
 {
-   delete rdp;
+   if (ownsRdp) delete rdp;
 }
 
 unsigned long RSP::seg2phys(unsigned long seg)
@@ -104,15 +144,30 @@ unsigned long RSP::seg2phys(unsigned long seg)
 void RSP::executeDList()
 {
    OSTask_t *task = (OSTask_t*)(gfxInfo.DMEM+0xFC0);
-   unsigned long *start = (unsigned long*)(gfxInfo.RDRAM + task->data_ptr);
-   //unsigned long length = task->data_size;
-   currentCommand = start;
-   
-   while(!end /*&& i < length*/ /*&& !error*/)
-     {
-	(this->*commands[*currentCommand>>24])();
-	currentCommand+=2;
-     }
+   unsigned long pc = task->data_ptr & 0x1fffffff;
+   unsigned long stack[32];
+   unsigned depth = 0, count = 0;
+   while (!end && !error && ++count < 100000) {
+       if ((pc & 7) || pc > SOFT_RDRAM_BYTES-8) { error = true; break; }
+       currentCommand = (unsigned long *)(gfxInfo.RDRAM + pc);
+       unsigned op = currentCommand[0] >> 24;
+       if (op == (f3dex2 ? 0xdf : 0xb8)) {
+           if (!depth) { end = true; break; }
+           pc = stack[--depth]; continue;
+       }
+       if (op == (f3dex2 ? 0xde : 0x06)) {
+           if (((currentCommand[0]>>16)&255) == 0) {
+               if (depth == 32) { error = true; break; }
+               stack[depth++] = pc+8;
+           }
+           pc = seg2phys(currentCommand[1]); continue;
+       }
+       if (op == 0xe4 && pc > SOFT_RDRAM_BYTES-24) { error=true; break; }
+       COMMANDS handler=commands[op];
+       (this->*handler)();
+       pc = (unsigned char *)(currentCommand+2)-gfxInfo.RDRAM;
+   }
+   if (!end || error) fprintf(stderr,"Software RSP stopped: pc=%08lx commands=%u error=%d\n",pc,count,error);
 }
 
 void RSP::DL()
@@ -155,6 +210,11 @@ void RSP::MTX()
 {
    unsigned long addr = seg2phys(*(currentCommand+1)) & 0x7FFFFF;
    int op = (*currentCommand >> 16) & 0xFF;
+   if (f3dex2) {
+       unsigned flags = (*currentCommand & 255) ^ 1;
+       op = ((flags & 4) ? 1 : 0) | (flags & 2) | ((flags & 1) ? 4 : 0);
+   }
+   if (addr > SOFT_RDRAM_BYTES-64) { error=true; return; }
    
    unsigned short* p = (unsigned short*)(gfxInfo.RDRAM + addr);
    Matrix<float,4> matrix;
@@ -209,10 +269,17 @@ void RSP::MTX()
 void RSP::MOVEMEM()
 {
    int dest = (*currentCommand>>16)&0xFF;
+   if (f3dex2) {
+       unsigned index = *currentCommand & 255, offset = ((*currentCommand>>8)&255)*8;
+       if (index == 8) dest=0x80;
+       else if (index == 10 && offset >= 48) dest=0x86+2*((offset-48)/24);
+       else if (index == 10) dest=offset ? 0x82 : 0x84;
+   }
    int length;
    length = *currentCommand & 0xFFFF;
    unsigned long addr = seg2phys(*(currentCommand+1)) & 0x7FFFFF;
    
+   if (addr > SOFT_RDRAM_BYTES-16) { error=true; return; }
    switch(dest)
      {
       case 0x80:
@@ -228,31 +295,36 @@ void RSP::MOVEMEM()
       case 0x82:
 	lookAtY.col = *((int*)(gfxInfo.RDRAM + addr) + 0);
 	lookAtY.colc= *((int*)(gfxInfo.RDRAM + addr) + 1);
-	lookAtY.dir[0] = *((char*)gfxInfo.RDRAM + addr + (8^S8)) / 128.0f;
-	lookAtY.dir[1] = *((char*)gfxInfo.RDRAM + addr + (9^S8)) / 128.0f;
-	lookAtY.dir[2] = *((char*)gfxInfo.RDRAM + addr + (10^S8)) / 128.0f;
-	lookAtY.dir[3] = *((char*)gfxInfo.RDRAM + addr + (11^S8)) / 128.0f;
+	lookAtY.dir[0] = *((signed char*)gfxInfo.RDRAM + addr + (8^S8)) / 128.0f;
+	lookAtY.dir[1] = *((signed char*)gfxInfo.RDRAM + addr + (9^S8)) / 128.0f;
+	lookAtY.dir[2] = *((signed char*)gfxInfo.RDRAM + addr + (10^S8)) / 128.0f;
+	lookAtY.dir[3] = *((signed char*)gfxInfo.RDRAM + addr + (11^S8)) / 128.0f;
 	break;
       case 0x84:
 	lookAtX.col = *((int*)(gfxInfo.RDRAM + addr) + 0);
 	lookAtX.colc= *((int*)(gfxInfo.RDRAM + addr) + 1);
-	lookAtX.dir[0] = *((char*)gfxInfo.RDRAM + addr + (8^S8)) / 128.0f;
-	lookAtX.dir[1] = *((char*)gfxInfo.RDRAM + addr + (9^S8)) / 128.0f;
-	lookAtX.dir[2] = *((char*)gfxInfo.RDRAM + addr + (10^S8)) / 128.0f;
-	lookAtX.dir[3] = *((char*)gfxInfo.RDRAM + addr + (11^S8)) / 128.0f;
+	lookAtX.dir[0] = *((signed char*)gfxInfo.RDRAM + addr + (8^S8)) / 128.0f;
+	lookAtX.dir[1] = *((signed char*)gfxInfo.RDRAM + addr + (9^S8)) / 128.0f;
+	lookAtX.dir[2] = *((signed char*)gfxInfo.RDRAM + addr + (10^S8)) / 128.0f;
+	lookAtX.dir[3] = *((signed char*)gfxInfo.RDRAM + addr + (11^S8)) / 128.0f;
 	break;
       case 0x86:
       case 0x88:
       case 0x8a:
+      case 0x8c:
+      case 0x8e:
+      case 0x90:
+      case 0x92:
+      case 0x94:
 	  {
 	     int n = (dest-0x86)/2;
 	     if (n< numLight)
 	       {
 		  spotLight[n].col = *((int*)(gfxInfo.RDRAM + addr) + 0);
 		  spotLight[n].colc= *((int*)(gfxInfo.RDRAM + addr) + 1);
-		  spotLight[n].dir[0] = *((char*)gfxInfo.RDRAM + addr + (8^S8)) / 128.0f;
-		  spotLight[n].dir[1] = *((char*)gfxInfo.RDRAM + addr + (9^S8)) / 128.0f;
-		  spotLight[n].dir[2] = *((char*)gfxInfo.RDRAM + addr + (10^S8)) / 128.0f;
+		  spotLight[n].dir[0] = *((signed char*)gfxInfo.RDRAM + addr + (8^S8)) / 128.0f;
+		  spotLight[n].dir[1] = *((signed char*)gfxInfo.RDRAM + addr + (9^S8)) / 128.0f;
+		  spotLight[n].dir[2] = *((signed char*)gfxInfo.RDRAM + addr + (10^S8)) / 128.0f;
 		  spotLight[n].dir[3] = 0.0f;
 		  spotLight[n].dir.normalize();
 	       }
@@ -275,6 +347,8 @@ void RSP::VTX()
    char* p = (char*)(gfxInfo.RDRAM + addr);
    int v0 = (*currentCommand >> 16) & 0xF;
    int n = ((*currentCommand >> 20) & 0xF)+1;
+   if (f3dex2) { n=(*currentCommand>>12)&255; v0=((*currentCommand>>1)&127)-n; }
+   if (v0<0 || n<0 || v0+n>32 || addr>SOFT_RDRAM_BYTES-(unsigned)n*16) { error=true; return; }
    //int length = *currentCommand & 0xFFFF;
    
    for (int i=0; i<n; i++)
@@ -292,9 +366,9 @@ void RSP::VTX()
 	
 	if (lighting)
 	  {
-	     vtx[v0+i].n[0] = *((char*)(p + i*16 + (12^S8))) / 128.0f;
-	     vtx[v0+i].n[1] = *((char*)(p + i*16 + (13^S8))) / 128.0f;
-	     vtx[v0+i].n[2] = *((char*)(p + i*16 + (14^S8))) / 128.0f;
+	     vtx[v0+i].n[0] = *((signed char*)(p + i*16 + (12^S8))) / 128.0f;
+	     vtx[v0+i].n[1] = *((signed char*)(p + i*16 + (13^S8))) / 128.0f;
+	     vtx[v0+i].n[2] = *((signed char*)(p + i*16 + (14^S8))) / 128.0f;
 	     vtx[v0+i].n[3] = 0.0f;
 	     vtx[v0+i].n = vtx[v0+i].n * modelView;
 	     vtx[v0+i].n.normalize();
@@ -454,8 +528,10 @@ void RSP::SETOTHERMODE_L()
    int mode = (*currentCommand >> 8) & 0xFF;
    int length = *currentCommand & 0xFF;
    unsigned long data = *(currentCommand+1);
+   if(f3dex2) { ++length; mode=32-mode-length; }
+   if(mode<0 || length>32) { error=true; return; }
    
-   rdp->setOtherMode_l(mode, (data>>mode)&((1<<length)-1));
+   rdp->setOtherMode_l(mode, (data>>mode)&(length==32 ? 0xffffffffu : ((1u<<length)-1)));
 }
 
 void RSP::SETOTHERMODE_H()
@@ -463,8 +539,10 @@ void RSP::SETOTHERMODE_H()
    int mode = (*currentCommand >> 8) & 0xFF;
    int length = *currentCommand & 0xFF;
    unsigned long data = *(currentCommand+1);
+   if(f3dex2) { ++length; mode=32-mode-length; }
+   if(mode<0 || length>32) { error=true; return; }
    
-   rdp->setOtherMode_h(mode, (data>>mode)&((1<<length)-1));
+   rdp->setOtherMode_h(mode, (data>>mode)&(length==32 ? 0xffffffffu : ((1u<<length)-1)));
 }
 
 void RSP::TEXTURE()
@@ -474,18 +552,19 @@ void RSP::TEXTURE()
    textureScales.sc = (int)((*(currentCommand+1)>>16)&0xFFFF) / 65536.0;
    textureScales.tc = (int)(*(currentCommand+1)&0xFFFF) / 65536.0;
    textureScales.level = (*currentCommand >> 11) & 3;
-   textureScales.enabled = *currentCommand & 1 ? true : false;
+   textureScales.enabled = (*currentCommand & (f3dex2 ? 0xfe : 1)) != 0;
 }
 
 void RSP::MOVEWORD()
 {
-   int index = *currentCommand & 0xFF;
-   int offset = (*currentCommand >> 8) & 0xFFFF;
+   int index = f3dex2 ? (*currentCommand >> 16)&255 : *currentCommand & 255;
+   int offset = f3dex2 ? *currentCommand & 65535 : (*currentCommand >> 8)&65535;
    
    switch(index)
      {
       case 0x2: // NUMLIGHT
-	numLight = ((*(currentCommand+1)-0x80000000)/32)-1;
+	numLight = f3dex2 ? currentCommand[1]/24 : ((currentCommand[1]-0x80000000)/32)-1;
+        if(numLight<0 || numLight>7) { numLight=0; error=true; }
 	break;
       case 0x4: // CLIPRATIO
 	if (offset == 0x4) clipRatio_RNX = *(currentCommand+1);
@@ -500,6 +579,7 @@ void RSP::MOVEWORD()
 	fm = *(currentCommand+1) >> 16;
 	fo = (short)(*(currentCommand+1) & 0xFFFF);
 	break;
+      case 0x0e: break;
       default:
 	printf("unknown MOVEWORD:%x\n", index);
 	error=true;
@@ -508,6 +588,13 @@ void RSP::MOVEWORD()
 
 void RSP::POPMTX()
 {
+   if (f3dex2) {
+       unsigned count=currentCommand[1]>>6;
+       if(count>32) { error=true; return; }
+       while(count--) modelView.pop();
+       MP=modelView*projection;
+       return;
+   }
    int type = *(currentCommand+1) & 0xFF;
    
    if (type != 0) printf("POPMTX on projection matrix\n");
@@ -520,6 +607,8 @@ void RSP::TRI1()
    int v1 = ((*(currentCommand+1) >> 8) & 0xFF) / 10;
    int v2 = (*(currentCommand+1) & 0xFF) / 10;
    
+   if(f3dex2) { v0=(*currentCommand>>17)&127; v1=(*currentCommand>>9)&127; v2=(*currentCommand>>1)&127; }
+   if(v0>=32 || v1>=32 || v2>=32) { error=true; return; }
    Vertex cache[140];
    int cache_size = 0;
    
@@ -944,41 +1033,15 @@ void RSP::TRI1()
 	     cache[i].c.setAlpha(alpha2);
 	  }
 	
-	switch(geometryMode)
-	  {
-	   case 0x5:   // shade | z_buffer
-	   case 0x10005: // fog | shade | z_buffer
-	     if (textureScales.enabled)
-	       rdp->tri_shade_txtr_zbuff(vx0, vx1, vx2, cache[a].c, cache[a].c, cache[a].c,
-					 cache[a].s, cache[a].t, cache[b].s, cache[b].t, cache[i].s, cache[i].t, textureScales.tile,
-					 cache[a].v[3], cache[b].v[3], cache[i].v[3], z0, z1, z2);
-	     else
-	       rdp->tri_shade_zbuff(vx0, vx1, vx2, cache[a].c, cache[a].c, cache[a].c, z0, z1, z2);
-	     break;
-	   case 0x204: // shading_smooth | shade
-	     if (textureScales.enabled)
-	       rdp->tri_shade_txtr(vx0, vx1, vx2, cache[a].c, cache[b].c, cache[i].c,
-				   cache[a].s, cache[a].t, cache[b].s, cache[b].t, cache[i].s, cache[i].t, textureScales.tile,
-				   cache[a].v[3], cache[b].v[3], cache[i].v[3]);
-	     else
-	       rdp->tri_shade(vx0, vx1, vx2, cache[a].c, cache[b].c, cache[i].c);
-	     break;
-	   case 0x205: // shading_smooth | shade | z_buffer
-	   case 0x10205: // fog | shading_smooth | shade | z_buffer
-	     if (textureScales.enabled)
-	       rdp->tri_shade_txtr_zbuff(vx0, vx1, vx2, cache[a].c, cache[b].c, cache[i].c, 
-					 cache[a].s, cache[a].t, cache[b].s, cache[b].t, cache[i].s, cache[i].t, textureScales.tile,
-					 cache[a].v[3], cache[b].v[3], cache[i].v[3], z0, z1, z2);
-	     else
-	       rdp->tri_shade_zbuff(vx0, vx1, vx2, cache[a].c, cache[b].c, cache[i].c, z0, z1, z2);
-	     break;
-	   default:
-	     printf("RSP:tri1 unknown geometry mode:%x\n", geometryMode);
-	     //getchar();
-	     rdp->debug_tri(vx0, vx1, vx2);
-	  }
-	//rdp->debug_tri(vx0, vx1, vx2);
-	
+        Color32 &c0=cache[a].c;
+        Color32 &c1=shading_smooth?cache[b].c:cache[a].c;
+        Color32 &c2=shading_smooth?cache[i].c:cache[a].c;
+        if(textureScales.enabled)
+            rdp->tri_shade_txtr_zbuff(vx0,vx1,vx2,c0,c1,c2,
+                cache[a].s,cache[a].t,cache[b].s,cache[b].t,cache[i].s,cache[i].t,
+                textureScales.tile,cache[a].v[3],cache[b].v[3],cache[i].v[3],z0,z1,z2);
+        else rdp->tri_shade_zbuff(vx0,vx1,vx2,c0,c1,c2,z0,z1,z2);
+
 	b = i;
      }
 }
@@ -1013,6 +1076,8 @@ void RSP::RDPTILESYNC()
 
 void RSP::RDPFULLSYNC()
 {
+   *gfxInfo.MI_INTR_REG |= 0x20;
+   gfxInfo.CheckInterrupts();
 }
 
 void RSP::SETSCISSOR()
@@ -1050,7 +1115,7 @@ void RSP::LOADBLOCK()
    uls = ((*currentCommand >> 12) & 0xFFF) / 4.0f;
    ult = (*currentCommand & 0xFFF) / 4.0f;
    int tile = (*(currentCommand+1) >> 24) & 7;
-   lrs = ((*(currentCommand+1) >> 12) & 0xFFF) / 4.0f;
+   lrs = ((*(currentCommand+1) >> 12) & 0xFFF);
    int dxt = *(currentCommand+1) & 0xFFF;
    rdp->loadBlock(uls, ult, tile, lrs, dxt);
 }
@@ -1148,4 +1213,34 @@ void RSP::SETCIMG()
    int width = (*currentCommand & 0xFFF) + 1;
    void *cimg = gfxInfo.RDRAM + (seg2phys(*(currentCommand+1)) & 0x7FFFFF);
    rdp->setCImg(format, size, width, cimg);
+}
+
+void RSP::GEOMETRY2() {
+    geometryMode = (geometryMode & (*currentCommand & 0xffffff)) | currentCommand[1];
+    zbuffer=geometryMode&1; shade=geometryMode&4;
+    cull_front=geometryMode&0x200; cull_back=geometryMode&0x400;
+    fog=geometryMode&0x10000; lighting=geometryMode&0x20000;
+    texture_gen=geometryMode&0x40000; texture_gen_linear=geometryMode&0x80000;
+    shading_smooth=geometryMode&0x200000;
+}
+void RSP::TRI2() {
+    unsigned long *saved=currentCommand;
+    unsigned long pair[2]={saved[0],saved[1]};
+    currentCommand=pair; TRI1(); pair[0]=pair[1]; TRI1(); currentCommand=saved;
+}
+void RSP::OTHERMODE() {
+    unsigned h=*currentCommand, l=currentCommand[1];
+    const int shifts[]={4,6,8,9,12,14,16,17,19,20,23};
+    const int widths[]={2,2,1,3,2,2,1,2,1,2,1};
+    for(unsigned i=0;i<sizeof(shifts)/sizeof(*shifts);i++) rdp->setOtherMode_h(shifts[i],(h>>shifts[i])&((1u<<widths[i])-1));
+    rdp->setOtherMode_l(0,l&3); rdp->setOtherMode_l(2,(l>>2)&1); rdp->setOtherMode_l(3,l>>3);
+}
+
+void RSP::PRIMDEPTH() { rdp->setPrimDepth((currentCommand[1]>>16)&0x7fff); }
+
+/* Preserve key/YUV coefficient registers. The legacy rasterizer currently only
+ * consumes RGB/IA/I/CI textures; YUV/keyed draw support remains separate. */
+void RSP::COLORCONVERT() {
+    unsigned i=((*currentCommand>>24)-0xea)*2;
+    colorConvert[i]=currentCommand[0]; colorConvert[i+1]=currentCommand[1];
 }

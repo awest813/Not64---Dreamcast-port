@@ -1496,7 +1496,7 @@ inline void jump_to_func()
 void set_fpr_pointers(int newStatus)
 {
     int i;
-#if defined(_BIG_ENDIAN)
+#if defined(_BIG_ENDIAN) && !defined(__DREAMCAST__)
     const int isBigEndian = 1;
 #else
     const int isBigEndian = 0;

@@ -89,7 +89,7 @@ unsigned char *const PIF_RAMb = (unsigned char *)(PIF_RAM);
 // address : address of the read/write operation being done
 unsigned long address = 0;
 // *address_low = the lower 16 bit of the address :
-#ifdef _BIG_ENDIAN
+#if defined(_BIG_ENDIAN) && !defined(__DREAMCAST__)
 static unsigned short *const address_low = (unsigned short *)(&address)+1; 
 #else
 static unsigned short *const address_low = (unsigned short *)(&address);
@@ -1897,7 +1897,8 @@ void read_vi()
       case 0x10:
 	update_count();
 	vi_register.vi_current = (vi_register.vi_delay-(next_vi-Count))/1500;
-	vi_register.vi_current = (vi_register.vi_current%vi_register.vi_v_sync);
+	if (vi_register.vi_v_sync)
+	  vi_register.vi_current %= vi_register.vi_v_sync;
 	vi_register.vi_current = (vi_register.vi_current&(~1))|vi_field;
 	break;
      }
@@ -1914,7 +1915,8 @@ void read_vib()
       case 0x13:
 	update_count();
 	vi_register.vi_current = (vi_register.vi_delay-(next_vi-Count))/1500;
-	vi_register.vi_current = (vi_register.vi_current%vi_register.vi_v_sync);
+	if (vi_register.vi_v_sync)
+	  vi_register.vi_current %= vi_register.vi_v_sync;
 	vi_register.vi_current = (vi_register.vi_current&(~1))|vi_field;
 	break;
      }
@@ -1930,7 +1932,8 @@ void read_vih()
       case 0x12:
 	update_count();
 	vi_register.vi_current = (vi_register.vi_delay-(next_vi-Count))/1500;
-	vi_register.vi_current = (vi_register.vi_current%vi_register.vi_v_sync);
+	if (vi_register.vi_v_sync)
+	  vi_register.vi_current %= vi_register.vi_v_sync;
 	vi_register.vi_current = (vi_register.vi_current&(~1))|vi_field;
 	break;
      }
@@ -1945,7 +1948,8 @@ void read_vid()
       case 0x10:
 	update_count();
 	vi_register.vi_current = (vi_register.vi_delay-(next_vi-Count))/1500;
-	vi_register.vi_current = (vi_register.vi_current%vi_register.vi_v_sync);
+	if (vi_register.vi_v_sync)
+	  vi_register.vi_current %= vi_register.vi_v_sync;
 	vi_register.vi_current = (vi_register.vi_current&(~1))|vi_field;
 	break;
      }

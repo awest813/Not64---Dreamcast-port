@@ -29,6 +29,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 #include "bl.h"
 
@@ -36,6 +37,9 @@ unsigned short* BL::zLUT = NULL;
 
 BL::BL(GFX_INFO info) : gfxInfo(info), zero(0), one(0xFFFFFFFF)
 {
+   alphaCompare=colorDither=alphaDither=depthSource=0;
+   cImg=zImg=NULL; width=format=size=0;
+   oldBlenderMode=-1; setBlender(0);
    if(zLUT == NULL)
      {
 	zLUT = new unsigned short[0x40000];
@@ -96,47 +100,17 @@ void BL::setZImg(void *z)
 
 Color32* BL::getBlenderSource(int src, int pos, int cycle)
 {
-   switch(src)
-     {
-      case 0:
-	if (pos == 1 || pos == 3)
-	  {
-	     if (cycle == 1)
-	       return &pixelColor;
-	     else
-	       return &blendedPixelColor;
-	  }
-	else if (pos == 2)
-	  return &pixelColor;
-	else 
-	  return &invertedAlpha;
-	break;
-      case 1:
-	if (pos == 1 || pos == 3)
-	  return &memoryColor;
-	else if (pos == 2)
-	  return &fogColor;
-	else if (pos == 4)
-	  return &memoryColor;
-	break;
-      case 2:
-	if (pos == 4)
-	  return &one;
-	else if (pos == 2)
-	  return &shadeColor;
-	printf("bl: unknown blender source:%d,%d,%d\n", src, pos, cycle);
-	break;
-      case 3:
-	if (pos == 2 || pos == 4)
-	  return &zero;
-	else if (pos == 1)
-	  return &fogColor;
-	printf("bl: unknown blender source:%d,%d,%d\n", src, pos, cycle);
-	break;
-      default:
-	printf("bl: unknown blender source:%d,%d,%d\n", src, pos, cycle);
-     }
-   return NULL;
+   if(pos==1 || pos==3) {
+       Color32 *colors[]={cycle==1?&pixelColor:&blendedPixelColor,
+                          &memoryColor,&blendColor,&fogColor};
+       return colors[src&3];
+   }
+   if(pos==2) {
+       Color32 *alpha[]={&pixelColor,&fogColor,&shadeColor,&zero};
+       return alpha[src&3];
+   }
+   Color32 *alpha[]={&invertedAlpha,&memoryColor,&one,&zero};
+   return alpha[src&3];
 }
 
 void BL::setBlender(int value)
@@ -199,6 +173,7 @@ void BL::setBlendColor(int color)
 
 void BL::fillModeDraw(int x, int y)
 {
+   if(!validPixel(cImg,x,y,4)) return;
    int *p = (int*)cImg;
    p[(y*width+x)/2] = fillColor;
    //vi->debug_plot(x,y,(fillColor>>16)&0xffff);
@@ -208,186 +183,59 @@ void BL::fillModeDraw(int x, int y)
 
 void BL::cycle1ModeDraw(int x, int y, Color32 c, float z, Color32 shade)
 {
-   short *p = (short*)cImg;
-   
-   // extract colors
-   pixelColor = c;
-   memoryColor = ((((p[y*width+x^S16] >> 11)&0x1F)<<3)<<24 |
-		  (((p[y*width+x^S16] >>  6)&0x1F)<<3)<<16 |
-		  (((p[y*width+x^S16] >>  1)&0x1F)<<3)<<8);
-   shadeColor = shade;
-   
-   // encode z value
-   int fz = (int)(z*8.0f+0.5f);
-   unsigned short encodedZ = zLUT[fz];
-   unsigned short *pz = (unsigned short*)zImg;
-   
-   if (1/*!force_bl*/)
-     {
-	if(alpha_cvg_sel)
-	  {
-	     if (cvg_x_alpha)
-	       {
-		  if(alphaCompare == 0)
-		    {
-		       if(!pixelColor.getAlpha()) return;
-		    }
-		  else if(alphaCompare == 1) printf("alpha_cvg_sel + cvg_x_alpha + alphaCompare = 1\n");
-		  else printf("alpha_cvg_sel + cvg_x_alpha + alphaCompare = 2\n");
-	       }
-	     else
-	       {
-		  pixelColor.setAlpha(255.0f);
-		  if(alphaCompare == 0)
-		    {
-		       if(!pixelColor.getAlpha()) return;
-		    }
-		  else if(alphaCompare == 1) printf("alpha_cvg_sel + !cvg_x_alpha + alphaCompare = 1\n");
-		  else printf("alpha_cvg_sel + !cvg_x_alpha + alphaCompare = 2\n");
-	       }
-	  }
-	//else printf("!alpha_cvg_sel\n");
-     }
-   
-   if (z_cmp)
-     {
-	if (depthSource)
-	  printf("BL:depth_source:%d\n", depthSource);
-	
-	if(fz < 0) return;
-	if(fz >= 0x40000) return; // over this value it can't be encoded
-	if(zmode_inter && zmode_xlu)
-	  {
-	     if(encodedZ > pz[y*width+x^S16]+256) return;
-	  }
-	else
-	  if (encodedZ > pz[y*width+x^S16]) return;
-     }
-   
-   if (z_upd && !(zmode_inter && zmode_xlu))
-     pz[y*width+x^S16] = encodedZ;
-   
-   invertedAlpha = Color32(255.0f-pca1->getAlpha(), 255.0f-pca1->getAlpha(),
-			   255.0f-pca1->getAlpha(), 255.0f-pca1->getAlpha());
-   
-   // extracting coefficients
-   float ca = pca1->getAlpha() / 255.0f;
-   float cb = pcb1->getAlpha() / 255.0f;
-   
-   // do the actual blending
-   Color32 blendedColor = (*psa1 * ca + *psb1 * cb);
-   
-   // writing color on screen
-   int colorValue;
-   colorValue = (int)blendedColor;
-   
-   colorValue = 
-     ((((colorValue >> 24)&0xFF)>>3)<<11) |
-     ((((colorValue >> 16)&0xFF)>>3)<< 6) |
-     ((((colorValue >>  8)&0xFF)>>3)<< 1);
-   p[y*width+x^S16] = colorValue;
-   
-   //vi->debug_plot(x,y,colorValue);
-   //vi->flush();
+   cycleModeDraw(x,y,c,z,shade,false);
 }
 
 void BL::cycle2ModeDraw(int x, int y, Color32 c, float z, Color32 shade)
 {
-   short *p = (short*)cImg;
-   
-   // extract colors
-   pixelColor = c;
-   memoryColor = ((((p[y*width+x^S16] >> 11)&0x1F)<<3)<<24 |
-		  (((p[y*width+x^S16] >>  6)&0x1F)<<3)<<16 |
-		  (((p[y*width+x^S16] >>  1)&0x1F)<<3)<<8);
-   shadeColor = shade;
-   
-   // encode z value
-   int fz = (int)(z*8.0f+0.5f);
-   unsigned short encodedZ = zLUT[fz];
-   unsigned short *pz = (unsigned short*)zImg;
-   
-   if (1/*!force_bl*/)
-     {
-	if(alpha_cvg_sel)
-	  {
-	     if (cvg_x_alpha)
-	       {
-		  if(alphaCompare == 0)
-		    {
-		       if(!pixelColor.getAlpha()) return;
-		    }
-		  else if(alphaCompare == 1) printf("alpha_cvg_sel + cvg_x_alpha + alphaCompare = 1\n");
-		  else printf("alpha_cvg_sel + cvg_x_alpha + alphaCompare = 2\n");
-	       }
-	     else
-	       {
-		  pixelColor.setAlpha(255.0f);
-		  if(alphaCompare == 0)
-		    {
-		       if(!pixelColor.getAlpha()) return;
-		    }
-		  else if(alphaCompare == 1) printf("alpha_cvg_sel + !cvg_x_alpha + alphaCompare = 1\n");
-		  else printf("alpha_cvg_sel + !cvg_x_alpha + alphaCompare = 2\n");
-	       }
-	  }
-	//else printf("!alpha_cvg_sel\n");
-     }
-   
-   if (z_cmp)
-     {
-	if (depthSource)
-	  printf("BL:depth_source:%d\n", depthSource);
-	
-	if(fz < 0) return;
-	if(fz >= 0x40000) return; // over this value it can't be encoded
-	if(zmode_inter && zmode_xlu)
-	  {
-	     if(encodedZ > pz[y*width+x^S16]+256) return;
-	  }
-	else
-	  if (encodedZ > pz[y*width+x^S16]) return;
-     }
-   
-   if (z_upd && !(zmode_inter && zmode_xlu))
-     pz[y*width+x^S16] = encodedZ;
-   
-   invertedAlpha = Color32(255.0f-pca1->getAlpha(), 255.0f-pca1->getAlpha(),
-			   255.0f-pca1->getAlpha(), 255.0f-pca1->getAlpha());
-   
-   // extracting coefficients
-   float ca = pca1->getAlpha() / 255.0f;
-   float cb = pcb1->getAlpha() / 255.0f;
-   
-   // do the actual blending
-   blendedPixelColor = (*psa1 * ca + *psb1 * cb);
-   
-   // extracting coefficients for cycle 2
-   ca = pca2->getAlpha() / 255.0f;
-   cb = pcb2->getAlpha() / 255.0f;
-   
-   // do the actual blending for cycle 2
-   Color32 blendedColor = (*psa2 * ca + *psb2 * cb);
-   
-   // writing color on screen
-   int colorValue;
-   colorValue = (int)blendedColor;
-   
-   colorValue = 
-     ((((colorValue >> 24)&0xFF)>>3)<<11) |
-     ((((colorValue >> 16)&0xFF)>>3)<< 6) |
-     ((((colorValue >>  8)&0xFF)>>3)<< 1);
-   p[y*width+x^S16] = colorValue;
-   
-   //vi->debug_plot(x,y,colorValue);
-   //vi->flush();
+   cycleModeDraw(x,y,c,z,shade,true);
+}
+
+void BL::cycleModeDraw(int x, int y, Color32 c, float z, Color32 shade, bool twoCycles)
+{
+   if(size!=2 || format!=0 || !validPixel(cImg,x,y,2)) return;
+   c.clamp(); shade.clamp();
+   /* No subpixel coverage buffer yet: treat covered samples as full coverage.
+    * Alpha-to-coverage must still discard cutout texels before color/Z writes. */
+   if(cvg_x_alpha && c.getAlpha()<32) return;
+   if(alpha_cvg_sel && !cvg_x_alpha) c.setAlpha(255);
+   static const unsigned char dither[16]={0,128,32,160,192,64,224,96,48,176,16,144,240,112,208,80};
+   if((alphaCompare&1) && c.getAlpha()<((alphaCompare&2)?dither[(y&3)*4+(x&3)]:blendColor.getAlpha())) return;
+
+   unsigned short *p=(unsigned short *)cImg, *pz=(unsigned short *)zImg;
+   unsigned pixel=(y*width+x)^S16;
+   if(depthSource) z=primitiveZ;
+   int fz=(int)(z*8.0f+0.5f);
+   if(fz<0) fz=0; if(fz>0x3ffff) fz=0x3ffff;
+   unsigned short encodedZ=zLUT[fz];
+   if((z_cmp || z_upd) && !validPixel(zImg,x,y,2)) return;
+   if(z_cmp && encodedZ>pz[pixel]+((zmode_inter && zmode_xlu)?256:0)) return;
+   if(z_upd && !(zmode_inter && zmode_xlu)) pz[pixel]=encodedZ;
+
+   unsigned v=p[pixel], r=(v>>11)&31, g=(v>>6)&31, b=(v>>1)&31;
+   memoryColor=Color32((r<<3)|(r>>2),(g<<3)|(g>>2),(b<<3)|(b>>2),255);
+   pixelColor=c; shadeColor=shade;
+   float ca=pca1->getAlpha()/255.0f;
+   invertedAlpha=Color32(0,0,0,255.0f-pca1->getAlpha());
+   float cb=pcb1->getAlpha()/255.0f;
+   Color32 result=*psa1;
+   if(twoCycles || force_bl) result=*psa1*ca+*psb1*cb;
+   if(twoCycles) {
+       blendedPixelColor=result;
+       ca=pca2->getAlpha()/255.0f;
+       invertedAlpha=Color32(0,0,0,255.0f-pca2->getAlpha());
+       cb=pcb2->getAlpha()/255.0f;
+       result=force_bl?*psa2*ca+*psb2*cb:*psa2;
+   }
+   unsigned out=(unsigned)(int)result;
+   p[pixel]=((out>>16)&0xf800)|((out>>13)&0x7c0)|((out>>10)&0x3e)|1;
 }
 
 void BL::copyModeDraw(int x, int y, Color32 c)
 {
+   if(!validPixel(cImg,x,y,2)) return;
    short *p = (short*)cImg;
-   if (!alphaCompare || alphaCompare!=1) printf("alphacompare:%d\n", alphaCompare);
-   if (!c.getAlpha()) return;
+   if (alphaCompare && c.getAlpha() < blendColor.getAlpha()) return;
    int colorValue = (int)c;
    colorValue = 
      ((((colorValue >> 24)&0xFF)>>3)<<11) |
@@ -399,6 +247,16 @@ void BL::copyModeDraw(int x, int y, Color32 c)
 
 void BL::debug_plot(int x, int y, int c)
 {
+   if(!validPixel(cImg,x,y,2)) return;
    short *p = (short*)cImg;
    p[y*width+x^S16] = c;
+}
+
+bool BL::validPixel(void *image, int x, int y, unsigned bytes) const
+{
+   if(!image || width<=0 || width>1024 || x<0 || x>=width || y<0 || y>=1024) return false;
+   uintptr_t base=(uintptr_t)image, ram=(uintptr_t)gfxInfo.RDRAM;
+   if(base<ram || base-ram>SOFT_RDRAM_BYTES) return false;
+   unsigned offset=(base-ram)+(y*width+x)*2;
+   return offset<=SOFT_RDRAM_BYTES-bytes;
 }

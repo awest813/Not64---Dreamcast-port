@@ -35,12 +35,16 @@
 class BL
 {
    GFX_INFO gfxInfo;
+   bool validPixel(void *image, int x, int y, unsigned bytes) const;
    
    int alphaCompare;
    int colorDither;
    int alphaDither;
    int depthSource;
+   int primitiveZ = 0;
    
+   void cycleModeDraw(int x, int y, Color32 c, float z, Color32 shade, bool twoCycles);
+
    // render modes
    bool aa_en;
    bool z_cmp;
@@ -98,6 +102,7 @@ class BL
    void setColorDither(int value);
    void setAlphaDither(int value);
    void setDepthSource(int value);
+   void setPrimDepth(int z) { primitiveZ=z; }
    void setCImg(int format, int size, int width, void *cImg);
    void setZImg(void *zImg);
    void setBlender(int value);

@@ -260,7 +260,7 @@ extern AI_register ai_register;
 extern DPC_register dpc_register;
 extern DPS_register dps_register;
 
-#ifndef _BIG_ENDIAN
+#if !defined(_BIG_ENDIAN) || defined(__DREAMCAST__)
 #define sl(mot) \
 ( \
 ((mot & 0x000000FF) << 24) | \

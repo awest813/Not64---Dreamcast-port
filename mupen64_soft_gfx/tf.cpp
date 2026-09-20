@@ -33,6 +33,7 @@
 
 TF::TF()
 {
+   textureFilter=0; textureConvert=6;
 }
 
 TF::~TF()
@@ -70,38 +71,17 @@ Color32 TF::filter(Color32 nearestTexels[4], float nearestTexelsDistance[4])
 	  }
 	return nearestTexels[minIndex];
      }
-   else if (textureFilter == 2)
+   else if (textureFilter == 2 || textureFilter == 3)
      {
-	float total = 0;
-	float max = nearestTexelsDistance[0];
-	int maxIndex = 0;
-	for (int i=0; i<4; i++)
-	  {
-	     total += nearestTexelsDistance[i];
-	     if (nearestTexelsDistance[i] > max)
-	       {
-		  max = nearestTexelsDistance[i];
-		  maxIndex = i;
-	       }
-	  }
-	total -= max;
-	
-	
-	Color32 filtered(0, 0, 0, 0);
-	for (int i=0; i<4; i++)
-	  {
-	     if (i != maxIndex)
-	       {
-		  float coef = (1-(nearestTexelsDistance[i]/total))/2;
-		  filtered += nearestTexels[i]*coef;
-		  filtered.setAlpha(filtered.getAlpha() + coef*nearestTexels[i].getAlpha());
-	       }
-	  }
-	
-	
-	return filtered;
+       float sf=(nearestTexelsDistance[0]-nearestTexelsDistance[1]+1)*0.5f;
+       float tf=(nearestTexelsDistance[0]-nearestTexelsDistance[3]+1)*0.5f;
+       float weights[4]={};
+       if(textureFilter==3) for(int i=0;i<4;i++) weights[i]=0.25f;
+       else if(sf+tf<=1) { weights[0]=1-sf-tf; weights[1]=sf; weights[3]=tf; }
+       else { weights[2]=sf+tf-1; weights[1]=1-tf; weights[3]=1-sf; }
+       Color32 out(0,0,0,0); float alpha=0;
+       for(int i=0;i<4;i++) { out+=nearestTexels[i]*weights[i]; alpha+=nearestTexels[i].getAlpha()*weights[i]; }
+       out.setAlpha(alpha); return out;
      }
-   else
-     printf("TF:textureFilter=%x\n", textureFilter);
-   return 0;
+   return nearestTexels[0];
 }

@@ -1,3 +1,4 @@
+#include <stddef.h>
 /**
  * Mupen64 - matrix.h
  * Copyright (C) 2002 Hacktarux
@@ -107,6 +108,7 @@ template<class T, int s> class Matrix
    
    void pop()
      {
+        if(!stack) return;
 	*this = *stack;
 	Matrix<T,s>* temp = stack->stack;
 	stack->stack = NULL;

@@ -60,7 +60,7 @@
 #define cffd PC->f.cf.fd
 
 // 32 bits macros
-#ifndef _BIG_ENDIAN
+#if !defined(_BIG_ENDIAN) || defined(__DREAMCAST__)
 #define rrt32 *((int*)PC->f.r.rt)
 #define rrd32 *((int*)PC->f.r.rd)
 #define rrs32 *((int*)PC->f.r.rs)

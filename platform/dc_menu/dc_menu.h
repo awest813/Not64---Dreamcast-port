@@ -1,68 +1,96 @@
+/**
+ * Not64 Dreamcast menu — Phase 8a ROM browser.
+ *
+ * Lists the ROM directory, lets the pad pick one, and hands the choice back.
+ * That is the whole scope: no settings, no in-game overlay, no renderer (see
+ * Phase 8 in PORTING.md for 8b/8c and for why libgui/ is not ported).
+ *
+ * The menu is optional and never load-bearing. skipMenu plus the argv path
+ * stays the regression harness, and `make -f Makefile.dc HOST=1 test` passes
+ * without the menu ever running.
+ *
+ * The list and the input state are separated from drawing on purpose: the
+ * host stub has no framebuffer, so smoke_menu() drives dc_menu_step() with
+ * synthetic pad words and asserts the cursor, the scroll window and the
+ * result. Only the pixels are platform-specific.
+ */
+
 #ifndef DC_MENU_H
 #define DC_MENU_H
 
-#include <stddef.h>
+#include "../../fileBrowser/fileBrowser.h"
+#include "../../gc_input/controller.h"
 
-enum {
-	DC_MENU_ACT_NONE = 0,
-	DC_MENU_ACT_UP,
-	DC_MENU_ACT_DOWN,
-	DC_MENU_ACT_PAGE_UP,
-	DC_MENU_ACT_PAGE_DOWN,
-	DC_MENU_ACT_CONFIRM,
-	DC_MENU_ACT_BACK,
-	DC_MENU_ACT_QUIT
-};
+#define DC_MENU_MAX_NAME 64
 
-enum {
-	DC_MENU_OK = 0,     /* path filled */
-	DC_MENU_QUIT = 1,   /* user backed out */
-	DC_MENU_SKIP = 2,   /* skipMenu / argv path */
-	DC_MENU_ERROR = 3
-};
+typedef struct {
+	char         path[FILE_BROWSER_MAX_PATH_LEN];	/* what rom_read wants */
+	char         label[DC_MENU_MAX_NAME];		/* basename, for the row */
+	unsigned int size;
+} dc_menu_entry;
 
-enum {
-	DC_MENU_ST_OK = 0,
-	DC_MENU_ST_EMPTY = 1,
-	DC_MENU_ST_MISSING = 2
-};
+typedef struct {
+	dc_menu_entry *items;
+	int            count;
+	/* Where the entries came from. Worth showing: when the list is empty,
+	 * the path is the one thing the player needs to know. */
+	char           dir[FILE_BROWSER_MAX_PATH_LEN];
+} dc_menu_list;
 
-#define DC_MENU_VISIBLE 12
-#define DC_MENU_MAX_ENTRIES 256
+/* What one polled frame of input decided. */
+typedef enum {
+	DC_MENU_NONE = 0,
+	DC_MENU_PICK,
+	DC_MENU_CANCEL
+} dc_menu_action;
 
-int dc_menu_is_rom_name(const char *name);
-void dc_menu_ellipsize(char *dst, size_t dst_len, const char *src, int max_chars);
-void dc_menu_format_size(char *dst, size_t dst_len, unsigned int bytes);
+typedef struct {
+	const dc_menu_list *list;
+	int cursor;		/* highlighted entry */
+	int top;		/* first visible entry */
+	int rows;		/* visible entries */
 
-typedef struct dc_menu_browser dc_menu_browser;
+	/* Edge detection and auto-repeat. The pad is polled, so acting on the
+	 * level would run the cursor off the end of the list in one press. */
+	unsigned int prev;	/* previous frame's decoded button mask */
+	int  repeat_in;		/* frames until a held direction repeats */
+	int  repeat_dir;	/* -1 up, +1 down, 0 idle */
+} dc_menu_state;
 
-dc_menu_browser *dc_menu_browser_create(const char *root);
-void dc_menu_browser_destroy(dc_menu_browser *b);
-int dc_menu_browser_apply(dc_menu_browser *b, int action);
-void dc_menu_browser_draw(const dc_menu_browser *b);
+/* Frames (at ~60 Hz) before a held direction starts repeating, and between
+ * repeats after that. */
+#define DC_MENU_REPEAT_FIRST 20
+#define DC_MENU_REPEAT_NEXT   4
 
-int dc_menu_browser_count(const dc_menu_browser *b);
-int dc_menu_browser_cursor(const dc_menu_browser *b);
-int dc_menu_browser_scroll(const dc_menu_browser *b);
-int dc_menu_browser_status(const dc_menu_browser *b);
-int dc_menu_browser_entry_is_dir(const dc_menu_browser *b, int i);
-int dc_menu_browser_entry_is_parent(const dc_menu_browser *b, int i);
-const char *dc_menu_browser_entry_name(const dc_menu_browser *b, int i);
-const char *dc_menu_browser_path(const dc_menu_browser *b);
-const char *dc_menu_browser_chosen(const dc_menu_browser *b);
+/* Analog deflection, out of the N64 range (+/-80), that counts as a push. */
+#define DC_MENU_STICK_ON  40
+#define DC_MENU_STICK_OFF 20
 
-/* Decode a raw (unshifted) Maple word into one edge-triggered action. */
-int dc_menu_decode_pad(unsigned int buttons, unsigned int *prev_buttons);
+/* Host stub only: nothing but controller_DC_host_set() can drive the browser
+ * there and dc_draw_end() does not wait for a vblank, so an un-driven menu
+ * would spin. Give up after this many iterations and report instead. */
+#define DC_MENU_HOST_FRAME_CAP 3600
 
-/*
- * Interactive ROM picker. Allocates the framebuffer, runs until a ROM is
- * chosen or the user quits, then frees everything. max_frames==0 means
- * until a decision; host tests pass a budget so a stuck pad cannot hang.
- */
-int dc_menu_pick_rom(char *out_path, size_t out_len, unsigned int max_frames);
+/* Reads dir, keeps .z64/.n64/.v64, sorts by name. Returns the entry count,
+ * 0 for an empty directory, or a negative fileBrowser error. */
+int  dc_menu_list_load(dc_menu_list *list, fileBrowser_file *dir);
+void dc_menu_list_free(dc_menu_list *list);
 
-#ifdef DC_HOST_STUB
-int dc_menu_selftest(void);
-#endif
+void dc_menu_state_init(dc_menu_state *st, const dc_menu_list *list, int rows);
 
-#endif
+/* One polled frame. Moves the cursor, scrolls, and reports a pick or cancel. */
+dc_menu_action dc_menu_step(dc_menu_state *st, const BUTTONS *keys);
+
+/* Draws the current state through dc_draw.h. */
+void dc_menu_draw(const dc_menu_state *st, const char *title);
+
+/* A single status line on an otherwise empty screen, same chrome as the
+ * browser. Used for "Loading ..." while a cart streams off the disc. */
+void dc_menu_message(const char *title, const char *message);
+
+/* The whole browser: open the surface, loop until the pad picks or cancels,
+ * free everything. Returns 1 on a pick (out is filled), 0 on cancel, negative
+ * on error. `dir` is normally romFile_topLevel. */
+int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out);
+
+#endif /* DC_MENU_H */

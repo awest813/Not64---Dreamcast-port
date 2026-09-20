@@ -42,6 +42,7 @@ void InitTimer(void)
 	VILimit = GetVILimit();
 	VILimitMicroseconds = 1000000.0 / VILimit;
 	Timers.frameDrawn = 0;
+    Timers.vis = 0;
 }
 
 extern int stop;

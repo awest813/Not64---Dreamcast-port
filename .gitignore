@@ -1,8 +1,10 @@
-# Dreamcast bring-up artifacts
+# Dreamcast build and local test artifacts
 /not64-dc-bringup
-/not64-dc.elf
+/not64-dc*.elf
 *.o
 *.d
+/obj/
+/build/
 /saves/dc_host.txt
 /saves/settings.cfg
 /saves/not64.log
@@ -13,3 +15,4 @@
 /roms/*.v64
 !/roms/dc_dummy.z64
 !/roms/dc_cputest.z64
+!/roms/dc_vitest.z64

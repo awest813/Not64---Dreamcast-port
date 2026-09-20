@@ -27,9 +27,20 @@ static u32   ROMCACHE_BYTES;
 static u32   ROMSize;
 static int   ROMTooBig;
 static char* ROMBlocks[NUM_BLOCKS];
-static int   ROMBlocksLRU[NUM_BLOCKS];
+/* Last-use timestamps, newest = largest. This used to be an age counter that
+ * ROMCache_read/write bumped for all NUM_BLOCKS entries on every call, so a
+ * four-byte cart read wrote 4 KiB of ages. A monotonic clock makes marking a
+ * block O(1); only the eviction scan still walks the array, and that happens
+ * on a miss, next to a 64 KiB read off the card.
+ *
+ * 64-bit because it ticks once per block access and must never wrap: a 32-bit
+ * counter would, and a wrapped timestamp reads as the oldest block in the
+ * window, so the cache would evict whatever it just paged in. */
+static u64   ROMBlocksLRU[NUM_BLOCKS];
+static u64   ROMBlocksClock;
 static fileBrowser_file* ROMFile;
 static char readBefore = 0;
+static unsigned long ROMPageIns;
 
 extern void pauseAudio(void);
 extern void resumeAudio(void);
@@ -57,6 +68,10 @@ void ROMCache_init(fileBrowser_file* f){
 }
 
 void ROMCache_deinit(){
+	/* readFile holds its handle open now, so somebody has to let go of it.
+	 * Every teardown path in main_dc.c comes through here. */
+	if (ROMFile && romFile_deinit)
+		romFile_deinit(ROMFile);
 	free(ROMCACHE_LO);
 	ROMCACHE_LO = NULL;
 	memset(ROMBlocks, 0, sizeof(ROMBlocks));
@@ -65,6 +80,16 @@ void ROMCache_deinit(){
 	ROMSize = 0;
 	ROMTooBig = 0;
 	readBefore = 0;
+	ROMBlocksClock = 0;
+	ROMPageIns = 0;
+}
+
+int ROMCache_streaming(void){
+	return ROMTooBig;
+}
+
+unsigned long ROMCache_pagein_count(void){
+	return ROMPageIns;
 }
 
 void* ROMCache_pointer(u32 rom_offset){
@@ -100,21 +125,25 @@ static void ensure_block(u32 block){
 	if(ROMBlocks[block])
 		return;
 	{
-		int i, max_i = -1, max_lru = -1;
+		int i, old_i = -1;
+		u64 old_lru = 0;
 		for(i=0; i<NUM_BLOCKS; ++i) {
-			if(ROMBlocks[i] && ROMBlocksLRU[i] > max_lru) {
-				max_i = i;
-				max_lru = ROMBlocksLRU[i];
+			if(!ROMBlocks[i])
+				continue;
+			if(old_i < 0 || ROMBlocksLRU[i] < old_lru) {
+				old_i = i;
+				old_lru = ROMBlocksLRU[i];
 			}
 		}
-		if (max_i < 0 || !ROMBlocks[max_i])
+		if (old_i < 0 || !ROMBlocks[old_i])
 			return;
-		ROMBlocks[block] = ROMBlocks[max_i];
+		ROMBlocks[block] = ROMBlocks[old_i];
 		ROMCache_load_block(ROMBlocks[block], block << BLOCK_SHIFT);
-		ROMBlocks[max_i] = 0;
-		/* Inherit the victim's LRU counter otherwise: mark it freshest. */
-		ROMBlocksLRU[block] = 0;
-		ROMBlocksLRU[max_i] = 0;
+		ROMPageIns++;
+		ROMBlocks[old_i] = 0;
+		/* Freshly paged in, so it is the newest thing in the window. */
+		ROMBlocksLRU[block] = ++ROMBlocksClock;
+		ROMBlocksLRU[old_i] = 0;
 	}
 }
 
@@ -144,12 +173,7 @@ void ROMCache_read(u8* dest, u32 offset, u32 length){
 				length = BLOCK_SIZE - offset2;
 			else
 				length = length2;
-			{
-				int i;
-				for(i=0; i<NUM_BLOCKS; ++i)
-					++ROMBlocksLRU[i];
-			}
-			ROMBlocksLRU[block] = 0;
+			ROMBlocksLRU[block] = ++ROMBlocksClock;
 			if (!ROMBlocks[block])
 				return;
 			memcpy(dest, ROMBlocks[block] + offset2, length);
@@ -176,12 +200,7 @@ void ROMCache_write(u8* src, u32 offset, u32 length){
 				length = BLOCK_SIZE - offset2;
 			else
 				length = length2;
-			{
-				int i;
-				for(i=0; i<NUM_BLOCKS; ++i)
-					++ROMBlocksLRU[i];
-			}
-			ROMBlocksLRU[block] = 0;
+			ROMBlocksLRU[block] = ++ROMBlocksClock;
 			if (!ROMBlocks[block])
 				return;
 			memcpy(ROMBlocks[block] + offset2, src, length);
@@ -202,6 +221,7 @@ int ROMCache_load(fileBrowser_file* f){
 		return -1;
 	memset(ROMBlocks, 0, sizeof(ROMBlocks));
 	memset(ROMBlocksLRU, 0, sizeof(ROMBlocksLRU));
+	ROMBlocksClock = 0;
 
 	romFile_seekFile(ROMFile, 0, FILE_BROWSER_SEEK_SET);
 	sizeToLoad = MIN(ROMCACHE_BYTES, ROMSize);
@@ -225,13 +245,16 @@ int ROMCache_load(fileBrowser_file* f){
 	}
 
 	if(ROMTooBig){
-		int i;
-		for(i=0; i<(int)(ROMCACHE_BYTES/BLOCK_SIZE); ++i)
+		int i, resident = (int)(ROMCACHE_BYTES/BLOCK_SIZE);
+		for(i=0; i<resident; ++i)
 			ROMBlocks[i] = ROMCACHE_LO + i*BLOCK_SIZE;
 		for(; i<(int)(ROMSize/BLOCK_SIZE); ++i)
 			ROMBlocks[i] = 0;
+		/* Seed so the window evicts from the far end first: block 0 holds
+		 * the header and IPL and is the most likely to be wanted again. */
 		for(i=0; i<(int)(ROMSize/BLOCK_SIZE); ++i)
-			ROMBlocksLRU[i] = i;
+			ROMBlocksLRU[i] = (i < resident) ? (u64)(resident - i) : 0;
+		ROMBlocksClock = (u64)resident;
 	}
 	return 0;
 }

@@ -33,6 +33,7 @@
 
 RDP::RDP(GFX_INFO info) : gfxInfo(info)
 {
+   cycleType=0;
    tx = new TX(info);
    rs = new RS();
    tf = new TF();

@@ -34,11 +34,10 @@ typedef void *gzFile;
 #endif
 
 // Num Slots must be a power of 2!
-#define TLB_NUM_SLOTS 64
-
-// The amount of bits required to represent a page
-//   number, don't change. Required for hash calc
-#define TLB_BITS_PER_PAGE_NUM 20
+// 1024 slots is 4 KiB per table (r and w), and keeps a normally mapped game
+// at roughly one node per bucket. 64 slots only worked out to 256 bytes, but
+// the lookup that saved is on the path of every TLB-mapped load and store.
+#define TLB_NUM_SLOTS 1024
 
 typedef struct node {
 	unsigned int value;
@@ -54,6 +53,9 @@ unsigned int inline TLBCache_get_w(unsigned int page);
 
 void inline TLBCache_set_r(unsigned int page, unsigned int val);
 void inline TLBCache_set_w(unsigned int page, unsigned int val);
+
+// Longest bucket across both tables; 0 when the cache is empty.
+unsigned int TLBCache_longest_chain(void);
 
 // for savestates
 void TLBCache_dump_r(gzFile *f);

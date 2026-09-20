@@ -61,6 +61,64 @@ static void ensure_dir(const char *path)
 	mkdir(work, 0755);
 }
 
+/* ---- cached read handle -------------------------------------------------
+ * The ROM cache streams the cart in 64 KiB blocks and pages blocks back in as
+ * the game reads around, so readFile runs thousands of times against one path.
+ * fopen/fseek/fclose per call is invisible on a host filesystem; on Dreamcast
+ * SD/GD every open walks the FAT. Hold the read handle open instead, and skip
+ * the seek when the file is already at the wanted offset -- which is the
+ * common case, because the ROM cache reads forward.
+ *
+ * Writes deliberately still open and close. They are rare (saves), and closing
+ * is what gets the data and the directory entry onto the card; keeping a write
+ * handle open would trade a save for a page-in nobody is waiting on.
+ */
+static FILE        *open_fp;
+static char         open_name[FILE_BROWSER_MAX_PATH_LEN];
+static unsigned int open_pos;
+static unsigned long open_count;	/* real fopen() calls, for the bring-up */
+
+static void kos_cache_close(void)
+{
+	if (open_fp) {
+		fclose(open_fp);
+		open_fp = NULL;
+	}
+	open_name[0] = '\0';
+	open_pos = 0;
+}
+
+/* Called before a write, so the next read does not answer from a handle that
+ * predates it. */
+static void kos_cache_drop(const char *name)
+{
+	if (open_fp && name && strcmp(open_name, name) == 0)
+		kos_cache_close();
+}
+
+static FILE *kos_cache_open(const char *name)
+{
+	if (open_fp && strcmp(open_name, name) == 0)
+		return open_fp;
+
+	kos_cache_close();
+	if (strlen(name) >= sizeof(open_name))
+		return NULL;
+
+	open_fp = fopen(name, "rb");
+	if (!open_fp)
+		return NULL;
+	open_count++;
+	strcpy(open_name, name);
+	open_pos = 0;
+	return open_fp;
+}
+
+unsigned long fileBrowser_kos_open_count(void)
+{
+	return open_count;
+}
+
 int fileBrowser_kos_init(fileBrowser_file *f)
 {
 	if (!f)
@@ -73,7 +131,10 @@ int fileBrowser_kos_init(fileBrowser_file *f)
 
 int fileBrowser_kos_deinit(fileBrowser_file *f)
 {
-	(void)f;
+	if (f)
+		kos_cache_drop(f->name);
+	else
+		kos_cache_close();
 	return 0;
 }
 
@@ -135,17 +196,29 @@ int fileBrowser_kos_readFile(fileBrowser_file *file, void *buffer, unsigned int 
 	if (!file || !buffer)
 		return FILE_BROWSER_ERROR;
 
-	fp = fopen(file->name, "rb");
+	fp = kos_cache_open(file->name);
 	if (!fp)
 		return FILE_BROWSER_ERROR_NO_FILE;
 
-	if (fseek(fp, (long)file->offset, SEEK_SET) != 0) {
-		fclose(fp);
-		return FILE_BROWSER_ERROR;
+	if (open_pos != file->offset) {
+		if (fseek(fp, (long)file->offset, SEEK_SET) != 0) {
+			kos_cache_close();
+			return FILE_BROWSER_ERROR;
+		}
+		open_pos = file->offset;
 	}
+
 	n = fread(buffer, 1, length, fp);
+	open_pos += (unsigned int)n;
 	file->offset += (unsigned int)n;
-	fclose(fp);
+
+	/* A short read at the end of the file is normal. A short read with the
+	 * error flag set is not, and the flag is sticky -- the old open-per-call
+	 * code healed from a transient card error simply by opening again, so
+	 * drop the handle and let the next call do that. */
+	if (n < length && ferror(fp))
+		kos_cache_close();
+
 	return (int)n;
 }
 
@@ -156,6 +229,8 @@ int fileBrowser_kos_writeFile(fileBrowser_file *file, void *buffer, unsigned int
 
 	if (!file || !buffer)
 		return FILE_BROWSER_ERROR;
+
+	kos_cache_drop(file->name);
 
 	fp = fopen(file->name, "r+b");
 	if (!fp)

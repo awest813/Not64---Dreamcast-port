@@ -30,9 +30,11 @@
 #ifndef GLOBAL_H
 #define GLOBAL_H
 
+#ifndef __DREAMCAST__
 #include "vi.h"
+#endif
 
-#ifdef _BIG_ENDIAN
+#if defined(_BIG_ENDIAN) && !defined(__DREAMCAST__)
 #define S8 0
 #define S16 0
 #else
@@ -40,6 +42,14 @@
 #define S16 1
 #endif
 
+#ifdef __DREAMCAST__
+#define SOFT_RDRAM_BYTES 0x400000u
+#else
+#define SOFT_RDRAM_BYTES 0x800000u
+#endif
+
+#ifndef __DREAMCAST__
 extern VI* vi;
+#endif
 
 #endif
