@@ -259,14 +259,14 @@ $(BUILD_DIR)/%.o: %.c $(CONFIG_STAMP)
 
 $(BUILD_DIR)/%.o: %.cpp $(CONFIG_STAMP)
 	@mkdir -p $(@D)
-	$(DC_CXX) $(filter-out -std=gnu11 -fgnu89-inline,$(DC_CFLAGS)) -std=gnu++11 -MMD -MP -c -o $@ $<
+	$(DC_CXX) $(filter-out -std=gnu11 -fgnu89-inline -Werror=implicit-function-declaration -Wno-pointer-sign,$(DC_CFLAGS)) -std=gnu++11 -MMD -MP -c -o $@ $<
 
 ifeq ($(HOST),1)
 $(TEST_TARGET): $(filter-out $(BUILD_DIR)/main/main_dc.o,$(OBJS)) $(TEST_OBJS)
 	$(DC_CC) $(DC_CFLAGS) $(DC_LDFLAGS) -o $@ $^ $(DC_LIBS)
 
 $(SOFT_TEST_TARGET): $(BUILD_DIR)/tests/dc/test_soft.o $(addprefix $(BUILD_DIR)/mupen64_soft_gfx/,rsp.o rdp.o rs.o tx.o tf.o cc.o bl.o)
-	$(DC_CXX) $(filter-out -std=gnu11 -fgnu89-inline,$(DC_CFLAGS)) $(DC_LDFLAGS) -o $@ $^ $(DC_LIBS)
+	$(DC_CXX) $(filter-out -std=gnu11 -fgnu89-inline -Werror=implicit-function-declaration -Wno-pointer-sign,$(DC_CFLAGS)) $(DC_LDFLAGS) -o $@ $^ $(DC_LIBS)
 
 ifeq ($(GFX),soft)
 test-soft: $(SOFT_TEST_TARGET)

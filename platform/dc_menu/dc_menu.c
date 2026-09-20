@@ -383,7 +383,8 @@ void dc_menu_draw(const dc_menu_state *st, const char *title)
 	if (!st->list || st->list->count == 0) {
 		dc_draw_text(cw, ch * 2, COL_TEXT, "No ROMs found.");
 		if (st->list && st->list->dir[0]) {
-			snprintf(line, sizeof(line), "Looked in: %s", st->list->dir);
+			snprintf(line, sizeof(line), "Looked in: %.*s",
+				 (int)sizeof(line) - 12, st->list->dir);
 			dc_draw_text(cw, ch * 3, COL_HINT, line);
 		}
 		dc_draw_text(cw, ch * 4, COL_HINT,
