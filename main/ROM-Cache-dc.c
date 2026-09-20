@@ -46,6 +46,10 @@ void ROMCache_init(fileBrowser_file* f){
 	ROMCACHE_BYTES = DC_ROM_STREAM_SIZE;
 	if (!ROMCACHE_LO)
 		ROMCACHE_LO = malloc(ROMCACHE_BYTES);
+	/* Block indices derive from ROMSize and index ROMBlocks[]/ROMBlocksLRU[],
+	 * which hold NUM_BLOCKS entries. A larger ROM would run off both. */
+	if (ROMSize > MAX_ROMSIZE)
+		ROMSize = MAX_ROMSIZE;
 	ROMTooBig = ROMSize > ROMCACHE_BYTES;
 	rom_length = (int)ROMSize;
 	if (f)
@@ -108,6 +112,9 @@ static void ensure_block(u32 block){
 		ROMBlocks[block] = ROMBlocks[max_i];
 		ROMCache_load_block(ROMBlocks[block], block << BLOCK_SHIFT);
 		ROMBlocks[max_i] = 0;
+		/* Inherit the victim's LRU counter otherwise: mark it freshest. */
+		ROMBlocksLRU[block] = 0;
+		ROMBlocksLRU[max_i] = 0;
 	}
 }
 
@@ -175,6 +182,8 @@ void ROMCache_write(u8* src, u32 offset, u32 length){
 					++ROMBlocksLRU[i];
 			}
 			ROMBlocksLRU[block] = 0;
+			if (!ROMBlocks[block])
+				return;
 			memcpy(ROMBlocks[block] + offset2, src, length);
 			++block; length2 -= length; offset2 = 0; src += length; offset += length;
 		}

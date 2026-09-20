@@ -35,7 +35,12 @@
 #endif
 
 #include <stdio.h>
+#if defined(__APPLE__) || defined(__FreeBSD__)
+/* No <malloc.h> on Darwin/BSD; the host stub builds there. */
+#include <stdlib.h>
+#else
 #include <malloc.h>
+#endif
 #include "dma.h"
 #include "memory.h"
 #include "../main/rom.h"
@@ -46,6 +51,9 @@
 #include "../r4300/macros.h"
 #ifdef PPC_DYNAREC
 #include "../r4300/ARAM-blocks.h"
+#elif defined(__DREAMCAST__)
+/* Interpreter-only build: stubbed in platform/dc_recomp_stubs.c. */
+void invalidate_func(unsigned int addr);
 #endif
 #include "../r4300/Invalid_Code.h"
 #include "../r4300/ops.h"

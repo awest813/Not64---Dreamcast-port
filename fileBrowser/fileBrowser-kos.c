@@ -34,12 +34,31 @@ fileBrowser_file saveDir_kos = {
 	FILE_BROWSER_ATTR_DIR
 };
 
+/* Create path and any missing parents: on hardware the tree is
+ * /sd/not64/roms, and a single mkdir fails while /sd/not64 is absent. */
 static void ensure_dir(const char *path)
 {
+	char work[FILE_BROWSER_MAX_PATH_LEN];
 	struct stat st;
+	char *p;
+
+	if (!path || !*path)
+		return;
 	if (stat(path, &st) == 0)
 		return;
-	mkdir(path, 0755);
+	if (strlen(path) >= sizeof(work))
+		return;
+	strcpy(work, path);
+
+	for (p = work + 1; *p; ++p) {
+		if (*p != '/')
+			continue;
+		*p = '\0';
+		if (stat(work, &st) != 0)
+			mkdir(work, 0755);
+		*p = '/';
+	}
+	mkdir(work, 0755);
 }
 
 int fileBrowser_kos_init(fileBrowser_file *f)

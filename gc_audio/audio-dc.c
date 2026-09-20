@@ -56,12 +56,21 @@ EXPORT void CALL AiLenChanged(void)
 {
 	char *stream;
 	int length;
+	unsigned int addr;
 
 	if (!audioEnabled)
 		return;
 
-	stream = (char *)(AudioInfo.RDRAM + (*AudioInfo.AI_DRAM_ADDR_REG & 0xFFFFFF));
+	if (!AudioInfo.RDRAM || !AudioInfo.AI_DRAM_ADDR_REG || !AudioInfo.AI_LEN_REG)
+		return;
+
+	/* The GC/Wii plugin masks to 16 MiB; DC RDRAM is 4 MiB with nothing
+	 * mapped behind it, so clamp the source to the region that exists. */
+	addr = (unsigned int)(*AudioInfo.AI_DRAM_ADDR_REG) & (DC_N64_RDRAM_SIZE - 1);
+	stream = (char *)(AudioInfo.RDRAM + addr);
 	length = (int)*AudioInfo.AI_LEN_REG;
+	if (length < 0 || (unsigned int)length > DC_N64_RDRAM_SIZE - addr)
+		length = (int)(DC_N64_RDRAM_SIZE - addr);
 
 	while (length > 0 && buffered < DC_AUDIO_RING_SIZE) {
 		int chunk = (int)(DC_AUDIO_RING_SIZE - write_off);

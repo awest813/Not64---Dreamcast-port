@@ -31,11 +31,15 @@ KOS_INIT_FLAGS(INIT_DEFAULT);
 #endif
 
 extern unsigned long dc_interp_step_limit;
+extern unsigned long dc_interp_steps;
 extern BOOL hasLoadedROM;
 extern void init_controller_ts(void);
 extern void auto_assign_controllers(void);
 extern unsigned int audio_dc_buffered(void);
 extern void native_ReadController(int Control, unsigned char *Command);
+
+/* Interpreter budget for one bring-up run. */
+#define DC_BRINGUP_STEPS 10000UL
 
 static GFX_INFO gfx_info;
 static AUDIO_INFO audio_info;
@@ -158,8 +162,119 @@ static int smoke_io(void)
 		printf("audio smoke: ring did not accept AI DMA\n");
 		fail = 1;
 	}
+	/* The ROM runs next: do not leave the smoke pattern in RDRAM. */
+	memset(rdram, 0, 64);
 	return fail;
 }
+
+#ifdef DC_HOST_STUB
+/*
+ * The Dreamcast pad cannot reach N64 Z, L, R or the C-buttons directly, so
+ * controller-DC.c shifts them onto the analog triggers. Exercise every branch:
+ * a mis-shift is silent in-game but obvious here.
+ */
+struct dc_map_case {
+	const char *what;
+	unsigned int buttons;
+	int ltrig, rtrig;
+	unsigned int want_z, want_l, want_r;
+	unsigned int want_cu, want_cd, want_cl, want_cr;
+	unsigned int want_du;
+};
+
+static const struct dc_map_case dc_map_cases[] = {
+	/*                        btns                 lt  rt   Z  L  R  CU CD CL CR DU */
+	{ "idle",                 0,                    0,  0,  0, 0, 0,  0, 0, 0, 0, 0 },
+	{ "L-trigger -> Z",       0,                  200,  0,  1, 0, 0,  0, 0, 0, 0, 0 },
+	{ "R-trigger -> R",       0,                    0,200,  0, 0, 1,  0, 0, 0, 0, 0 },
+	{ "Y+L-trigger -> L",     DC_CONT_Y,          200,  0,  0, 1, 0,  0, 0, 0, 0, 0 },
+	{ "D-pad unshifted",      DC_CONT_DPAD_UP,      0,  0,  0, 0, 0,  0, 0, 0, 0, 1 },
+	{ "both+Up -> C-Up",      DC_CONT_DPAD_UP,    200,200,  0, 0, 0,  1, 0, 0, 0, 0 },
+	{ "both+Down -> C-Down",  DC_CONT_DPAD_DOWN,  200,200,  0, 0, 0,  0, 1, 0, 0, 0 },
+	{ "both+Left -> C-Left",  DC_CONT_DPAD_LEFT,  200,200,  0, 0, 0,  0, 0, 1, 0, 0 },
+	{ "both+Right -> C-Right",DC_CONT_DPAD_RIGHT, 200,200,  0, 0, 0,  0, 0, 0, 1, 0 },
+	/* A resting finger must not latch a shift. */
+	{ "below threshold",      0,                   20, 20,  0, 0, 0,  0, 0, 0, 0, 0 },
+};
+
+/* Stick scaling: raw Maple 0-255 -> N64 -80..+80 with a 10-count deadzone.
+ * Full scale is asymmetric (-80 / +79) because 128 is centre in a 0-255
+ * range: there are 128 counts below it and 127 above. */
+struct dc_axis_case {
+	const char *what;
+	int jx, jy;
+	int want_x, want_y;
+};
+
+static const struct dc_axis_case dc_axis_cases[] = {
+	{ "centre",            128, 128,   0,   0 },
+	{ "inside deadzone",   135, 121,   0,   0 },
+	{ "just past deadzone",139, 128,   1,   0 },
+	{ "full left",           0, 128, -80,   0 },
+	{ "full right",        255, 128,  79,   0 },
+	{ "full up",           128,   0,   0,  80 },
+	{ "full down",         128, 255,   0, -79 },
+	{ "host inject",       200,  80,  42,  26 },
+};
+
+static int smoke_map(void)
+{
+	unsigned int i;
+	int fail = 0;
+
+	for (i = 0; i < sizeof(dc_map_cases) / sizeof(dc_map_cases[0]); ++i) {
+		const struct dc_map_case *t = &dc_map_cases[i];
+		BUTTONS k;
+
+		controller_DC_host_set(0, t->buttons, 128, 128);
+		controller_DC_host_set_triggers(0, t->ltrig, t->rtrig);
+		memset(&k, 0, sizeof(k));
+		getKeys(0, &k);
+
+		if (k.Z_TRIG != t->want_z || k.L_TRIG != t->want_l ||
+		    k.R_TRIG != t->want_r ||
+		    k.U_CBUTTON != t->want_cu || k.D_CBUTTON != t->want_cd ||
+		    k.L_CBUTTON != t->want_cl || k.R_CBUTTON != t->want_cr ||
+		    k.U_DPAD != t->want_du) {
+			printf("map smoke: %s -> Z=%u L=%u R=%u C(u%u d%u l%u r%u) DU=%u\n",
+			       t->what, (unsigned)k.Z_TRIG, (unsigned)k.L_TRIG,
+			       (unsigned)k.R_TRIG, (unsigned)k.U_CBUTTON,
+			       (unsigned)k.D_CBUTTON, (unsigned)k.L_CBUTTON,
+			       (unsigned)k.R_CBUTTON, (unsigned)k.U_DPAD);
+			fail = 1;
+		}
+	}
+
+	for (i = 0; i < sizeof(dc_axis_cases) / sizeof(dc_axis_cases[0]); ++i) {
+		const struct dc_axis_case *t = &dc_axis_cases[i];
+		BUTTONS k;
+
+		controller_DC_host_set(0, 0, t->jx, t->jy);
+		controller_DC_host_set_triggers(0, 0, 0);
+		memset(&k, 0, sizeof(k));
+		getKeys(0, &k);
+
+		if ((int)(signed char)k.X_AXIS != t->want_x ||
+		    (int)(signed char)k.Y_AXIS != t->want_y) {
+			printf("map smoke: %s raw(%d,%d) -> X=%d Y=%d want %d,%d\n",
+			       t->what, t->jx, t->jy,
+			       (int)(signed char)k.X_AXIS,
+			       (int)(signed char)k.Y_AXIS,
+			       t->want_x, t->want_y);
+			fail = 1;
+		}
+	}
+
+	/* Leave pad 0 as the other smokes expect to find it. */
+	controller_DC_host_set_triggers(0, 0, 0);
+	controller_DC_host_set(0, DC_CONT_A, 200, 80);
+	printf("map smoke %s (%u button + %u analog cases)\n",
+	       fail ? "FAIL" : "PASS",
+	       (unsigned)(sizeof(dc_map_cases) / sizeof(dc_map_cases[0])),
+	       (unsigned)(sizeof(dc_axis_cases) / sizeof(dc_axis_cases[0])));
+	return fail;
+}
+#endif /* DC_HOST_STUB */
 
 static int smoke_pif(void)
 {
@@ -197,8 +312,9 @@ static int smoke_pif(void)
 		       PIF_RAMb[3], PIF_RAMb[4], PIF_RAMb[5], PIF_RAMb[6]);
 		fail = 1;
 	}
-	if ((signed char)PIF_RAMb[5] != 72 || (signed char)PIF_RAMb[6] != 48) {
-		printf("pif smoke: analog X=%d Y=%d want 72,48\n",
+	/* Raw (200,80) scaled to the N64 range by controller-DC.c. */
+	if ((signed char)PIF_RAMb[5] != 42 || (signed char)PIF_RAMb[6] != 26) {
+		printf("pif smoke: analog X=%d Y=%d want 42,26\n",
 		       (int)(signed char)PIF_RAMb[5],
 		       (int)(signed char)PIF_RAMb[6]);
 		fail = 1;
@@ -223,13 +339,28 @@ static int smoke_pif(void)
 	return fail;
 }
 
-static int check_cputest(void)
+/* The CPUTEST checks key off the ROM's decoded name, so a loader regression
+ * used to skip them silently. When the caller asked for the CPUTEST image,
+ * a name that does not decode is itself a failure. */
+static int check_cputest(const char *path)
 {
 	int fail = 0;
 	unsigned long got;
+	const char *base = strrchr(path, '/');
+	int want_cputest;
 
-	if (strcmp(ROM_SETTINGS.goodname, "DC CPUTEST") != 0)
+	base = base ? base + 1 : path;
+	want_cputest = (strncmp(base, "dc_cputest", 10) == 0);
+
+	if (strcmp(ROM_SETTINGS.goodname, "DC CPUTEST") != 0) {
+		if (want_cputest) {
+			printf("CPUTEST FAIL: %s decoded as '%s', "
+			       "expected 'DC CPUTEST'\n",
+			       base, ROM_SETTINGS.goodname);
+			return 1;
+		}
 		return 0;
+	}
 
 #define DC_EXPECT_REG(n, v) \
 	do { \
@@ -250,16 +381,67 @@ static int check_cputest(void)
 	DC_EXPECT_REG(9, 0x0030);
 	DC_EXPECT_REG(10, 0x1334);
 	DC_EXPECT_REG(11, 0x0001);
+	/* 32-bit shift/divide on a NEGATIVE operand. `long` is 32-bit on SH4 and
+	 * PPC but 64-bit on an LP64 host, where SRL/SRLV/DIVU used to shift or
+	 * divide a sign-extended 64-bit value and drag the high bits down. A
+	 * positive operand passes either way, which is why this went unnoticed
+	 * until a real ROM's boot checksum failed. */
+	DC_EXPECT_REG(12, 0x95F208B7u);   /* lui+ori                       */
+	DC_EXPECT_REG(13, 0x00000004);    /* shift amount                  */
+	DC_EXPECT_REG(14, 0x095F208Bu);   /* srl  - logical, zero-filled   */
+	DC_EXPECT_REG(15, 0x095F208Bu);   /* srlv - same, variable amount  */
+	DC_EXPECT_REG(16, 0xF95F208Bu);   /* sra  - arithmetic, sign-filled*/
+	DC_EXPECT_REG(17, 0xF95F208Bu);   /* srav                          */
+	DC_EXPECT_REG(18, 0x00012340u);   /* sllv                          */
+	DC_EXPECT_REG(19, 0xFFFFEDCCu);   /* subu r0 - 0x1234              */
+	DC_EXPECT_REG(20, 0x257C822Du);   /* mflo: 0x95F208B7 / 4          */
+	DC_EXPECT_REG(21, 0x00000003);    /* mfhi: remainder               */
 #undef DC_EXPECT_REG
+
+	/* Full 64-bit check. A 32-bit op whose result has bit 31 set must leave
+	 * the register sign-extended; the low half alone looks right even when
+	 * the high half is garbage, which is how the r4300/macros.h LP64 bug
+	 * survived every low-32 check here. IPL3's checksum compares 64-bit
+	 * registers with SLTU, so the high half is load-bearing. */
+	if ((unsigned long long)reg[22] != 0xFFFFFFFFF208B700ull) {
+		printf("CPUTEST r22=0x%016llx want 0xFFFFFFFFF208B700 "
+		       "(32-bit result not sign-extended)\n",
+		       (unsigned long long)reg[22]);
+		fail = 1;
+	}
 
 	got = (unsigned long)(rdram[0] & 0xffffffffu);
 	if (got != 0x1333u) {
 		printf("CPUTEST rdram[0]=0x%lx want 0x1333\n", got);
 		fail = 1;
 	}
-	if (interp_addr != 0xa4000074 && interp_addr != 0xa4000078) {
+	/* IPL spin; move these if gen_dc_roms.py changes the instruction count. */
+	if (interp_addr != 0xa40000a8 && interp_addr != 0xa40000ac) {
 		printf("CPUTEST interp_addr=0x%08lx (expected IPL BEQ spin)\n",
 		       interp_addr);
+		fail = 1;
+	}
+
+	/* The header's byte- and halfword-addressed fields only decode if the
+	 * DC loader un-swapped them (rom_dc.c). Without that, isEEPROM16k(),
+	 * saveregionstr() and GetVILimit() all read scrambled bytes. */
+	if (ROM_HEADER.Cartridge_ID != 'DO') {
+		printf("CPUTEST Cartridge_ID=0x%04x want 0x%04x\n",
+		       (unsigned)ROM_HEADER.Cartridge_ID, (unsigned)'DO');
+		fail = 1;
+	}
+	if (ROM_HEADER.Country_code != 0x45) {
+		printf("CPUTEST Country_code=0x%02x want 0x45\n",
+		       (unsigned)ROM_HEADER.Country_code);
+		fail = 1;
+	}
+	if (ROM_HEADER.Version != 0x01) {
+		printf("CPUTEST Version=0x%02x want 0x01\n",
+		       (unsigned)ROM_HEADER.Version);
+		fail = 1;
+	}
+	if (!ROM_SETTINGS.isEEPROM16k) {
+		printf("CPUTEST isEEPROM16k=0 want 1 ('DO'/'E' is in ROM_TABLE)\n");
 		fail = 1;
 	}
 
@@ -352,6 +534,44 @@ static void rsp_info_init(void)
 	initiateRSP(rsp_info, (DWORD*)&cycle_count);
 }
 
+/*
+ * After a run, say what the ROM actually reached. The Phase 4 gate is "a ROM
+ * hits RDP/VI", so VI origin/width is the signal worth printing: non-zero
+ * means the game has handed the video interface a framebuffer and a software
+ * renderer now has something to draw.
+ */
+static void dump_run_state(void)
+{
+	printf("  COP0   Count=0x%08lx Compare=0x%08lx Status=0x%08lx Cause=0x%08lx EPC=0x%08lx\n",
+	       (unsigned long)(unsigned int)reg_cop0[9],
+	       (unsigned long)(unsigned int)reg_cop0[11],
+	       (unsigned long)(unsigned int)reg_cop0[12],
+	       (unsigned long)(unsigned int)reg_cop0[13],
+	       (unsigned long)(unsigned int)reg_cop0[14]);
+	printf("  COP0   BadVAddr=0x%08lx EntryHi=0x%08lx Index=0x%08lx Wired=0x%08lx\n",
+	       (unsigned long)(unsigned int)reg_cop0[8],
+	       (unsigned long)(unsigned int)reg_cop0[10],
+	       (unsigned long)(unsigned int)reg_cop0[0],
+	       (unsigned long)(unsigned int)reg_cop0[6]);
+	printf("  MI     intr=0x%08lx mask=0x%08lx\n",
+	       (unsigned long)MI_register.mi_intr_reg,
+	       (unsigned long)MI_register.mi_intr_mask_reg);
+	printf("  VI     origin=0x%08lx width=%lu status=0x%08lx current=%lu\n",
+	       (unsigned long)vi_register.vi_origin,
+	       (unsigned long)vi_register.vi_width,
+	       (unsigned long)vi_register.vi_status,
+	       (unsigned long)vi_register.vi_current);
+	printf("  SP     status=0x%08lx  DPC start=0x%08lx end=0x%08lx current=0x%08lx\n",
+	       (unsigned long)sp_register.sp_status_reg,
+	       (unsigned long)dpc_register.dpc_start,
+	       (unsigned long)dpc_register.dpc_end,
+	       (unsigned long)dpc_register.dpc_current);
+	printf("  VERDICT: %s\n",
+	       vi_register.vi_origin
+		       ? "VI framebuffer set - ROM reached video (Phase 4 gate)"
+		       : "VI origin still 0 - no framebuffer handed over yet");
+}
+
 static int load_and_step(const char *path, unsigned long steps)
 {
 	fileBrowser_file romfile;
@@ -416,6 +636,14 @@ static int load_and_step(const char *path, unsigned long steps)
 	printf("Header name: '%s'  country=0x%02x  CIC_Chip=%lu  PC=0x%08x\n",
 	       ROM_SETTINGS.goodname, ROM_HEADER.Country_code, CIC_Chip, ROM_HEADER.PC);
 
+#ifdef DC_HOST_STUB
+	if (smoke_map()) {
+		cpu_deinit();
+		TLBCache_deinit();
+		ROMCache_deinit();
+		return 1;
+	}
+#endif
 	if (smoke_io() || smoke_pif()) {
 		cpu_deinit();
 		TLBCache_deinit();
@@ -425,9 +653,15 @@ static int load_and_step(const char *path, unsigned long steps)
 
 	dc_interp_step_limit = steps;
 	go();
-	printf("Interpreter stopped after step limit %lu (interp_addr=0x%08lx stop=%d)\n",
-	       steps, interp_addr, stop);
-	ret = check_cputest();
+	/* Report what was actually retired: echoing the limit hides an early
+	 * exit (exception, unmapped fetch, NI opcode) as a clean finish. */
+	printf("Interpreter retired %lu of %lu steps (%s), interp_addr=0x%08lx stop=%d\n",
+	       dc_interp_steps, steps,
+	       (steps && dc_interp_steps >= steps) ? "hit step limit"
+						   : "stopped early",
+	       (unsigned long)(unsigned int)interp_addr, stop);
+	dump_run_state();
+	ret = check_cputest(path);
 	cpu_deinit();
 	TLBCache_deinit();
 	ROMCache_deinit();
@@ -437,6 +671,7 @@ static int load_and_step(const char *path, unsigned long steps)
 int main(int argc, char **argv)
 {
 	const char *rompath = "roms/dc_cputest.z64";
+	unsigned long steps = DC_BRINGUP_STEPS;
 	int fail = 0;
 
 	setvbuf(stdout, NULL, _IONBF, 0);
@@ -454,9 +689,13 @@ int main(int argc, char **argv)
 
 	if (argc > 1)
 		rompath = argv[1];
+	/* Optional step budget: a real ROM needs far more than the bring-up
+	 * default to get through IPL3. 0 means run until the ROM stops. */
+	if (argc > 2)
+		steps = strtoul(argv[2], NULL, 0);
 
-	printf("Phase 2/3: interpreter %lu steps using %s\n", 10000UL, rompath);
-	if (load_and_step(rompath, 10000))
+	printf("Phase 2/3: interpreter %lu steps using %s\n", steps, rompath);
+	if (load_and_step(rompath, steps))
 		fail = 1;
 
 #ifndef DC_HOST_STUB

@@ -1,11 +1,16 @@
 # Not64 Dreamcast
 #
-# Host:
+# Host bring-up stub (builds with gcc or clang, Linux or macOS):
 #   make -f Makefile.dc HOST=1
+#   make -f Makefile.dc HOST=1 test      # CPUTEST PASS + pif smoke PASS, exit 0
 #   ./not64-dc-bringup [optional.z64]
 #
-# KallistiOS:
+# KallistiOS (needs KOS_BASE from environ.sh):
 #   make -f Makefile.dc
+#
+# The host stub is a link/logic check, not a faithful SH4 model: `unsigned
+# long` is 64-bit on an LP64 host and 32-bit on SH4, so word-sized state
+# differs in layout even when the tests agree.
 
 CORE_OBJS = \
 	main/rom_dc.o \
@@ -67,13 +72,22 @@ DC_DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DUSE_TLB_CACHE -DPIXEL_FORMAT=RGB
 
 ifeq ($(HOST),1)
 
-CC      = gcc
+# Only override make's built-in default so `make CC=...` still works.
+# GCC and clang both build this target; older clang has ICE'd on r4300.c,
+# so prefer gcc when the user has not chosen.
+ifeq ($(origin CC),default)
+CC = gcc
+endif
 CFLAGS  ?= -std=gnu11 -fgnu89-inline -Wall -Wextra -Wno-unused-parameter \
 	-Wno-missing-field-initializers -Wno-unused-function \
 	-Wno-unused-variable -Wno-pointer-sign -Wno-multichar -O1
-CPPFLAGS = $(DC_DEFS) -DDC_HOST_STUB
+# -MMD -MP: let the compiler track header deps. Hand-listed rules kept missing
+# headers (macros.h was absent, so editing it silently reused stale objects and
+# produced runs that disagreed with the source).
+CPPFLAGS = $(DC_DEFS) -DDC_HOST_STUB -MMD -MP
 TARGET   = not64-dc-bringup
 LIBS     = -lm
+DEPS     = $(OBJS:.o=.d)
 
 .PHONY: all clean run test roms
 
@@ -93,8 +107,7 @@ gc_input/input.o: gc_input/input.c
 %.o: %.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
-r4300/pure_interp.o gc_memory/memory.o: gc_memory/memory.h
-r4300/r4300.o platform/dc_recomp_stubs.o: r4300/recomp.h
+-include $(DEPS)
 
 run: $(TARGET) $(ROMS)
 	./$(TARGET)
@@ -104,7 +117,7 @@ test: $(TARGET) $(ROMS)
 	./$(TARGET) roms/dc_dummy.z64
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(DEPS) $(TARGET)
 
 else
 
@@ -114,8 +127,9 @@ endif
 
 include $(KOS_BASE)/Makefile.rules
 
-KOS_CFLAGS += $(DC_DEFS) -I$(CURDIR)
+KOS_CFLAGS += $(DC_DEFS) -I$(CURDIR) -MMD -MP
 TARGET = not64-dc.elf
+DEPS = $(OBJS:.o=.d)
 
 .PHONY: all clean
 
@@ -130,7 +144,9 @@ gc_input/input.o: gc_input/input.c
 %.o: %.c
 	$(KOS_CC) $(KOS_CFLAGS) -c -o $@ $<
 
+-include $(DEPS)
+
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(DEPS) $(TARGET)
 
 endif
