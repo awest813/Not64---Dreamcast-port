@@ -176,6 +176,26 @@ static int poll_pad(int Control, unsigned int *buttons_out, int *jx, int *jy,
 #endif
 }
 
+int controller_DC_poll_raw(int Control, unsigned int *buttons, int *jx, int *jy,
+			   int *ltrig, int *rtrig)
+{
+	unsigned int b = 0;
+	int x = 128, y = 128, lt = 0, rt = 0;
+	int ok = poll_pad(Control, &b, &x, &y, &lt, &rt);
+
+	if (buttons)
+		*buttons = ok ? b : 0;
+	if (jx)
+		*jx = x;
+	if (jy)
+		*jy = y;
+	if (ltrig)
+		*ltrig = lt;
+	if (rtrig)
+		*rtrig = rt;
+	return ok;
+}
+
 #define DC_DPAD_MASK \
 	(CONT_DPAD_UP | CONT_DPAD_DOWN | CONT_DPAD_LEFT | CONT_DPAD_RIGHT)
 

@@ -11,6 +11,7 @@
 #endif
 
 #include "../platform/dc_memory.h"
+#include "../platform/dc_menu/dc_menu.h"
 #include "../fileBrowser/fileBrowser.h"
 #include "../fileBrowser/fileBrowser-kos.h"
 #include "../main/winlnxdefs.h"
@@ -673,6 +674,8 @@ int main(int argc, char **argv)
 	const char *rompath = "roms/dc_cputest.z64";
 	unsigned long steps = DC_BRINGUP_STEPS;
 	int fail = 0;
+	char menu_rom[FILE_BROWSER_MAX_PATH_LEN];
+	int want_menu = 0;
 
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stderr, NULL, _IONBF, 0);
@@ -681,17 +684,42 @@ int main(int argc, char **argv)
 	vid_set_mode(DM_640x480, PM_RGB565);
 #endif
 
+#ifdef DC_HOST_STUB
+	if (argc > 1 && strcmp(argv[1], "--menu-test") == 0)
+		return dc_menu_selftest();
+#endif
+
 	print_budget();
 	list_rom_dir();
 	probe_controllers();
 	if (probe_saves())
 		fail = 1;
 
-	if (argc > 1)
+	if (argc > 1 && strcmp(argv[1], "--menu") == 0)
+		want_menu = 1;
+#ifndef DC_HOST_STUB
+	/* Hardware: no argv ROM means the browser is the product. skipMenu
+	 * keeps the dcload/serial bring-up path working. */
+	if (argc <= 1 && !skipMenu)
+		want_menu = 1;
+#endif
+
+	if (want_menu) {
+		int picked = dc_menu_pick_rom(menu_rom, sizeof(menu_rom), 0);
+
+		if (picked == DC_MENU_OK) {
+			rompath = menu_rom;
+		} else if (picked == DC_MENU_SKIP) {
+			printf("skipMenu: using %s\n", rompath);
+		} else {
+			printf("menu: no ROM selected\n");
+			return fail;
+		}
+	} else if (argc > 1)
 		rompath = argv[1];
 	/* Optional step budget: a real ROM needs far more than the bring-up
 	 * default to get through IPL3. 0 means run until the ROM stops. */
-	if (argc > 2)
+	if (argc > 2 && !want_menu)
 		steps = strtoul(argv[2], NULL, 0);
 
 	printf("Phase 2/3: interpreter %lu steps using %s\n", steps, rompath);

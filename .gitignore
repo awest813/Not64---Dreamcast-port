@@ -2,6 +2,7 @@
 /not64-dc-bringup
 /not64-dc.elf
 *.o
+*.d
 /saves/dc_host.txt
 
 # Drop-in ROMs: keep the generated bring-up images, never commit a game dump.

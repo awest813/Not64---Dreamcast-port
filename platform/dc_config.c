@@ -1,7 +1,7 @@
 #include "../main/wii64config.h"
 #include "../main/timers.h"
 
-char skipMenu;
+char skipMenu = 0;
 char showFPSonScreen;
 char printToScreen;
 char nativeSaveDevice;

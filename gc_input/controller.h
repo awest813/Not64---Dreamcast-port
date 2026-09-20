@@ -109,7 +109,9 @@ extern virtualControllers_t virtualControllers[4];
 #define num_controller_t 1
 extern controller_t controller_DC;
 #ifdef DC_HOST_STUB
+#define DC_CONT_B          (1u << 1)
 #define DC_CONT_A          (1u << 2)
+#define DC_CONT_START      (1u << 3)
 #define DC_CONT_DPAD_UP    (1u << 4)
 #define DC_CONT_DPAD_DOWN  (1u << 5)
 #define DC_CONT_DPAD_LEFT  (1u << 6)
@@ -118,6 +120,10 @@ extern controller_t controller_DC;
 void controller_DC_host_set(int Control, unsigned int buttons, int jx, int jy);
 void controller_DC_host_set_triggers(int Control, int ltrig, int rtrig);
 #endif
+/* Unshifted Maple word. The menu uses this so holding both triggers cannot
+ * steal the D-pad (that shift is an in-game mapping). */
+int controller_DC_poll_raw(int Control, unsigned int *buttons, int *jx, int *jy,
+			   int *ltrig, int *rtrig);
 extern controller_t* controller_ts[num_controller_t];
 
 #elif defined(WII) && !defined(NO_BT)

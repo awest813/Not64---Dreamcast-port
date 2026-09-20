@@ -39,7 +39,7 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | Rumble / VMU pak | **Not started** — `rumble_ctl()` is a no-op; Jump Pack and VMU are the natural N64 Rumble/Controller Pak analogues. Needs KOS to write |
 | First commercial ROM (host) | **Passes the CIC boot checksum and runs game code**; stops at a TLB store miss, still no VI. See Phase 3.5 |
 | Software / PVR renderer | Not started. **No PVR code exists**; DC gfx plugin is empty stubs. Blocked behind Phase 4 and a ROM reaching VI — see Phase 7 |
-| Dreamcast menu | Designed only (Phase 8 below); no code. `libgui/` does not port |
+| Dreamcast menu | **8a ROM browser landed** (host-tested); 8b overlay / 8c settings not started. `libgui/` still does not port |
 | SH4 dynarec | Not started |
 | Cloud environment KOS toolchain | **Missing** (`sh-elf-gcc` not installed) |
 
@@ -153,7 +153,7 @@ Phase 4  First emulated frame        (next: software renderer)
 Phase 5  Memory map hardening        (ROM stream, cache sizes)
 Phase 6  SH4 dynarec                 (performance)
 Phase 7  PVR/KGL renderer            (optional upgrade)
-Phase 8  Menu, saves, .cdi           (designed below; 8a ROM browser needs no renderer)
+Phase 8  Menu, saves, .cdi           (8a ROM browser on host; 8b/8c not started)
 ```
 
 ### Phase 0 — Pre-work
@@ -420,13 +420,35 @@ optional upgrade, with the software path kept as the reference to diff against.
 
 ---
 
-### Phase 8 — Dreamcast menu (design, no code yet)
+### Phase 8 — Dreamcast menu
 
 The Wii/GC menu is `libgui/` (34 files, ~5.5k lines) + `menu/` (26 files,
 ~5.2k lines) + `gui/` (~3.6k lines). **None of it ports.** `GraphicsGX.cpp`
 is GX; `IPLFont` is the GameCube BIOS font; resources are PowerPC `.s`
 blobs; the whole thing is a retained-mode C++ `Component`/`Frame`/
 `FocusManager` tree. Phase 8 is a rewrite against KallistiOS, not a port.
+
+**8a is in tree:** `platform/dc_menu/` — immediate-mode C, RGB565 surface,
+built-in 8x8 font (so the host stub can snapshot the same pixels KOS will
+blit to `vram_s`). `make -f Makefile.dc HOST=1 test` runs `--menu-test`
+before CPUTEST. Argv ROM paths still skip the picker. `skipMenu` still
+bypasses it. The framebuffer is freed before `go()`.
+
+Audit notes that drove the 8a layout (vs Wii `FileBrowserFrame`):
+
+- Ten hard-coded file slots and Prev/Next buttons became a 12-row scrolling
+  list with a thumb, wrap, and page-sized Left/Right.
+- Non-ROM files (`.py`, `.txt`) are filtered; dirs sort first.
+- Empty and missing folders are first-class states, not a blank button list.
+- Menu input uses the **unshifted** Maple word so the in-game dual-trigger
+  C-button map cannot steal the D-pad.
+- Footer spells the in-game shift map, which the Wii UI has no concept of.
+- Hold-repeat on the D-pad, because a 20-ROM folder is miserable at one
+  edge per click.
+
+v1 does **not** use KOS `bfont`. A later PVR backend can replace
+`dc_draw_fill_rect` / `dc_draw_text` / `dc_draw_blit` without touching
+the list.
 
 #### What the menu is actually for
 
@@ -482,7 +504,8 @@ Hard constraints:
   ~7.8 MiB today, and the Phase 4 software renderer will claim most of it.
 - **The menu is optional, never load-bearing.** `skipMenu` plus the existing
   argv path stays the regression harness; `make -f Makefile.dc HOST=1 test`
-  must keep passing with no menu compiled in.
+  runs `--menu-test` then the two argv ROMs. Removing the menu objects
+  would still leave the argv path working.
 - **Input is already done.** The Maple map (triggers carry Z/R, `Y`+left
   trigger is L, both triggers shift the D-pad to the C-buttons) is the menu's
   input source too. Note that a button-config screen has to express the
@@ -498,7 +521,7 @@ Each step is independently useful; none blocks the emulator core.
 
 | Step | Scope | Depends on |
 |------|-------|-----------|
-| **8a** | ROM browser only: list `/sd/not64/roms`, pick, boot. Replaces the argv path. | KOS ELF (Phase 1) + `bfont`. **Not** the software renderer. |
+| **8a** | ROM browser only: list `/sd/not64/roms` (host: `./roms`), pick, boot. Replaces the argv path on hardware. **Done on host** (`--menu-test`; `--menu` for a keyboard/pad picker). | KOS ELF still needed to *see* it on a Dreamcast; logic does not. |
 | **8b** | In-game overlay: return to menu, reset, save/load state. | Phase 4 framebuffer; `platform/dc_savestates.c` is still a stub |
 | **8c** | Settings, button/shift config, persistence to `/sd/not64/settings.cfg`. | 8a |
 
@@ -564,6 +587,7 @@ Requires `KOS_BASE`. Load with dcload, or convert to `.cdi` later.
 | DC memory map | `platform/dc_memory.h` |
 | Bring-up main | `main/main_dc.c` |
 | DC Makefile | `Makefile.dc` |
+| ROM browser (8a) | `platform/dc_menu/` |
 | FAT/POSIX I/O | `fileBrowser/fileBrowser-kos.c` |
 | Maple pad | `gc_input/controller-DC.c` |
 | Audio stub | `gc_audio/audio-dc.c` |

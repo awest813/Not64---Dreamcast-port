@@ -4,6 +4,8 @@
 #   make -f Makefile.dc HOST=1
 #   make -f Makefile.dc HOST=1 test      # CPUTEST PASS + pif smoke PASS, exit 0
 #   ./not64-dc-bringup [optional.z64]
+#   ./not64-dc-bringup --menu-test   # Phase 8a ROM browser self-test
+#   ./not64-dc-bringup --menu         # host: interactive picker (keys or injected pad)
 #
 # KallistiOS (needs KOS_BASE from environ.sh):
 #   make -f Makefile.dc
@@ -66,6 +68,8 @@ OBJS = main/main_dc.o \
 	fileBrowser/fileBrowser-kos.o \
 	gc_input/controller-DC.o \
 	gc_audio/audio-dc.o \
+	platform/dc_menu/dc_draw.o \
+	platform/dc_menu/dc_menu.o \
 	$(CORE_OBJS)
 
 DC_DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DUSE_TLB_CACHE -DPIXEL_FORMAT=RGB565
@@ -113,6 +117,7 @@ run: $(TARGET) $(ROMS)
 	./$(TARGET)
 
 test: $(TARGET) $(ROMS)
+	./$(TARGET) --menu-test
 	./$(TARGET) roms/dc_cputest.z64
 	./$(TARGET) roms/dc_dummy.z64
 
