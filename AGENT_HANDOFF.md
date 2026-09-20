@@ -139,6 +139,11 @@ N64's Z, L, R and C-buttons ride on the analog triggers and two shifts:
 | **Both triggers + D-pad** | **C-Up / C-Down / C-Left / C-Right** |
 | X | unassigned |
 
+Stick scaling lives in `scale_axis()`: Maple 0-255 -> N64 -80..+80 with a
+10-count deadzone. Full scale is asymmetric (-80 / +79) because 128 is centre
+in a 0-255 range. Raw values used to pass straight through as +/-127, which
+reads in game as permanent full deflection.
+
 Mechanics live in `dc_virtual_buttons()` in `gc_input/controller-DC.c`: the two
 analog triggers fold into the Maple button word as virtual bits
 (`DC_VB_LTRIG`, `DC_VB_RTRIG`, `DC_VB_LTRIG_ALT`, bits 24-26, clear of every
@@ -151,15 +156,18 @@ While both triggers are held, the triggers' own bindings (Z and R) are
 one judgement call in the scheme, and the place to revisit if a game wants Z
 held during C-presses.
 
-`smoke_map()` in `main/main_dc.c` covers all ten branches on the host stub.
+`smoke_map()` in `main/main_dc.c` covers all ten button branches plus eight
+analog cases (centre, both deadzone edges, all four extremes).
 
 ---
 
 ## Open findings (audited, deliberately not changed)
 
-1. **Analog range is unscaled.** `_GetKeys` converts Maple 0–255 straight to ±127; a real N64 stick saturates near ±80, so games will read as over-deflected. `controller-GC.c` scales; DC does not yet.
-2. **`fileBrowser_kos_readFile` does `fopen`/`fseek`/`fclose` per call.** The ROM cache streams in 64 KiB blocks, so every page-in reopens the file. Fine on a host filesystem, likely unacceptable on Dreamcast SD/GD — cache the handle before Phase 3 performance work.
-3. **Host stub is not an SH4 model.** `unsigned long` is 64-bit on an LP64 host and 32-bit on SH4, so `rdram[]`, `reg[]` and every `read_*_in_memory()` differ in width and layout. `CPUTEST PASS` on the host is a link/logic check, not evidence about hardware. The alignment and LP64 bugs found in `pif.c` are exactly the class the host stub cannot catch by itself.
+1. **Rumble and paks are stubs.** `rumble_ctl()` does nothing and `pakMode[4]` has no backend. The Dreamcast Jump Pack (`MAPLE_FUNC_PURUPURU`) is the natural N64 Rumble Pak analogue and the VMU (`MAPLE_FUNC_MEMCARD`) the natural Controller Pak. Both need KOS headers, so they cannot be written or verified from the host stub — do them alongside the Phase 1 ELF.
+2. **`poll_pad()` on the host stub reports every port present** while `refreshAvailable()` reports only port 0. Harmless today (only pad 0 is injected), but make them agree before multi-pad injection.
+3. **`last_joyx` / `last_joyy` are written and never read** — `controller_DC_lastButtons()` exposes only the button word. Expose the stick too or drop them.
+4. **`fileBrowser_kos_readFile` does `fopen`/`fseek`/`fclose` per call.** The ROM cache streams in 64 KiB blocks, so every page-in reopens the file. Fine on a host filesystem, likely unacceptable on Dreamcast SD/GD — cache the handle before Phase 3 performance work.
+5. **Host stub is not an SH4 model.** `unsigned long` is 64-bit on an LP64 host and 32-bit on SH4, so `rdram[]`, `reg[]` and every `read_*_in_memory()` differ in width and layout. `CPUTEST PASS` on the host is a link/logic check, not evidence about hardware. The alignment and LP64 bugs found in `pif.c` are exactly the class the host stub cannot catch by itself.
 
 ---
 
@@ -169,7 +177,7 @@ held during C-presses.
 2. **AICA** — `audio-dc.c` only fills a ring. Host smoke is enough; hardware needs `snd_stream` (or equivalent) draining that ring.
 3. **Get a real ROM to VI** — *this is the live problem.* A retail 32 MiB cart now **passes IPL3's CIC boot checksum and runs game code**; after 600M instructions it takes a **TLB store miss** (`Cause=0x0c`, `EPC=0x800afbe4`) and vectors to `0x80000000`, and `VI origin` is still 0. It is an **infinite TLB refill loop**: `BadVAddr=0x00048240` (KUSEG), the game's handler *is* installed at the vector (`JR` to `0x800afba0`), and the PC cycles vector -> faulting store -> vector forever. The entry the handler writes is not taking effect. Start at `TLBWR`/`TLBWI` and `gc_memory/TLB-Cache-hash.c` (DC uses `USE_TLB_CACHE`; its DC `#ifdef`s only stub zlib savestate dumpers, so suspect the write path). Full evidence in **Phase 3.5 of `PORTING.md`**.
 4. **Menu step 8a** — ROM browser over `/sd/not64/roms` on KOS `bfont`. Needs no renderer, so it can land right after the KOS ELF and replaces the argv path. Design (screens, which `dc_config.c` settings survive on DC, why `libgui/` does not port) is **Phase 8 in `PORTING.md`** — read it before writing menu code.
-5. **Software first frame** (Phase 4) — only after a ROM actually hits RDP/VI. Start from `mupen64_soft_gfx/` / `GX_gfx/`, not glN64.
+5. **Software first frame** (Phase 4) — only after a ROM actually hits RDP/VI. Start from `mupen64_soft_gfx/` (27 files, least GX coupling — 4 files touch `GX_*`), not `glN64_GX/` (73 files, 41 touching `GX_*`). **Not PVR:** no PVR code exists anywhere in this tree, and **Phase 7 in `PORTING.md`** records why it is not next and what it will have to solve (tile-based deferred rendering vs immediate-mode display lists, no cheap framebuffer read-back, 8 MB VRAM, RDP combiner semantics).
 6. **SH4 dynarec** — last. New `r4300/sh4/`. PPC JIT is not a template you search-replace.
 
 Skip 5–6 until 1–3 have a ROM that is more than a BEQ spin. 8a (step 4) is independent of all of them once the KOS ELF exists.

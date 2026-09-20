@@ -36,6 +36,37 @@ enum {
  * press, which keeps a resting finger from latching a shift. */
 #define DC_TRIG_THRESHOLD 48
 
+/*
+ * Maple reports each stick axis as 0-255 with 128 at rest. An N64 stick
+ * saturates near +/-80, which is what the rest of this tree assumes (the
+ * D-pad-as-analog path below, and controller-Classic.c, both use 80). Handing
+ * the raw -128..+127 straight over reads as permanent full deflection, so
+ * scale it, and drop a small deadzone first because DC sticks rest off-centre.
+ */
+#define DC_STICK_CENTER   128
+#define DC_STICK_DEADZONE 10
+#define DC_STICK_MAX      80
+
+static int scale_axis(int raw)
+{
+	int v = raw - DC_STICK_CENTER;
+	int mag, travel;
+
+	if (v > -DC_STICK_DEADZONE && v < DC_STICK_DEADZONE)
+		return 0;
+
+	mag = (v < 0) ? -v : v;
+	/* Subtract the deadzone so the remaining travel still reaches full
+	 * range, rather than losing the first 10 counts off the top. */
+	mag -= DC_STICK_DEADZONE;
+	travel = DC_STICK_CENTER - DC_STICK_DEADZONE;
+	if (mag > travel)
+		mag = travel;
+	mag = (mag * DC_STICK_MAX + travel / 2) / travel;
+
+	return (v < 0) ? -mag : mag;
+}
+
 #ifdef DC_HOST_STUB
 #define CONT_C          (1u << 0)
 #define CONT_B          (1u << 1)
@@ -217,9 +248,9 @@ static int _GetKeys(int Control, BUTTONS *Keys, controller_config_t *config)
 #undef isHeld
 
 		if (config->analog->mask == STICK_AS_ANALOG) {
-			/* Maple joy is 0–255 with 128 center; N64 axis is signed. */
-			c->X_AXIS = (signed char)(jx - 128);
-			c->Y_AXIS = (signed char)(128 - jy);
+			/* Y is inverted: Maple counts down-positive, N64 up-positive. */
+			c->X_AXIS = (signed char)scale_axis(jx);
+			c->Y_AXIS = (signed char)scale_axis(2 * DC_STICK_CENTER - jy);
 		} else if (config->analog->mask == DPAD_AS_ANALOG) {
 			if (b & CONT_DPAD_RIGHT)
 				c->X_AXIS = +80;

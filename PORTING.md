@@ -34,9 +34,11 @@ A Dreamcast port is a **third-platform bring-up**: reuse the portable emulation 
 | ROM stream (`main/ROM-Cache-dc.c`) | 1 MiB window; z64 words swapped to LE |
 | Host I/O smoke | Save file, injected Maple A, AI ring DMA, PIF joybus read/write |
 | ROM header decode on DC | Fixed — `dc_fix_header_byte_order()` un-swaps Name/Cartridge_ID/Country_code; asserted by CPUTEST |
-| Maple → N64 button map | Done — triggers carry Z/R, `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons; 10 host cases in `smoke_map()` |
+| Maple → N64 button map | Done — triggers carry Z/R, `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons |
+| Analog stick | Done — scaled to the N64 ±80 range with a 10-count deadzone; 10 button + 8 analog cases in `smoke_map()` |
+| Rumble / VMU pak | **Not started** — `rumble_ctl()` is a no-op; Jump Pack and VMU are the natural N64 Rumble/Controller Pak analogues. Needs KOS to write |
 | First commercial ROM (host) | **Passes the CIC boot checksum and runs game code**; stops at a TLB store miss, still no VI. See Phase 3.5 |
-| Software / PVR renderer | Not started (blocked: no ROM has reached VI yet) |
+| Software / PVR renderer | Not started. **No PVR code exists**; DC gfx plugin is empty stubs. Blocked behind Phase 4 and a ROM reaching VI — see Phase 7 |
 | Dreamcast menu | Designed only (Phase 8 below); no code. `libgui/` does not port |
 | SH4 dynarec | Not started |
 | Cloud environment KOS toolchain | **Missing** (`sh-elf-gcc` not installed) |
@@ -344,6 +346,77 @@ verified to fail the test when reverted.
 `Makefile.dc` now uses `-MMD -MP`. The hand-written dep list omitted
 `macros.h`, so editing it silently reused stale objects and produced runs that
 disagreed with the source.
+
+---
+
+### Phase 7 — PVR graphics (audit: nothing exists yet, and it is not next)
+
+**Current state: there is no PVR code in this tree, and no renderer of any
+kind is wired into the Dreamcast build.** `grep` for `pvr_`/`PVR_`/`glKos`/`KGL`
+returns nothing, no graphics directory appears in `Makefile.dc`, and the whole
+DC graphics plugin is empty stubs in `platform/dc_plugins.c`:
+
+```c
+void processDList(void) {}
+void processRDPList(void) {}
+void updateScreen(void) {}
+BOOL initiateGFX(GFX_INFO Gfx_Info) { (void)Gfx_Info; return TRUE; }
+```
+
+So there is nothing to audit or polish. This section records why starting PVR
+now would be a mistake, and what it will involve when it is time.
+
+#### Why not now
+
+1. **No ROM has reached VI.** Phase 3.5: the one real ROM tested sits in a TLB
+   refill loop with `VI origin = 0`. A renderer would have nothing to draw and
+   no way to tell right from wrong. The first display list has to arrive
+   before a display-list backend can be judged.
+2. **Phase 4 is the locked decision.** First frame is the software path
+   (`mupen64_soft_gfx/` / `GX_gfx/`), because it is testable and does not
+   depend on getting PVR's tile-based pipeline right at the same time as the
+   RDP semantics.
+3. **There is no KallistiOS toolchain here.** PVR code cannot even be compiled,
+   let alone run. Phase 1 (`sh-elf-gcc` + KOS) still gates everything.
+
+#### What the existing renderers are, measured
+
+| Path | Size | GX coupling |
+|------|------|-------------|
+| `glN64_GX/` | 73 files, ~29,280 lines | 41 files reference `GX_*` |
+| `GX_gfx/` | 21 files, ~6,158 lines | 7 files reference `GX_*` |
+| `mupen64_soft_gfx/` | 27 files, ~6,448 lines | 4 files reference `GX_*` |
+
+`glN64_GX` is not a PVR starting point: it is an N64-to-**GX** translator,
+and GX is a fixed-function TEV pipeline that PowerVR2 does not have. The
+`#ifndef __GX__` desktop-OpenGL paths in it are not a shortcut either — KOS
+KGL is a small subset of GL 1.x, not the desktop GL those branches target.
+
+`mupen64_soft_gfx/` has the least GX coupling (4 files) and is the right
+Phase 4 starting point.
+
+#### What a PVR backend actually has to solve
+
+Recorded now so it is not rediscovered later:
+
+- **Tile-based deferred rendering.** PVR2 sorts per tile and wants the whole
+  scene submitted before it renders. N64 display lists are immediate-mode and
+  order-dependent. Anything relying on read-back mid-frame has to be reworked.
+- **No per-pixel framebuffer read-back.** N64 titles that read the framebuffer
+  need a path PVR does not give cheaply.
+- **Texture budget.** 8 MB VRAM, twiddled textures, and compression rules
+  differ from the N64 TMEM model that `glN64_GX` mirrors.
+- **RDP combiner semantics.** N64's colour combiner and blender do not map
+  one-to-one onto PVR blending; this is the same class of problem `glN64_GX`
+  solved for TEV, and the solution is not transferable.
+- **16 MB main RAM.** `DC_TEXCACHE_SIZE` is 0 today. A texture cache has to
+  come out of `DC_HEAP_REMAINDER` (~7.8 MB), which the software renderer will
+  also want.
+
+#### Order
+
+Phase 4 software renderer -> a ROM that reaches VI -> then Phase 7 PVR as an
+optional upgrade, with the software path kept as the reference to diff against.
 
 ---
 

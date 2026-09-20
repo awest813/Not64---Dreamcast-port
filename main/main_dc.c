@@ -197,6 +197,26 @@ static const struct dc_map_case dc_map_cases[] = {
 	{ "below threshold",      0,                   20, 20,  0, 0, 0,  0, 0, 0, 0, 0 },
 };
 
+/* Stick scaling: raw Maple 0-255 -> N64 -80..+80 with a 10-count deadzone.
+ * Full scale is asymmetric (-80 / +79) because 128 is centre in a 0-255
+ * range: there are 128 counts below it and 127 above. */
+struct dc_axis_case {
+	const char *what;
+	int jx, jy;
+	int want_x, want_y;
+};
+
+static const struct dc_axis_case dc_axis_cases[] = {
+	{ "centre",            128, 128,   0,   0 },
+	{ "inside deadzone",   135, 121,   0,   0 },
+	{ "just past deadzone",139, 128,   1,   0 },
+	{ "full left",           0, 128, -80,   0 },
+	{ "full right",        255, 128,  79,   0 },
+	{ "full up",           128,   0,   0,  80 },
+	{ "full down",         128, 255,   0, -79 },
+	{ "host inject",       200,  80,  42,  26 },
+};
+
 static int smoke_map(void)
 {
 	unsigned int i;
@@ -225,11 +245,33 @@ static int smoke_map(void)
 		}
 	}
 
+	for (i = 0; i < sizeof(dc_axis_cases) / sizeof(dc_axis_cases[0]); ++i) {
+		const struct dc_axis_case *t = &dc_axis_cases[i];
+		BUTTONS k;
+
+		controller_DC_host_set(0, 0, t->jx, t->jy);
+		controller_DC_host_set_triggers(0, 0, 0);
+		memset(&k, 0, sizeof(k));
+		getKeys(0, &k);
+
+		if ((int)(signed char)k.X_AXIS != t->want_x ||
+		    (int)(signed char)k.Y_AXIS != t->want_y) {
+			printf("map smoke: %s raw(%d,%d) -> X=%d Y=%d want %d,%d\n",
+			       t->what, t->jx, t->jy,
+			       (int)(signed char)k.X_AXIS,
+			       (int)(signed char)k.Y_AXIS,
+			       t->want_x, t->want_y);
+			fail = 1;
+		}
+	}
+
 	/* Leave pad 0 as the other smokes expect to find it. */
 	controller_DC_host_set_triggers(0, 0, 0);
 	controller_DC_host_set(0, DC_CONT_A, 200, 80);
-	printf("map smoke %s (%u cases)\n", fail ? "FAIL" : "PASS",
-	       (unsigned)(sizeof(dc_map_cases) / sizeof(dc_map_cases[0])));
+	printf("map smoke %s (%u button + %u analog cases)\n",
+	       fail ? "FAIL" : "PASS",
+	       (unsigned)(sizeof(dc_map_cases) / sizeof(dc_map_cases[0])),
+	       (unsigned)(sizeof(dc_axis_cases) / sizeof(dc_axis_cases[0])));
 	return fail;
 }
 #endif /* DC_HOST_STUB */
@@ -270,8 +312,9 @@ static int smoke_pif(void)
 		       PIF_RAMb[3], PIF_RAMb[4], PIF_RAMb[5], PIF_RAMb[6]);
 		fail = 1;
 	}
-	if ((signed char)PIF_RAMb[5] != 72 || (signed char)PIF_RAMb[6] != 48) {
-		printf("pif smoke: analog X=%d Y=%d want 72,48\n",
+	/* Raw (200,80) scaled to the N64 range by controller-DC.c. */
+	if ((signed char)PIF_RAMb[5] != 42 || (signed char)PIF_RAMb[6] != 26) {
+		printf("pif smoke: analog X=%d Y=%d want 42,26\n",
 		       (int)(signed char)PIF_RAMb[5],
 		       (int)(signed char)PIF_RAMb[6]);
 		fail = 1;
