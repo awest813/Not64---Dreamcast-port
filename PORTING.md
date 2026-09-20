@@ -586,7 +586,7 @@ Each step is independently useful; none blocks the emulator core.
 |------|-------|-----------|-------|
 | **8a** | ROM browser only: list `/sd/not64/roms`, pick, boot. Replaces the argv path. | KOS ELF (Phase 1) + `bfont`. **Not** the software renderer. | **Shipped** — see below |
 | **8b** | In-game overlay: return to menu, reset, save/load state. | Phase 4 framebuffer; `platform/dc_savestates.c` is still a stub | Not started |
-| **8c** | Settings INI / controls legend (`platform/dc_settings.c`). | 8a | Code present; not wired to the master `dc_draw_*` menu path |
+| **8c** | Settings INI / controls legend (`platform/dc_settings.c`). | 8a | **Shipped** — mupen64plus.cfg layout, Y/X screens from the ROM browser, skipMenu file-only |
 
 8a is the one worth doing early — it is the difference between a demo that
 needs a rebuild per ROM and something a person can actually use, and it needs

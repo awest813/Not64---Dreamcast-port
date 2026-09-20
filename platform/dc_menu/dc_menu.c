@@ -1,10 +1,10 @@
 /**
  * Not64 Dreamcast menu — Phase 8a ROM browser.
  *
- * See dc_menu.h for scope. Drawing goes through dc_draw.h, input comes from
- * the same getKeys() path the emulator uses, so the Maple map (triggers carry
- * Z/R, Y+left trigger is L, both triggers shift the D-pad to the C-buttons)
- * already applies here.
+ * See dc_menu.h for scope. Drawing goes through dc_draw.h. The ROM list
+ * reads unshifted Maple (controller_DC_poll_raw) so C-shift cannot steal
+ * the D-pad; getKeys() is the in-game map. Y opens Settings, X opens
+ * Controls (Flycast/RetroArch extra screens, mupen64plus.cfg on disk).
  */
 
 #include <stdio.h>
@@ -13,6 +13,8 @@
 
 #include "dc_menu.h"
 #include "dc_draw.h"
+#include "../dc_settings.h"
+#include "../../gc_input/controller.h"
 
 extern void getKeys(int Control, BUTTONS *Keys);
 
@@ -390,7 +392,8 @@ void dc_menu_draw(const dc_menu_state *st, const char *title)
 		dc_draw_text(cw, ch * 4, COL_HINT,
 			     "Put .z64/.n64/.v64 files there, then restart.");
 		/* Still say how to leave: B is the only thing that works here. */
-		dc_draw_text(cw, dc_draw_height() - ch, COL_HINT, "B exit");
+		dc_draw_text(cw, dc_draw_height() - ch, COL_HINT,
+			     "B exit   Y settings   X controls");
 		dc_draw_end();
 		return;
 	}
@@ -421,7 +424,7 @@ void dc_menu_draw(const dc_menu_state *st, const char *title)
 		dc_draw_text(cw, y, idx == st->cursor ? COL_PICK : COL_TEXT, line);
 	}
 
-	snprintf(line, sizeof(line), "%d/%d   A start   B exit   Z/R page",
+	snprintf(line, sizeof(line), "%d/%d  A start  B exit  Y settings  X controls",
 		 st->cursor + 1, st->list->count);
 	dc_draw_text(cw, dc_draw_height() - ch, COL_HINT, line);
 	dc_draw_end();
@@ -440,6 +443,77 @@ void dc_menu_message(const char *title, const char *message)
 	dc_draw_end();
 }
 
+#define DC_MENU_TRIG_ON 48
+
+static int keys_from_raw(BUTTONS *k, unsigned b, int jx, int jy, int lt, int rt)
+{
+	int x, y;
+
+	if (!k)
+		return 0;
+	memset(k, 0, sizeof(*k));
+	k->A_BUTTON = !!(b & DC_CONT_A);
+	k->B_BUTTON = !!(b & DC_CONT_B);
+	k->START_BUTTON = !!(b & DC_CONT_START);
+	k->U_DPAD = !!(b & DC_CONT_DPAD_UP);
+	k->D_DPAD = !!(b & DC_CONT_DPAD_DOWN);
+	k->L_DPAD = !!(b & DC_CONT_DPAD_LEFT);
+	k->R_DPAD = !!(b & DC_CONT_DPAD_RIGHT);
+	k->Z_TRIG = lt >= DC_MENU_TRIG_ON;
+	k->R_TRIG = rt >= DC_MENU_TRIG_ON;
+	x = jx;
+	y = -jy;
+	if (x > 10 || x < -10) {
+		if (x > 80) x = 80;
+		if (x < -80) x = -80;
+		k->X_AXIS = (signed char)x;
+	}
+	if (y > 10 || y < -10) {
+		if (y > 80) y = 80;
+		if (y < -80) y = -80;
+		k->Y_AXIS = (signed char)y;
+	}
+	return 1;
+}
+
+static int menu_poll(BUTTONS *keys, unsigned *raw_out)
+{
+	unsigned raw = 0;
+	int jx = 0, jy = 0, lt = 0, rt = 0;
+
+	if (controller_DC_poll_raw(0, &raw, &jx, &jy, &lt, &rt)) {
+		if (raw_out)
+			*raw_out = raw;
+		return keys_from_raw(keys, raw, jx, jy, lt, rt);
+	}
+	if (raw_out)
+		*raw_out = 0;
+	memset(keys, 0, sizeof(*keys));
+	getKeys(0, keys);
+	return 1;
+}
+
+static void run_until_back(void (*enter)(void), int (*step)(const BUTTONS *),
+			   void (*draw)(void))
+{
+	BUTTONS keys;
+	int frames = 0;
+
+	enter();
+	for (;;) {
+		draw();
+		menu_poll(&keys, NULL);
+		if (!step(&keys))
+			break;
+#ifdef DC_HOST_STUB
+		if (++frames > DC_MENU_HOST_FRAME_CAP)
+			break;
+#else
+		(void)frames;
+#endif
+	}
+}
+
 /* ---- the browser ------------------------------------------------------ */
 
 int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out)
@@ -449,6 +523,7 @@ int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out)
 	int found, rows, result = 0;
 	int frames = 0;
 	int dirty = 1;
+	unsigned extra_prev = 0;
 
 	if (!out)
 		return FILE_BROWSER_ERROR;
@@ -476,6 +551,7 @@ int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out)
 	for (;;) {
 		BUTTONS keys;
 		dc_menu_action act;
+		unsigned raw = 0;
 		int was_cursor = st.cursor, was_top = st.top;
 
 		if (dirty) {
@@ -485,8 +561,25 @@ int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out)
 			dc_draw_wait();
 		}
 
-		memset(&keys, 0, sizeof(keys));
-		getKeys(0, &keys);
+		menu_poll(&keys, &raw);
+		{
+			unsigned extra = raw & (DC_CONT_X | DC_CONT_Y);
+			unsigned press = extra & ~extra_prev;
+			extra_prev = extra;
+			if (press & DC_CONT_Y) {
+				run_until_back(dc_settings_enter, dc_settings_step,
+					       dc_settings_draw);
+				(void)dc_settings_save(NULL);
+				dirty = 1;
+				continue;
+			}
+			if (press & DC_CONT_X) {
+				run_until_back(dc_controls_enter, dc_controls_step,
+					       dc_controls_draw);
+				dirty = 1;
+				continue;
+			}
+		}
 		act = dc_menu_step(&st, &keys);
 		if (st.cursor != was_cursor || st.top != was_top)
 			dirty = 1;

@@ -2,8 +2,9 @@
  * Not64 Dreamcast menu — Phase 8a ROM browser.
  *
  * Lists the ROM directory, lets the pad pick one, and hands the choice back.
- * That is the whole scope: no settings, no in-game overlay, no renderer (see
- * Phase 8 in PORTING.md for 8b/8c and for why libgui/ is not ported).
+ * That is the whole scope: ROM pick plus Flycast-style Settings (Y) and
+ * Controls (X) screens. No in-game overlay, no GX renderer. Settings live in
+ * mupen64plus.cfg-style `saves/settings.cfg`. skipMenu stays file-only.
  *
  * The menu is optional and never load-bearing. skipMenu plus the argv path
  * stays the regression harness, and `make -f Makefile.dc HOST=1 test` passes

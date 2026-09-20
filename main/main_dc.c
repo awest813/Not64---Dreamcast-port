@@ -28,6 +28,7 @@
 #include "../gc_memory/TLB-Cache.h"
 #include "../platform/dc_menu/dc_menu.h"
 #include "../platform/dc_menu/dc_draw.h"
+#include "../platform/dc_settings.h"
 #include "../gc_memory/pif.h"
 #include "../gc_memory/flashram.h"
 
@@ -688,6 +689,9 @@ static int smoke_menu(void)
 		fail = 1;
 	}
 
+	if (dc_settings_selftest())
+		fail = 1;
+
 	/* --- the whole browser, through the real getKeys() path --- */
 	if (n > 0) {
 		dc_menu_entry choice;
@@ -1287,6 +1291,13 @@ int main(int argc, char **argv)
     skipMenu = 1;
 #if !defined(DC_HOST_STUB) && !defined(DC_EMBED_VITEST) && !defined(DC_GAME_DISC)
     skipMenu = argc > 1;
+#endif
+    dc_settings_boot();
+#if defined(DC_HOST_STUB) || defined(DC_EMBED_VITEST) || defined(DC_GAME_DISC)
+    skipMenu = 1;
+#else
+    if (argc > 1)
+        skipMenu = 1;
 #endif
     unsigned long steps = 10000, frames = 0;
 #ifdef DC_GAME_DISC

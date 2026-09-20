@@ -322,8 +322,8 @@ held during C-presses.
    the ROM dir and boots the pick, tested on the host stub. Two things remain:
    `dc_draw_kos.c` has never been compiled, so expect to fix the `bfont` call
    on the first KOS build; and **8b** (in-game overlay, needs Phase 4). Settings
-   INI / controls legend live in `platform/dc_settings.c` on this branch but
-   are not wired into the master menu draw path yet.
+   INI / controls legend live in `platform/dc_settings.c`. Y opens Settings and X
+   opens Controls from the ROM browser (unshifted Maple). skipMenu stays file-only.
 
 5. **Software first frame** (Phase 4) — only after a ROM actually hits RDP/VI. Start from `mupen64_soft_gfx/` (27 files, least GX coupling — 4 files touch `GX_*`), not `glN64_GX/` (73 files, 41 touching `GX_*`). Hardware PVR presentation is in `platform/dc_pvr.c` when `VIDEO=pvr`.
 6. **SH4 dynarec** — last. New `r4300/sh4/`. PPC JIT is not a template you search-replace.
