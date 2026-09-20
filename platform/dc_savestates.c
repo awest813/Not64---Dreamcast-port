@@ -35,6 +35,7 @@
 #endif
 
 extern BOOL eepromWritten, sramWritten, flashramWritten, mempakWritten;
+extern char *get_savespath(void);
 
 #define SS_MAGIC "NOT64ST\n"
 #define SS_VERSION 3u
@@ -748,8 +749,8 @@ void savestates_load(void)
 	}
 	if (read_state(fp)) {
 		fclose(fp);
-		dc_log(DC_LOG_ERROR, "savestate: load slot %u failed (%s)",
-		       slot, path);
+		dc_log(DC_LOG_ERROR, "savestate: load slot %u failed (%s)%s%s",
+		       slot, path, last_err[0] ? ": " : "", last_err);
 		return;
 	}
 	fclose(fp);
