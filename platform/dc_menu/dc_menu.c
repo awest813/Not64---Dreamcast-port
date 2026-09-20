@@ -785,7 +785,7 @@ int dc_menu_pick_rom(char *out_path, size_t out_len, unsigned int max_frames)
 				scr = SCR_HOME;
 		} else if (scr == SCR_CONTROLS) {
 			int nctrl = dc_controls_row_count();
-			int vis = 9;
+			int vis = dc_controls_visible_count();
 			int max_scroll = (nctrl > vis) ? nctrl - vis : 0;
 			if (act == DC_MENU_ACT_UP && ctrl_scroll > 0)
 				ctrl_scroll--;

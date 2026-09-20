@@ -311,10 +311,18 @@ int dc_controls_row_count(void)
 	return (int)(sizeof(controls) / sizeof(controls[0]));
 }
 
+int dc_controls_visible_count(void)
+{
+	/* 22px rows from y=108 fit 10 lines before the warning at 340. */
+	int n = dc_controls_row_count();
+
+	return n > 10 ? 10 : n;
+}
+
 void dc_controls_draw(int scroll)
 {
 	int i, y, n = dc_controls_row_count();
-	int vis = 9;
+	int vis = dc_controls_visible_count();
 
 	if (scroll < 0)
 		scroll = 0;
@@ -337,13 +345,13 @@ void dc_controls_draw(int scroll)
 
 	for (i = 0; i < vis && scroll + i < n; ++i) {
 		const struct dc_ctrl_row *r = &controls[scroll + i];
-		y = 108 + i * 26;
+		y = 108 + i * 22;
 		dc_draw_text(32, y, DC_COL_FILE, r->dc);
 		dc_draw_text(280, y, DC_COL_TEXT, r->n64);
 	}
 
-	dc_draw_text(32, 360, DC_COL_WARN,
-		     "Both triggers withhold Z+R. X is L; Y+LT is L without Z.");
+	dc_draw_text(32, 340, DC_COL_WARN,
+		     "Both triggers withhold Z+R. X stays L during C-shift.");
 	dc_draw_fill_rect(0, 424, DC_FB_W, 56, DC_COL_BG2);
 	dc_draw_fill_rect(0, 424, DC_FB_W, 2, DC_COL_LINE);
 	dc_draw_text(24, 440, DC_COL_DIM, "B back    Menu uses unshifted pad; Y quits here");
@@ -399,7 +407,9 @@ int dc_settings_selftest(void)
 		printf("settings FAIL: load video\n");
 		fails++;
 	}
-	if (dc_controls_row_count() < 7) {
+	if (dc_controls_row_count() < 7 ||
+	    dc_controls_visible_count() > dc_controls_row_count() ||
+	    dc_controls_visible_count() < 1) {
 		printf("settings FAIL: controls legend\n");
 		fails++;
 	}

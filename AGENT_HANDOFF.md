@@ -137,7 +137,7 @@ N64's Z, L, R and C-buttons ride on the analog triggers and two shifts:
 | D-pad | D-pad |
 | **Left trigger** | **Z** |
 | **Right trigger** | **R** |
-| **X**, or **Y + left trigger** | **L** (X keeps Z on LT; Y+LT is L without Z) |
+| **X**, or **Y + left trigger** | **L** (X keeps Z on LT and still works during C-shift; Y+LT is L without Z) |
 | **Both triggers + D-pad** | **C-Up / C-Down / C-Left / C-Right** |
 | Y (menu) | Quit |
 

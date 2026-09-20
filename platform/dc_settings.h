@@ -38,6 +38,7 @@ void dc_settings_cycle(int i, int dir);
 
 void dc_settings_draw(int cursor);
 int dc_controls_row_count(void);
+int dc_controls_visible_count(void);
 void dc_controls_draw(int scroll);
 
 #ifdef DC_HOST_STUB

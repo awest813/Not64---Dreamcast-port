@@ -21,12 +21,11 @@ enum {
  *
  *   left trigger              -> N64 Z
  *   right trigger             -> N64 R
- *   Y + left trigger          -> N64 L
+ *   X, or Y + left trigger    -> N64 L
  *   both triggers + D-pad     -> N64 C-buttons
  *
- * The triggers are analog, so they are folded into the Maple button word as
- * virtual bits and mapped through the ordinary button_t table. Bits 24+ are
- * well clear of every CONT_* KallistiOS defines (highest is bit 15).
+ * X is applied before the dual-trigger C-shift so L+C is reachable.
+ * Y+LT is L without Z. Both triggers still withhold Z and R.
  */
 #define DC_VB_LTRIG     (1u << 24)  /* left trigger, unshifted  -> Z  */
 #define DC_VB_RTRIG     (1u << 25)  /* right trigger            -> R  */
@@ -106,7 +105,7 @@ static button_t buttons[] = {
 	{ 16, CONT_DPAD2_DOWN, "C-Down" },
 	{ 17, DC_VB_LTRIG,     "L-Trigger" },
 	{ 18, DC_VB_RTRIG,     "R-Trigger" },
-	{ 19, DC_VB_LTRIG_ALT, "Y+L-Trigger" },
+	{ 19, DC_VB_LTRIG_ALT, "X / Y+L-Trig" },
 };
 
 static button_t analog_sources[] = {
@@ -213,6 +212,10 @@ static unsigned int dc_virtual_buttons(unsigned int b, int ltrig, int rtrig)
 	int lheld = ltrig >= DC_TRIG_THRESHOLD;
 	int rheld = rtrig >= DC_TRIG_THRESHOLD;
 
+	/* X is a dedicated L (still available during the C-shift). */
+	if (b & CONT_X)
+		b |= DC_VB_LTRIG_ALT;
+
 	if (lheld && rheld) {
 		/* Both triggers: the D-pad becomes the C-buttons. The triggers'
 		 * own bindings are withheld for the duration, so reaching for a
@@ -228,10 +231,7 @@ static unsigned int dc_virtual_buttons(unsigned int b, int ltrig, int rtrig)
 		return b & ~DC_DPAD_MASK;
 	}
 
-	/* X is a dedicated L so you are not forced to chord Y+LT. Y+LT stays
-	 * L-without-Z for games that want that. */
-	if (b & CONT_X)
-		b |= DC_VB_LTRIG_ALT;
+	/* Y+LT is L-without-Z; LT alone is Z. */
 	if (lheld)
 		b |= (b & CONT_Y) ? DC_VB_LTRIG_ALT : DC_VB_LTRIG;
 	if (rheld)
@@ -245,9 +245,16 @@ static int _GetKeys(int Control, BUTTONS *Keys, controller_config_t *config)
 	unsigned int b;
 	int jx, jy, ltrig = 0, rtrig = 0;
 
-	memset(c, 0, sizeof(BUTTONS));
-	if (!poll_pad(Control, &b, &jx, &jy, &ltrig, &rtrig))
+	if (!Keys || !config || Control < 0 || Control > 3)
 		return 0;
+	c = Keys;
+	memset(c, 0, sizeof(BUTTONS));
+	if (!poll_pad(Control, &b, &jx, &jy, &ltrig, &rtrig)) {
+		last_buttons[Control] = 0;
+		last_joyx[Control] = DC_STICK_CENTER;
+		last_joyy[Control] = DC_STICK_CENTER;
+		return 0;
+	}
 
 	b = dc_virtual_buttons(b, ltrig, rtrig);
 
