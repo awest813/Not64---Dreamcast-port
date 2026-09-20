@@ -299,9 +299,10 @@ static const struct dc_ctrl_row controls[] = {
 	{ "D-pad",             "D-pad" },
 	{ "Left trigger",      "Z" },
 	{ "Right trigger",     "R" },
-	{ "Y + left trigger",  "L" },
+	{ "Y + left trigger",  "L  (no Z)" },
+	{ "X",                 "L  (Z still available on LT)" },
 	{ "Both triggers + D-pad", "C-Up / C-Down / C-Left / C-Right" },
-	{ "X",                 "unassigned" },
+	{ "Y (in menu)",       "Quit" },
 	{ "Start + A + B",     "Return to menu (not wired yet)" },
 };
 
@@ -342,10 +343,10 @@ void dc_controls_draw(int scroll)
 	}
 
 	dc_draw_text(32, 360, DC_COL_WARN,
-		     "Both triggers withhold Z+R so a C-press is not also Z+R.");
+		     "Both triggers withhold Z+R. X is L; Y+LT is L without Z.");
 	dc_draw_fill_rect(0, 424, DC_FB_W, 56, DC_COL_BG2);
 	dc_draw_fill_rect(0, 424, DC_FB_W, 2, DC_COL_LINE);
-	dc_draw_text(24, 440, DC_COL_DIM, "B back    Shifts are fixed; remap slots later");
+	dc_draw_text(24, 440, DC_COL_DIM, "B back    Menu uses unshifted pad; Y quits here");
 }
 
 #ifdef DC_HOST_STUB

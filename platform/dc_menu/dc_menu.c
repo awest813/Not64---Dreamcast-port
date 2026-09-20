@@ -521,7 +521,7 @@ void dc_menu_browser_draw(const dc_menu_browser *b)
 	draw_help_chip(256, FOOTER_Y + 12, "Start", "Boot");
 	draw_help_chip(420, FOOTER_Y + 12, "Y", "Quit");
 	dc_draw_text(24, FOOTER_Y + 36, DC_COL_DIM,
-		     "In-game: LT=Z  RT=R  Y+LT=L  both+D-pad=C");
+		     "In-game: LT=Z  RT=R  X or Y+LT=L  both+D-pad=C");
 }
 
 int dc_menu_decode_pad(unsigned int buttons, unsigned int *prev_buttons)
@@ -533,7 +533,6 @@ int dc_menu_decode_pad(unsigned int buttons, unsigned int *prev_buttons)
 	if (prev_buttons)
 		*prev_buttons = buttons;
 
-#ifdef DC_HOST_STUB
 	if (edge & DC_CONT_DPAD_UP)
 		act = DC_MENU_ACT_UP;
 	else if (edge & DC_CONT_DPAD_DOWN)
@@ -548,22 +547,6 @@ int dc_menu_decode_pad(unsigned int buttons, unsigned int *prev_buttons)
 		act = DC_MENU_ACT_BACK;
 	else if (edge & DC_CONT_Y)
 		act = DC_MENU_ACT_QUIT;
-#else
-	if (edge & CONT_DPAD_UP)
-		act = DC_MENU_ACT_UP;
-	else if (edge & CONT_DPAD_DOWN)
-		act = DC_MENU_ACT_DOWN;
-	else if (edge & CONT_DPAD_LEFT)
-		act = DC_MENU_ACT_PAGE_UP;
-	else if (edge & CONT_DPAD_RIGHT)
-		act = DC_MENU_ACT_PAGE_DOWN;
-	else if (edge & (CONT_A | CONT_START))
-		act = DC_MENU_ACT_CONFIRM;
-	else if (edge & CONT_B)
-		act = DC_MENU_ACT_BACK;
-	else if (edge & CONT_Y)
-		act = DC_MENU_ACT_QUIT;
-#endif
 	return act;
 }
 
@@ -628,6 +611,10 @@ static int host_keyboard_action(void)
 		return DC_MENU_ACT_UP;
 	if (buf[0] == 's' || buf[0] == 'S')
 		return DC_MENU_ACT_DOWN;
+	if (buf[0] == 'a' || buf[0] == 'A')
+		return DC_MENU_ACT_PAGE_UP;
+	if (buf[0] == 'd' || buf[0] == 'D')
+		return DC_MENU_ACT_PAGE_DOWN;
 	return DC_MENU_ACT_NONE;
 }
 #endif
@@ -644,13 +631,8 @@ static int poll_action(unsigned int *prev, unsigned int *hold)
 		act = host_keyboard_action();
 #endif
 	if (act == DC_MENU_ACT_NONE && hold) {
-#ifdef DC_HOST_STUB
 		unsigned int dir = buttons & (DC_CONT_DPAD_UP | DC_CONT_DPAD_DOWN |
 					      DC_CONT_DPAD_LEFT | DC_CONT_DPAD_RIGHT);
-#else
-		unsigned int dir = buttons & (CONT_DPAD_UP | CONT_DPAD_DOWN |
-					      CONT_DPAD_LEFT | CONT_DPAD_RIGHT);
-#endif
 		if (dir) {
 			++*hold;
 			if (*hold >= 14 && (*hold % 3) == 0)
@@ -735,7 +717,7 @@ int dc_menu_pick_rom(char *out_path, size_t out_len, unsigned int max_frames)
 			}
 			dc_draw_fill_rect(0, 424, DC_FB_W, 56, DC_COL_BG2);
 			dc_draw_fill_rect(0, 424, DC_FB_W, 2, DC_COL_LINE);
-			dc_draw_text(24, 440, DC_COL_DIM, "A select    B/Y quit");
+			dc_draw_text(24, 440, DC_COL_DIM, "A select    B/Y quit    D-pad moves");
 		}
 		dc_draw_present();
 #ifdef DC_HOST_STUB
@@ -754,9 +736,9 @@ int dc_menu_pick_rom(char *out_path, size_t out_len, unsigned int max_frames)
 		}
 
 		if (scr == SCR_HOME) {
-			if (act == DC_MENU_ACT_UP)
+			if (act == DC_MENU_ACT_UP || act == DC_MENU_ACT_PAGE_UP)
 				home_cur = (home_cur + 3) % 4;
-			else if (act == DC_MENU_ACT_DOWN)
+			else if (act == DC_MENU_ACT_DOWN || act == DC_MENU_ACT_PAGE_DOWN)
 				home_cur = (home_cur + 1) % 4;
 			else if (act == DC_MENU_ACT_BACK) {
 				result = DC_MENU_QUIT;
@@ -892,6 +874,18 @@ int dc_menu_selftest(void)
 	expect(&fails,
 	       dc_menu_decode_pad(DC_CONT_START, &prev) == DC_MENU_ACT_CONFIRM,
 	       "Start confirms");
+	prev = 0;
+	expect(&fails,
+	       dc_menu_decode_pad(DC_CONT_Y, &prev) == DC_MENU_ACT_QUIT,
+	       "Y quits");
+	prev = 0;
+	expect(&fails,
+	       dc_menu_decode_pad(DC_CONT_X, &prev) == DC_MENU_ACT_NONE,
+	       "X is in-game L, not a menu action");
+	prev = 0;
+	expect(&fails,
+	       dc_menu_decode_pad(DC_CONT_DPAD_LEFT, &prev) == DC_MENU_ACT_PAGE_UP,
+	       "left pages");
 
 	if (!mkdtemp(tmpdir)) {
 		failf(&fails, "mkdtemp");

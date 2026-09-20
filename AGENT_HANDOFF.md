@@ -73,7 +73,7 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
 6. **PIF/Maple host** — `native_ReadController` → `internal_ReadController`; `update_pif_write` status `0x05`; `update_pif_read` A + analog 72/48.
 7. **Audit polish** — DC-only KSEG1/`n64_addr`; Wii `fast_mem_access` **unchanged**; ROM cache clipped; teardown after run; no x86 assembler in DC `recomp.h`.
 8. **Interpreter LP64 fixes** — `macros.h` + `pure_interp.c` 32-bit ops; a real ROM now boots past IPL3. CPUTEST covers all of it (each fix fails the test when reverted).
-9. **Controller map** — triggers carry Z/R, `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons. See **Controller mapping** below.
+9. **Controller map** — triggers carry Z/R, `X` or `Y`+left trigger is L, both triggers shift the D-pad to the C-buttons. See **Controller mapping** below.
 10. **Second audit polish** — host stub builds under clang/macOS (`gc_input/input.c` nested functions removed, `<malloc.h>` guarded, `invalidate_func` declared); DC ROM-header byte order fixed and asserted; PIF joybus store made alignment- and LP64-safe; ROM cache bounds/LRU/NULL fixes; AI DMA clamped to RDRAM; `PC` no longer leaked per run; recursive `mkdir` for `/sd/not64/...`; `get_savespath()` correct on KOS.
 11. **Menu 8a** — immediate-mode ROM browser in `platform/dc_menu/`. Host `--menu-test` covers filter/sort/wrap/scroll/empty/missing/`skipMenu`. `--menu` is a keyboard picker. Argv ROM path unchanged. Framebuffer freed before `go()`. Not a `libgui/` port.
 12. **Menu 8c** — versioned `settings.cfg`, Settings list, Controls legend (shift map). Overlay (`debug`) and session file (`logfile` → `saves/not64.log`) are independent; `dc_log()` is the bring-up logger. `dc_pvr_available()` is 0 on purpose.
@@ -137,9 +137,9 @@ N64's Z, L, R and C-buttons ride on the analog triggers and two shifts:
 | D-pad | D-pad |
 | **Left trigger** | **Z** |
 | **Right trigger** | **R** |
-| **Y + left trigger** | **L** |
+| **X**, or **Y + left trigger** | **L** (X keeps Z on LT; Y+LT is L without Z) |
 | **Both triggers + D-pad** | **C-Up / C-Down / C-Left / C-Right** |
-| X | unassigned |
+| Y (menu) | Quit |
 
 Stick scaling lives in `scale_axis()`: Maple 0-255 -> N64 -80..+80 with a
 10-count deadzone. Full scale is asymmetric (-80 / +79) because 128 is centre
@@ -158,18 +158,16 @@ While both triggers are held, the triggers' own bindings (Z and R) are
 one judgement call in the scheme, and the place to revisit if a game wants Z
 held during C-presses.
 
-`smoke_map()` in `main/main_dc.c` covers all ten button branches plus eight
-analog cases (centre, both deadzone edges, all four extremes).
+`smoke_map()` in `main/main_dc.c` covers the button branches plus analog cases
+(centre, both deadzone edges, all four extremes, last-stick read-back).
 
 ---
 
 ## Open findings (audited, deliberately not changed)
 
 1. **Rumble and paks are stubs.** `rumble_ctl()` does nothing and `pakMode[4]` has no backend. The Dreamcast Jump Pack (`MAPLE_FUNC_PURUPURU`) is the natural N64 Rumble Pak analogue and the VMU (`MAPLE_FUNC_MEMCARD`) the natural Controller Pak. Both need KOS headers, so they cannot be written or verified from the host stub — do them alongside the Phase 1 ELF.
-2. **`poll_pad()` on the host stub reports every port present** while `refreshAvailable()` reports only port 0. Harmless today (only pad 0 is injected), but make them agree before multi-pad injection.
-3. **`last_joyx` / `last_joyy` are written and never read** — `controller_DC_lastButtons()` exposes only the button word. Expose the stick too or drop them.
-4. **`fileBrowser_kos_readFile` does `fopen`/`fseek`/`fclose` per call.** The ROM cache streams in 64 KiB blocks, so every page-in reopens the file. Fine on a host filesystem, likely unacceptable on Dreamcast SD/GD — cache the handle before Phase 3 performance work.
-5. **Host stub is not an SH4 model.** `unsigned long` is 64-bit on an LP64 host and 32-bit on SH4, so `rdram[]`, `reg[]` and every `read_*_in_memory()` differ in width and layout. `CPUTEST PASS` on the host is a link/logic check, not evidence about hardware. The alignment and LP64 bugs found in `pif.c` are exactly the class the host stub cannot catch by itself.
+2. **`fileBrowser_kos_readFile` does `fopen`/`fseek`/`fclose` per call.** The ROM cache streams in 64 KiB blocks, so every page-in reopens the file. Fine on a host filesystem, likely unacceptable on Dreamcast SD/GD — cache the handle before Phase 3 performance work.
+3. **Host stub is not an SH4 model.** `unsigned long` is 64-bit on an LP64 host and 32-bit on SH4, so `rdram[]`, `reg[]` and every `read_*_in_memory()` differ in width and layout. `CPUTEST PASS` on the host is a link/logic check, not evidence about hardware. The alignment and LP64 bugs found in `pif.c` are exactly the class the host stub cannot catch by itself.
 
 ---
 

@@ -108,7 +108,8 @@ extern virtualControllers_t virtualControllers[4];
 
 #define num_controller_t 1
 extern controller_t controller_DC;
-#ifdef DC_HOST_STUB
+/* Maple bits; same values as KallistiOS CONT_* so HOST and KOS share decode. */
+#define DC_CONT_C          (1u << 0)
 #define DC_CONT_B          (1u << 1)
 #define DC_CONT_A          (1u << 2)
 #define DC_CONT_START      (1u << 3)
@@ -117,9 +118,13 @@ extern controller_t controller_DC;
 #define DC_CONT_DPAD_LEFT  (1u << 6)
 #define DC_CONT_DPAD_RIGHT (1u << 7)
 #define DC_CONT_Y          (1u << 9)
+#define DC_CONT_X          (1u << 10)
+#ifdef DC_HOST_STUB
 void controller_DC_host_set(int Control, unsigned int buttons, int jx, int jy);
 void controller_DC_host_set_triggers(int Control, int ltrig, int rtrig);
 #endif
+unsigned int controller_DC_lastButtons(int Control);
+int controller_DC_lastStick(int Control, int *jx, int *jy);
 /* Unshifted Maple word. The menu uses this so holding both triggers cannot
  * steal the D-pad (that shift is an in-game mapping). */
 int controller_DC_poll_raw(int Control, unsigned int *buttons, int *jx, int *jy,

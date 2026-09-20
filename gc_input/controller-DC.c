@@ -153,6 +153,9 @@ static int poll_pad(int Control, unsigned int *buttons_out, int *jx, int *jy,
 	if (Control < 0 || Control > 3)
 		return 0;
 #ifdef DC_HOST_STUB
+	/* Only port 0 is injected; keep this in line with refreshAvailable(). */
+	if (Control != 0)
+		return 0;
 	*buttons_out = host_buttons[Control];
 	*jx = host_joyx[Control];
 	*jy = host_joyy[Control];
@@ -225,6 +228,10 @@ static unsigned int dc_virtual_buttons(unsigned int b, int ltrig, int rtrig)
 		return b & ~DC_DPAD_MASK;
 	}
 
+	/* X is a dedicated L so you are not forced to chord Y+LT. Y+LT stays
+	 * L-without-Z for games that want that. */
+	if (b & CONT_X)
+		b |= DC_VB_LTRIG_ALT;
 	if (lheld)
 		b |= (b & CONT_Y) ? DC_VB_LTRIG_ALT : DC_VB_LTRIG;
 	if (rheld)
@@ -342,9 +349,9 @@ controller_t controller_DC = {
 		.DL       = &buttons[2],
 		.DR       = &buttons[3],
 		.DD       = &buttons[4],
-		.Z        = &buttons[17],   /* left trigger              */
-		.L        = &buttons[19],   /* Y + left trigger          */
-		.R        = &buttons[18],   /* right trigger             */
+		.Z        = &buttons[17],   /* left trigger                 */
+		.L        = &buttons[19],   /* X, or Y + left trigger       */
+		.R        = &buttons[18],   /* right trigger                */
 		.A        = &buttons[5],
 		.B        = &buttons[6],
 		.START    = &buttons[9],
@@ -377,4 +384,15 @@ unsigned int controller_DC_lastButtons(int Control)
 	if (Control < 0 || Control > 3)
 		return 0;
 	return last_buttons[Control];
+}
+
+int controller_DC_lastStick(int Control, int *jx, int *jy)
+{
+	if (Control < 0 || Control > 3)
+		return 0;
+	if (jx)
+		*jx = last_joyx[Control];
+	if (jy)
+		*jy = last_joyy[Control];
+	return 1;
 }

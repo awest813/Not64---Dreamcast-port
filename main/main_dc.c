@@ -196,6 +196,8 @@ static const struct dc_map_case dc_map_cases[] = {
 	{ "L-trigger -> Z",       0,                  200,  0,  1, 0, 0,  0, 0, 0, 0, 0 },
 	{ "R-trigger -> R",       0,                    0,200,  0, 0, 1,  0, 0, 0, 0, 0 },
 	{ "Y+L-trigger -> L",     DC_CONT_Y,          200,  0,  0, 1, 0,  0, 0, 0, 0, 0 },
+	{ "X -> L",               DC_CONT_X,            0,  0,  0, 1, 0,  0, 0, 0, 0, 0 },
+	{ "X+L-trigger -> L+Z",   DC_CONT_X,          200,  0,  1, 1, 0,  0, 0, 0, 0, 0 },
 	{ "D-pad unshifted",      DC_CONT_DPAD_UP,      0,  0,  0, 0, 0,  0, 0, 0, 0, 1 },
 	{ "both+Up -> C-Up",      DC_CONT_DPAD_UP,    200,200,  0, 0, 0,  1, 0, 0, 0, 0 },
 	{ "both+Down -> C-Down",  DC_CONT_DPAD_DOWN,  200,200,  0, 0, 0,  0, 1, 0, 0, 0 },
@@ -203,6 +205,8 @@ static const struct dc_map_case dc_map_cases[] = {
 	{ "both+Right -> C-Right",DC_CONT_DPAD_RIGHT, 200,200,  0, 0, 0,  0, 0, 0, 1, 0 },
 	/* A resting finger must not latch a shift. */
 	{ "below threshold",      0,                   20, 20,  0, 0, 0,  0, 0, 0, 0, 0 },
+	{ "threshold-1 idle",     0,                   47,  0,  0, 0, 0,  0, 0, 0, 0, 0 },
+	{ "threshold Z",          0,                   48,  0,  1, 0, 0,  0, 0, 0, 0, 0 },
 };
 
 /* Stick scaling: raw Maple 0-255 -> N64 -80..+80 with a 10-count deadzone.
@@ -278,6 +282,18 @@ static int smoke_map(void)
 	/* Leave pad 0 as the other smokes expect to find it. */
 	controller_DC_host_set_triggers(0, 0, 0);
 	controller_DC_host_set(0, DC_CONT_A, 200, 80);
+	{
+		BUTTONS k;
+		int lx = 0, ly = 0;
+
+		memset(&k, 0, sizeof(k));
+		getKeys(0, &k);
+		if (!controller_DC_lastStick(0, &lx, &ly) || lx != 200 || ly != 80) {
+			dc_log(DC_LOG_ERROR, "map smoke: last stick %d,%d want 200,80",
+			       lx, ly);
+			fail = 1;
+		}
+	}
 	dc_log(fail ? DC_LOG_ERROR : DC_LOG_INFO,
 	       "map smoke %s (%u button + %u analog cases)",
 	       fail ? "FAIL" : "PASS",
