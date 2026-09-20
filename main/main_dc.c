@@ -23,6 +23,8 @@
 #include "../r4300/interupt.h"
 #include "../gc_memory/memory.h"
 #include "../gc_memory/TLB-Cache.h"
+#include "../platform/dc_menu/dc_menu.h"
+#include "../platform/dc_menu/dc_draw.h"
 #include "../gc_memory/pif.h"
 #include "../gc_memory/flashram.h"
 
@@ -447,6 +449,258 @@ static int smoke_romcache(void)
 	return fail;
 }
 
+#ifdef DC_HOST_STUB
+/* ---- menu (Phase 8a) ----------------------------------------------------
+ * The host stub has no framebuffer, so the browser is tested by driving
+ * dc_menu_step() with synthetic pad words and reading the character grid the
+ * host draw backend fills in. That covers everything except the pixels: the
+ * list, the filter, the sort, edge detection, auto-repeat, wrapping, the
+ * scroll window, paging and the pick/cancel result.
+ */
+
+static dc_menu_action menu_frame(dc_menu_state *st, int u, int d,
+				 int a, int b, int z, int r, int y)
+{
+	BUTTONS k;
+
+	memset(&k, 0, sizeof(k));
+	k.U_DPAD = u;
+	k.D_DPAD = d;
+	k.A_BUTTON = a;
+	k.B_BUTTON = b;
+	k.Z_TRIG = z;
+	k.R_TRIG = r;
+	k.Y_AXIS = y;
+	return dc_menu_step(st, &k);
+}
+
+#define MENU_IDLE(st)  menu_frame((st), 0, 0, 0, 0, 0, 0, 0)
+#define MENU_DOWN(st)  menu_frame((st), 0, 1, 0, 0, 0, 0, 0)
+#define MENU_UP(st)    menu_frame((st), 1, 0, 0, 0, 0, 0, 0)
+
+/* One press: a frame held, then a frame released, so the next press is an
+ * edge again. */
+static dc_menu_action menu_tap(dc_menu_state *st, int u, int d,
+			       int a, int b, int z, int r)
+{
+	dc_menu_action act = menu_frame(st, u, d, a, b, z, r, 0);
+	MENU_IDLE(st);
+	return act;
+}
+
+static int smoke_menu(void)
+{
+	dc_menu_list  synth;
+	dc_menu_entry items[20];
+	dc_menu_state st;
+	dc_menu_list  real;
+	int fail = 0, i, n;
+
+	/* --- a synthetic list, so movement does not depend on ./roms --- */
+	for (i = 0; i < 20; ++i) {
+		memset(&items[i], 0, sizeof(items[i]));
+		snprintf(items[i].label, sizeof(items[i].label), "rom%02d", i);
+		snprintf(items[i].path, sizeof(items[i].path), "./roms/rom%02d.z64", i);
+		items[i].size = (unsigned int)(i + 1) * 1024u * 1024u;
+	}
+	synth.items = items;
+	synth.count = 20;
+	dc_menu_state_init(&st, &synth, 5);
+
+	/* A held direction must move once, not once per polled frame. */
+	MENU_DOWN(&st);
+	if (st.cursor != 1) {
+		printf("menu smoke: first press moved to %d, want 1\n", st.cursor);
+		fail = 1;
+	}
+	for (i = 0; i < DC_MENU_REPEAT_FIRST; ++i)
+		MENU_DOWN(&st);
+	if (st.cursor != 2) {
+		printf("menu smoke: %d frames held moved to %d, want 2\n",
+		       DC_MENU_REPEAT_FIRST + 1, st.cursor);
+		fail = 1;
+	}
+	MENU_IDLE(&st);
+
+	/* The window follows the cursor: 20 entries, 5 rows. */
+	dc_menu_state_init(&st, &synth, 5);
+	for (i = 0; i < 5; ++i)
+		menu_tap(&st, 0, 1, 0, 0, 0, 0);
+	if (st.cursor != 5 || st.top != 1) {
+		printf("menu smoke: after 5 downs cursor=%d top=%d, want 5/1\n",
+		       st.cursor, st.top);
+		fail = 1;
+	}
+
+	/* Up from the top wraps to the end, and the window follows. */
+	dc_menu_state_init(&st, &synth, 5);
+	menu_tap(&st, 1, 0, 0, 0, 0, 0);
+	if (st.cursor != 19 || st.top != 15) {
+		printf("menu smoke: wrap up gave cursor=%d top=%d, want 19/15\n",
+		       st.cursor, st.top);
+		fail = 1;
+	}
+
+	/* Triggers page by a screenful and clamp at the ends. */
+	dc_menu_state_init(&st, &synth, 5);
+	menu_tap(&st, 0, 0, 0, 0, 0, 1);
+	if (st.cursor != 5) {
+		printf("menu smoke: page down gave %d, want 5\n", st.cursor);
+		fail = 1;
+	}
+	for (i = 0; i < 10; ++i)
+		menu_tap(&st, 0, 0, 0, 0, 0, 1);
+	if (st.cursor != 19) {
+		printf("menu smoke: paging past the end gave %d, want 19\n", st.cursor);
+		fail = 1;
+	}
+	for (i = 0; i < 10; ++i)
+		menu_tap(&st, 0, 0, 0, 0, 1, 0);
+	if (st.cursor != 0 || st.top != 0) {
+		printf("menu smoke: paging past the start gave %d/%d, want 0/0\n",
+		       st.cursor, st.top);
+		fail = 1;
+	}
+
+	/* The analog stick drives the cursor too, past its threshold only. */
+	dc_menu_state_init(&st, &synth, 5);
+	menu_frame(&st, 0, 0, 0, 0, 0, 0, -(DC_MENU_STICK_ON - 1));
+	if (st.cursor != 0) {
+		printf("menu smoke: stick under threshold moved to %d\n", st.cursor);
+		fail = 1;
+	}
+	menu_frame(&st, 0, 0, 0, 0, 0, 0, -DC_MENU_STICK_ON);
+	if (st.cursor != 1) {
+		printf("menu smoke: stick at threshold gave %d, want 1\n", st.cursor);
+		fail = 1;
+	}
+
+	/* A picks once per press, B cancels, and a held A does not re-pick. */
+	dc_menu_state_init(&st, &synth, 5);
+	if (menu_frame(&st, 0, 0, 1, 0, 0, 0, 0) != DC_MENU_PICK) {
+		printf("menu smoke: A did not pick\n");
+		fail = 1;
+	}
+	if (menu_frame(&st, 0, 0, 1, 0, 0, 0, 0) != DC_MENU_NONE) {
+		printf("menu smoke: held A picked twice\n");
+		fail = 1;
+	}
+	MENU_IDLE(&st);
+	if (menu_frame(&st, 0, 0, 0, 1, 0, 0, 0) != DC_MENU_CANCEL) {
+		printf("menu smoke: B did not cancel\n");
+		fail = 1;
+	}
+
+	/* An empty list must not pick anything or move. */
+	{
+		dc_menu_list empty;
+		empty.items = NULL;
+		empty.count = 0;
+		dc_menu_state_init(&st, &empty, 5);
+		if (menu_frame(&st, 0, 0, 1, 0, 0, 0, 0) != DC_MENU_NONE) {
+			printf("menu smoke: empty list picked\n");
+			fail = 1;
+		}
+		menu_tap(&st, 0, 1, 0, 0, 0, 0);
+		if (st.cursor != 0 || st.top != 0) {
+			printf("menu smoke: empty list moved to %d/%d\n",
+			       st.cursor, st.top);
+			fail = 1;
+		}
+	}
+
+	/* What the browser actually draws: the marker on the selected row, the
+	 * label, and the size. */
+	dc_menu_state_init(&st, &synth, 5);
+	menu_tap(&st, 0, 1, 0, 0, 0, 0);
+	dc_draw_init();
+	dc_menu_draw(&st, "Not64 test");
+	{
+		const char *row = dc_draw_host_row(3);	/* title, blank, 0, 1 */
+		if (!row || row[1] != '>' || !strstr(row, "rom01") ||
+		    !strstr(row, "2 MiB")) {
+			printf("menu smoke: selected row drew as '%s'\n",
+			       row ? row : "(null)");
+			fail = 1;
+		}
+		row = dc_draw_host_row(2);
+		if (!row || row[1] == '>') {
+			printf("menu smoke: marker also on the unselected row\n");
+			fail = 1;
+		}
+	}
+	dc_draw_shutdown();
+
+	/* --- the real directory: filter and sort --- */
+	n = dc_menu_list_load(&real, romFile_topLevel);
+	if (n < 0) {
+		printf("menu smoke: list load failed (%d)\n", n);
+		fail = 1;
+	} else {
+		for (i = 0; i < n; ++i) {
+			const char *lbl = real.items[i].label;
+			size_t len = strlen(lbl);
+			if (len < 4 || (strcmp(lbl + len - 4, ".z64") &&
+					strcmp(lbl + len - 4, ".n64") &&
+					strcmp(lbl + len - 4, ".v64"))) {
+				printf("menu smoke: kept a non-ROM entry '%s'\n", lbl);
+				fail = 1;
+				break;
+			}
+			if (i > 0 && strcmp(real.items[i - 1].label, lbl) > 0) {
+				printf("menu smoke: '%s' sorts after '%s'\n",
+				       real.items[i - 1].label, lbl);
+				fail = 1;
+				break;
+			}
+		}
+		if (n < 2) {
+			printf("menu smoke: expected the two bring-up ROMs, saw %d\n", n);
+			fail = 1;
+		}
+	}
+	dc_menu_list_free(&real);
+	if (real.items != NULL || real.count != 0) {
+		printf("menu smoke: free left the list populated\n");
+		fail = 1;
+	}
+
+	/* --- the whole browser, through the real getKeys() path --- */
+	if (n > 0) {
+		dc_menu_entry choice;
+		int picked;
+
+		controller_DC_host_set_triggers(0, 0, 0);
+		controller_DC_host_set(0, DC_CONT_A, 128, 128);
+		memset(&choice, 0, sizeof(choice));
+		picked = dc_menu_run(romFile_topLevel, &choice);
+		if (picked != 1) {
+			printf("menu smoke: dc_menu_run returned %d, want 1\n", picked);
+			fail = 1;
+		} else if (choice.path[0] == '\0') {
+			printf("menu smoke: dc_menu_run picked an empty path\n");
+			fail = 1;
+		} else {
+			FILE *fp = fopen(choice.path, "rb");
+			if (!fp) {
+				printf("menu smoke: picked '%s', which does not open\n",
+				       choice.path);
+				fail = 1;
+			} else {
+				fclose(fp);
+			}
+		}
+	}
+
+	/* Leave pad 0 where smoke_map left it: the I/O and PIF smokes read it. */
+	controller_DC_host_set_triggers(0, 0, 0);
+	controller_DC_host_set(0, DC_CONT_A, 200, 80);
+
+	printf("menu smoke %s (%d ROMs listed)\n", fail ? "FAIL" : "PASS", n);
+	return fail;
+}
+#endif /* DC_HOST_STUB */
+
 static int smoke_pif(void)
 {
 	int fail = 0;
@@ -743,6 +997,28 @@ static void dump_run_state(void)
 		       : "VI origin still 0 - no framebuffer handed over yet");
 }
 
+/* Bring the controller layer up. assign_controller() writes through
+ * control_info.Controls, so that pointer has to be set before anything is
+ * assigned -- otherwise the first getKeys() dereferences NULL. The Phase 8
+ * menu polls the pad before a ROM exists, so this runs once with no header
+ * for the browser and again with the header once the ROM is loaded. */
+static void init_controllers(void *header)
+{
+	int i;
+
+	init_controller_ts();
+	control_info.MemoryBswaped = TRUE;
+	control_info.HEADER = (BYTE *)header;
+	control_info.Controls = Controls;
+	for (i = 0; i < 4; i++) {
+		Controls[i].Present = FALSE;
+		Controls[i].RawData = FALSE;
+		Controls[i].Plugin = PLUGIN_NONE;
+	}
+	initiateControllers(control_info);
+	auto_assign_controllers();
+}
+
 static int load_and_step(const char *path, unsigned long steps)
 {
 	fileBrowser_file romfile;
@@ -783,20 +1059,7 @@ static int load_and_step(const char *path, unsigned long steps)
 	init_memory();
 	gfx_info_init();
 	audio_info_init();
-	init_controller_ts();
-	control_info.MemoryBswaped = TRUE;
-	control_info.HEADER = (BYTE*)&ROM_HEADER;
-	control_info.Controls = Controls;
-	{
-		int i;
-		for (i = 0; i < 4; i++) {
-			Controls[i].Present = FALSE;
-			Controls[i].RawData = FALSE;
-			Controls[i].Plugin = PLUGIN_NONE;
-		}
-	}
-	initiateControllers(control_info);
-	auto_assign_controllers();
+	init_controllers(&ROM_HEADER);
 	rsp_info_init();
 	romOpen_gfx();
 	romOpen_audio();
@@ -809,6 +1072,14 @@ static int load_and_step(const char *path, unsigned long steps)
 
 #ifdef DC_HOST_STUB
 	if (smoke_map()) {
+		cpu_deinit();
+		TLBCache_deinit();
+		ROMCache_deinit();
+		return 1;
+	}
+#endif
+#ifdef DC_HOST_STUB
+	if (smoke_menu()) {
 		cpu_deinit();
 		TLBCache_deinit();
 		ROMCache_deinit();
@@ -846,7 +1117,9 @@ int main(int argc, char **argv)
 {
 	const char *rompath = "roms/dc_cputest.z64";
 	unsigned long steps = DC_BRINGUP_STEPS;
+	dc_menu_entry choice;
 	int fail = 0;
+	int argi = 1;
 
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stderr, NULL, _IONBF, 0);
@@ -855,18 +1128,69 @@ int main(int argc, char **argv)
 	vid_set_mode(DM_640x480, PM_RGB565);
 #endif
 
+	/* Phase 8: the menu is optional and never load-bearing. On the host the
+	 * argv path is the regression harness, so the browser only runs when it
+	 * is asked for; on hardware there is no argv, so it is the default. */
+#ifdef DC_HOST_STUB
+	skipMenu = 1;
+	if (argc > argi && strcmp(argv[argi], "--menu") == 0) {
+		skipMenu = 0;
+		argi++;
+	}
+#else
+	skipMenu = 0;
+#endif
+
 	print_budget();
 	list_rom_dir();
 	probe_controllers();
 	if (probe_saves())
 		fail = 1;
 
-	if (argc > 1)
-		rompath = argv[1];
+	if (argc > argi) {
+		rompath = argv[argi];
+		argi++;
+		skipMenu = 1;	/* an explicit ROM overrides the browser */
+	}
 	/* Optional step budget: a real ROM needs far more than the bring-up
 	 * default to get through IPL3. 0 means run until the ROM stops. */
-	if (argc > 2)
-		steps = strtoul(argv[2], NULL, 0);
+	if (argc > argi)
+		steps = strtoul(argv[argi], NULL, 0);
+
+	if (!skipMenu) {
+		int picked;
+
+		fileBrowser_kos_bind();
+		/* No ROM yet, so no header; load_and_step() redoes this with one. */
+		init_controllers(NULL);
+
+		picked = dc_menu_run(romFile_topLevel, &choice);
+#ifdef DC_HOST_STUB
+		/* No framebuffer here, so print the last screen the browser drew.
+		 * It is the only way to see the menu without a Dreamcast. */
+		{
+			int row;
+			printf("--- menu screen (%dx%d chars) ---\n",
+			       dc_draw_width() / dc_draw_char_w(),
+			       dc_draw_host_rows());
+			for (row = 0; row < dc_draw_host_rows(); ++row) {
+				const char *text = dc_draw_host_row(row);
+				if (text)
+					printf("|%s|\n", text);
+			}
+			printf("--- end menu screen ---\n");
+		}
+#endif
+		if (picked < 0) {
+			printf("menu failed (%d)\n", picked);
+			return 1;
+		}
+		if (picked == 0) {
+			printf("menu cancelled\n");
+			return 0;
+		}
+		rompath = choice.path;
+	}
 
 	printf("Phase 2/3: interpreter %lu steps using %s\n", steps, rompath);
 	if (load_and_step(rompath, steps))
