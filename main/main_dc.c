@@ -505,6 +505,11 @@ static void dump_run_state(void)
 	       (unsigned long)(unsigned int)reg_cop0[12],
 	       (unsigned long)(unsigned int)reg_cop0[13],
 	       (unsigned long)(unsigned int)reg_cop0[14]);
+	printf("  COP0   BadVAddr=0x%08lx EntryHi=0x%08lx Index=0x%08lx Wired=0x%08lx\n",
+	       (unsigned long)(unsigned int)reg_cop0[8],
+	       (unsigned long)(unsigned int)reg_cop0[10],
+	       (unsigned long)(unsigned int)reg_cop0[0],
+	       (unsigned long)(unsigned int)reg_cop0[6]);
 	printf("  MI     intr=0x%08lx mask=0x%08lx\n",
 	       (unsigned long)MI_register.mi_intr_reg,
 	       (unsigned long)MI_register.mi_intr_mask_reg);

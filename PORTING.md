@@ -308,9 +308,25 @@ MI     intr=0x0000000a (SI|VI)  mask=0x00000002 (SI)
 VI     origin=0 width=0
 ```
 
-The game now enables interrupts and uses the TLB. Next owner starts at the TLB
-store miss from `0x800afbe4` and the refill path at `0x80000000` — DC builds
-with `USE_TLB_CACHE` (`TLB-Cache-hash.c`), which nothing has stressed yet.
+Narrowed further — it is an **infinite TLB refill loop**, not a hang:
+
+- `BadVAddr = 0x00048240`, `EntryHi = 0x00048000` — a KUSEG address, so the
+  game legitimately uses the TLB.
+- The refill vector is **not** empty. `0x80000000` holds
+  `LUI r26,0x800b` / `ADDIU r26,r26,0xfba0` / `JR r26`, so the game's own
+  handler is installed and jumps to `0x800afba0`.
+- Sampling the PC at 600M / 620M / 700M steps gives `0x80000000`,
+  `0x800afbe4`, `0x800afbd4`: it cycles between the vector and the faulting
+  store forever. The handler runs, retries the store at `0x800afbe4`, and
+  misses on the same address again.
+
+So the TLB entry the handler writes is not taking effect for the subsequent
+store. Start at `TLBWR`/`TLBWI` in `r4300/pure_interp.c` (or `cop0.c`) and at
+`gc_memory/TLB-Cache-hash.c`, which DC uses via `USE_TLB_CACHE` instead of the
+8 MiB LUT and which nothing had exercised before this ROM. Note the DC
+`#ifdef`s in that file only stub the zlib savestate dumpers — the lookup path
+is unmodified, so suspect the write/invalidate path rather than those guards.
+`dump_run_state()` prints `BadVAddr`/`EntryHi`/`Index`/`Wired` to help.
 
 Throughput on this host is ~126M interpreted instructions/sec. An SH4 at
 200 MHz will be one to two orders of magnitude slower, which is the
