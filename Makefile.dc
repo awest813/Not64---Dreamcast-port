@@ -93,6 +93,9 @@ endif
 ifeq ($(PERF),1)
 DC_DEFS += -DDC_PERF
 endif
+ifeq ($(SOFT_PROFILE),1)
+DC_DEFS += -DDC_SOFT_PROFILE
+endif
 # Legacy register/memory views intentionally alias 32-bit and 64-bit words.
 ifeq ($(GFX),soft)
 DC_DEFS += -DDC_SOFT_GFX
@@ -269,6 +272,7 @@ help:
 	  '  RASTER_STRICT=1 restricts GPU work to replay-tested opaque fills (requires RASTER_PVR=1).' \
 	  '  RASTER_PROFILE=1 adds expensive per-texture timings; PERF=1 measures actual game frames.' \
 	  '  Add UPLOAD_SKIP=1 to measure PVR hash/upload reuse (slower in Flycast).' \
+	  '  SOFT_PROFILE=1 reports cumulative RDP draw-category timings every 60 display lists.' \
 	  '  PERF=1 prints cumulative game-phase timings every 60 frames; LTO=1 enables cross-file optimization.' \
 	  '  GAME_DISC=1 GAME_FRAMES=0 GAME_STEPS=0 GAME_START=0 runs without diagnostic limits or synthetic Start.' \
 	  '  GAME_CHECKPOINT=1 resumes /cd/boot.st after loading the game ROM (GAME_DISC=1).' \

@@ -39,6 +39,12 @@
 
 TX::TX(GFX_INFO info) : gfxInfo(info)
 {
+   sampleEpoch=0;
+   for(auto &entry:sampleCache)entry.epoch=0;
+   invalidateSamples();
+#ifdef DC_SOFT_PROFILE
+   sampleHits=sampleMisses=0;
+#endif
    memset(descriptor,0,sizeof(descriptor)); memset(tmem,0,sizeof(tmem));
    memset(paletteData,0,sizeof(paletteData));
    textureLUT=textureLOD=textureDetail=texturePersp=0;
@@ -51,10 +57,22 @@ TX::TX(GFX_INFO info) : gfxInfo(info)
 
 TX::~TX()
 {
+#ifdef DC_SOFT_PROFILE
+   printf("Soft samples: hits=%u misses=%u\n",sampleHits,sampleMisses);
+#endif
+}
+
+void TX::invalidateSamples()
+{
+   if(++sampleEpoch==0) {
+       for(auto &entry:sampleCache)entry.epoch=0;
+       sampleEpoch=1;
+   }
 }
 
 void TX::setTextureLUT(int value)
 {
+   invalidateSamples();
    textureLUT = value;
 }
 
@@ -84,6 +102,7 @@ void TX::setTImg(int f, int s, int w, void *t)
 void TX::setTile(int f, int s, int l, int t, int tile, int p,
 		 int ct, int mt, int st, int cs, int ms, int ss)
 {
+   invalidateSamples();
    descriptor[tile].format  = f;
    descriptor[tile].size    = s;
    descriptor[tile].line    = l;
@@ -100,6 +119,7 @@ void TX::setTile(int f, int s, int l, int t, int tile, int p,
 
 void TX::loadBlock(float uls, float ult, int tile, float lrs, int dxt)
 {
+   invalidateSamples();
    unsigned dst=descriptor[tile].tmem*8;
    unsigned bits=4u<<descriptor[tile].size;
    unsigned bytes=(((unsigned)lrs+1)*bits+7)/8;
@@ -113,6 +133,8 @@ void TX::loadBlock(float uls, float ult, int tile, float lrs, int dxt)
 }
 void TX::loadTile(int tile, float uls, float ult, float lrs, float lrt)
 {
+   // Invalidate before the loop: a later invalid row may follow valid writes.
+   invalidateSamples();
    unsigned bits=4u<<size;
    if(lrs<uls || lrt<ult || uls<0 || ult<0) return;
    unsigned bytes=(((unsigned)(lrs-uls)+1)*bits+7)/8;
@@ -129,6 +151,7 @@ void TX::loadTile(int tile, float uls, float ult, float lrs, float lrt)
 }
 void TX::loadTLUT(int tile, int count)
 {
+   invalidateSamples();
    int dst=descriptor[tile].tmem-256;
    unsigned src=(unsigned char *)tImg-gfxInfo.RDRAM;
    if(dst<0 || count<0 || dst+count>256 || src>SOFT_RDRAM_BYTES-(unsigned)count*2) return;
@@ -140,6 +163,7 @@ void TX::loadTLUT(int tile, int count)
 
 void TX::setTileSize(float uls, float ult, float lrs, float lrt, int tile)
 {
+   invalidateSamples();
    descriptor[tile].uls = uls;
    descriptor[tile].ult = ult;
    descriptor[tile].lrs = lrs;
@@ -224,6 +248,30 @@ bool TX::translateCoordinates(int &s, int &t, int tile)
 
 Color32 TX::sample(int tile, int s, int t)
 {
+#ifndef DC_SOFT_REFERENCE
+   // Cache decoded samples, not filtered results. Preserve filter arithmetic
+   // and raw coordinates (including wrap/mirror/clamp and invalid samples).
+   unsigned index=((unsigned)s+(unsigned)t*17u+(unsigned)tile*67u)&255u;
+   SampleEntry &entry=sampleCache[index];
+   if(entry.epoch==sampleEpoch && entry.tile==tile && entry.s==s && entry.t==t) {
+#ifdef DC_SOFT_PROFILE
+       ++sampleHits;
+#endif
+       return entry.color;
+   }
+#ifdef DC_SOFT_PROFILE
+   ++sampleMisses;
+#endif
+   entry.color=sampleUncached(tile,s,t);
+   entry.tile=tile;entry.s=s;entry.t=t;entry.epoch=sampleEpoch;
+   return entry.color;
+#else
+   return sampleUncached(tile,s,t);
+#endif
+}
+
+Color32 TX::sampleUncached(int tile, int s, int t)
+{
    if(!translateCoordinates(s,t,tile)) return Color32(0,0,0,0);
    Descriptor &d=descriptor[tile];
    unsigned addr=d.tmem*8+t*d.line*8+(s*(4u<<d.size))/8;
@@ -252,6 +300,17 @@ Color32 TX::sample(int tile, int s, int t)
    return Color32(0,0,0,0);
 }
 
+static inline float texelFloor(float value)
+{
+#ifndef DC_SOFT_REFERENCE
+   // Truncation equals floor in this range, and every integral result fits
+   // exactly in float. Keep negative, zero, large and non-finite inputs on the
+   // original libm path (including signed zero).
+   if(value>0.0f && value<8388608.0f)return (float)(int)value;
+#endif
+   return floorf(value);
+}
+
 Color32 TX::getTexel(float _s, float _t, int tile, TF* tf)
 {
    tile &= 7;
@@ -264,8 +323,8 @@ Color32 TX::getTexel(float _s, float _t, int tile, TF* tf)
    
    if(unpackTexel[tile] == NULL) return Color32(0,0,0,0);
 
-   if (!tf) return sample(tile,(int)floorf(s),(int)floorf(t));
-   float fs=floorf(s), ft=floorf(t);
+   if (!tf) return sample(tile,(int)texelFloor(s),(int)texelFloor(t));
+   float fs=texelFloor(s), ft=texelFloor(t);
    if(s==fs && t==ft) return sample(tile,(int)fs,(int)ft);
    float dx=s-fs,dy=t-ft;
    float distance[4]={dx*dx+dy*dy,(1-dx)*(1-dx)+dy*dy,

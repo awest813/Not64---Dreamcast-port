@@ -10,15 +10,20 @@ parser.add_argument("--gpu", action="store_true", help="require actual completed
 parser.add_argument("--reference", type=Path, help="compare texture cases with the unoptimized software replay")
 args = parser.parse_args()
 lines = args.log.read_text(encoding="utf-8-sig").splitlines()
-required = ["partial-fill", "opaque-ramp", "mixed-transition", "combined-cold", "combined-hot", "texture-spans"]
+required = ["partial-fill", "opaque-ramp", "mixed-transition", "combined-cold", "combined-hot", "texture-spans", "texture-cache"]
 errors = []
 cases = [line for line in lines if line.startswith("REPLAY span-case ")]
 if len(cases) != 96 or any(not re.fullmatch(rf"REPLAY span-case {n} color=[0-9a-f]{{8}} depth=[0-9a-f]{{8}} tail=[0-9a-f]{{8}} state=[0-9a-f]{{8}}", line) for n, line in enumerate(cases)):
     errors.append("missing, repeated, or malformed texture cases")
+cache_cases = [line for line in lines if line.startswith("REPLAY cache-case ")]
+if len(cache_cases) != 64 or any(not re.fullmatch(rf"REPLAY cache-case {n} before=[0-9a-f]{{8}} after=[0-9a-f]{{8}}", line) for n, line in enumerate(cache_cases)):
+    errors.append("missing, repeated, or malformed cache cases")
 if args.reference:
     reference = args.reference.read_text(encoding="utf-8-sig").splitlines()
     expected = [line for line in reference if line.startswith("REPLAY span-case ")]
     reference_summary = [line for line in reference if line.startswith("REPLAY RESULT ")]
+    if cache_cases != [line for line in reference if line.startswith("REPLAY cache-case ")]:
+        errors.append("cache cases differ from the software reference")
     if cases != expected or reference_summary != ["REPLAY RESULT failures=0 stop=0 PASS"]:
         errors.append("texture cases differ from the completed software reference")
     for name in required:

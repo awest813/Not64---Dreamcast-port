@@ -268,3 +268,47 @@ The isolated target rectangle workload is 1.78x faster (24 full-screen draws:
 onto the game. Next: attribute the textured-triangle cost, extend exact span
 qualification to the dominant cases, and retain software for unproven GPU
 filtering/quantization. No new GPU capability or Downloads launcher change.
+
+## Triangle profile and exact sampler work
+
+`SOFT_PROFILE=1` now prints cumulative RDP call counts and elapsed microseconds
+by draw category and cycle every 60 display lists. It works with the host or
+KOS software renderer. Keep it off for final FPS measurements. The counters
+measure time inside each RDP call; GPU flushes can move deferred GPU time into
+the next call, so use software runs to attribute software work.
+
+The initial ARM32 menu profile (`triangle-profile/menu.log`) attributes 12.417 s
+of 14.453 s raster time to textured triangles: 6,240 one-cycle calls take 5.516 s
+and 3,000 two-cycle calls take 6.901 s. This establishes the next bottleneck;
+opaque rectangles alone were not representative of the scene.
+
+A 256-entry decoded-sample cache retains raw floating-point texel colors, keyed
+by tile and integer coordinates. Its 8 KiB of entries live with the renderer.
+TMEM uploads, palette uploads, LUT changes and tile/size changes invalidate the
+generation; wrap clears old tags. Partial uploads invalidate before writing.
+Filter weights, accumulation order, combiner operations and game timing remain
+unchanged. A positive bounded coordinate floor uses exact integer truncation;
+other coordinates retain the original libm operation.
+
+The replay adds 64 texture mutation cases, format/palette changes, collisions,
+wrap, partial uploads and fractional/large coordinate boundaries. ARM optimized
+and ARM reference match; SH4 optimized and SH4 reference match. Near-boundary
+three-point arithmetic differs between those CPU targets even in the original
+sampler, so same-target comparison is required for raw-float hashes. This is
+not a new tolerance or evidence of independent N64 accuracy.
+
+Cache-only target evidence (`cache-game.log`): frames 60-120 take 106.871118 s,
+versus 116.322003 s before this work: 0.561 FPS versus 0.516 FPS. This is one
+warm interval in Flycast 2.6, with profiling disabled; it is not a 5 FPS result.
+Full CPU/software regressions and menu/opening reference captures remain part
+of the final validation, rather than projecting host or microbenchmark speed.
+
+Final cache-plus-floor target evidence (`floor-game.log`): frame 60 is at
+102,888,654 us and frame 120 at 205,302,201 us. The warm interval is
+102.413547 s, or **0.586 FPS**, a **13.6% throughput gain** over the prior
+0.516 FPS strict baseline. Native resolution, filtering, geometry and game timing
+are unchanged; AICA starts at 32006 Hz. This remains one menu interval, not the
+multi-scene/repeated-run Q5 acceptance result. Downloads remains on its existing
+experimental image. The full-screen nearest/clamped microbenchmark regresses
+about 12%; cache admission/canonicalization is a follow-up candidate, and must
+not be confused with the measured game improvement.

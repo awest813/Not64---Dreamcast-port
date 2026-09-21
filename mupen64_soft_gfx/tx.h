@@ -60,6 +60,9 @@ typedef struct
 class TX
 {
    friend class PVRRaster;
+#ifdef DC_RASTER_REPLAY
+   friend struct RasterReplayProbe;
+#endif
    GFX_INFO gfxInfo;
    
    int textureLUT;
@@ -77,6 +80,17 @@ class TX
    unsigned char tmem[512*8];
    unsigned short paletteData[256];
    Color32 sample(int tile, int s, int t);
+   Color32 sampleUncached(int tile, int s, int t);
+   struct SampleEntry {
+       unsigned epoch;
+       int tile,s,t;
+       Color32 color;
+   } sampleCache[256];
+   unsigned sampleEpoch;
+   void invalidateSamples();
+#ifdef DC_SOFT_PROFILE
+   unsigned sampleHits, sampleMisses;
+#endif
    
    Color32 (TX::*unpackTexel[8])(int tile, int s, int t);
    Color32 unpack_RGBA16(int tile, int s, int t);

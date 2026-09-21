@@ -30,6 +30,44 @@
 #include <stdio.h>
 
 #include "rdp.h"
+#ifdef DC_SOFT_PROFILE
+#include <stdint.h>
+#ifdef DC_HOST_STUB
+#include <time.h>
+static uint64_t soft_now() {
+    timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
+    return (uint64_t)t.tv_sec*1000000+t.tv_nsec/1000;
+}
+#else
+#include <kos.h>
+static uint64_t soft_now() { return timer_us_gettime64(); }
+#endif
+namespace {
+struct SoftBucket { uint64_t us; unsigned calls; } softBuckets[7][4];
+unsigned softLists;
+struct SoftScope {
+    SoftBucket &bucket; uint64_t start;
+    SoftScope(unsigned kind,unsigned cycle):bucket(softBuckets[kind][cycle&3]),start(soft_now()) {}
+    ~SoftScope(){bucket.us+=soft_now()-start;++bucket.calls;}
+};
+}
+extern "C" void dc_soft_profile_reset() {
+    for(auto &kind:softBuckets)for(auto &b:kind){b.us=0;b.calls=0;}
+    softLists=0;
+}
+extern "C" void dc_soft_profile_list() {
+    if(++softLists%60)return;
+    const char *names[]={"fill","rect","texture-z","texture","shade-z","shade","debug"};
+    for(unsigned k=0;k<7;k++)for(unsigned c=0;c<4;c++) {
+        auto &b=softBuckets[k][c];
+        if(b.calls)printf("Soft profile: lists=%u kind=%s cycle=%u calls=%u us=%llu\n",
+            softLists,names[k],c,b.calls,(unsigned long long)b.us);
+    }
+}
+#define SOFT_SCOPE(kind) SoftScope softScope(kind,cycleType)
+#else
+#define SOFT_SCOPE(kind) ((void)0)
+#endif
 #ifdef DC_RASTER_PVR
 #include "../platform/dc_raster_pvr.h"
 #endif
@@ -171,6 +209,7 @@ void RDP::setPrimColor(int color, float mLOD, float lLOD)
 
 void RDP::fillRect(float ulx, float uly, float lrx, float lry)
 {
+   SOFT_SCOPE(0);
 #ifdef DC_RASTER_PVR
    if(PVRRaster::fill(this,ulx,uly,lrx,lry)) return;
    PVRRaster::flush();
@@ -196,6 +235,7 @@ void RDP::setTileSize(float uls, float ult, float lrs, float lrt, int tile)
 
 void RDP::texRect(int tile, float ulx, float uly, float lrx, float lry, float s, float t, float dsdx, float dtdy)
 {
+   SOFT_SCOPE(1);
 #ifdef DC_RASTER_PVR
    if(PVRRaster::rectangle(this,tile,ulx,uly,lrx,lry,s,t,dsdx,dtdy)) return;
    PVRRaster::flush();
@@ -215,6 +255,7 @@ void RDP::loadTile(int tile, float uls, float ult, float lrs, float lrt)
 
 void RDP::debug_tri(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,4>& v2)
 {
+   SOFT_SCOPE(6);
 #ifdef DC_RASTER_PVR
    PVRRaster::flush();
 #endif
@@ -224,6 +265,7 @@ void RDP::debug_tri(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,4>& v
 void RDP::tri_shade_zbuff(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,4>& v2,
 			  Color32& c0, Color32& c1, Color32& c2, float z0, float z1, float z2)
 {
+   SOFT_SCOPE(4);
 #ifdef DC_RASTER_PVR
    PVRRaster::flush();
 #endif
@@ -235,6 +277,7 @@ void RDP::tri_shade_txtr_zbuff(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<
 			       float s0, float t0, float s1, float t1, float s2, float t2, int tile,
 			       float w0, float w1, float w2, float z0, float z1, float z2)
 {
+   SOFT_SCOPE(2);
 #ifdef DC_RASTER_PVR
    if(PVRRaster::triangle(this,v0,v1,v2,c0,c1,c2,s0,t0,s1,t1,s2,t2,tile,w0,w1,w2)) return;
    PVRRaster::flush();
@@ -246,6 +289,7 @@ void RDP::tri_shade_txtr(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,
 			 Color32& c0, Color32& c1, Color32& c2, 
 			 float s0, float t0, float s1, float t1, float s2, float t2, int tile, float w0, float w1, float w2)
 {
+   SOFT_SCOPE(3);
 #ifdef DC_RASTER_PVR
    PVRRaster::flush();
 #endif
@@ -255,6 +299,7 @@ void RDP::tri_shade_txtr(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,
 void RDP::tri_shade(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,4>& v2,
 		    Color32& c0, Color32& c1, Color32& c2)
 {
+   SOFT_SCOPE(5);
 #ifdef DC_RASTER_PVR
    PVRRaster::flush();
 #endif

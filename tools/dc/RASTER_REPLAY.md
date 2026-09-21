@@ -23,6 +23,7 @@ With the current KOS environment loaded, from the repository root:
 
 ```sh
 make -f tests/dc/Makefile.raster-replay STRICT=1
+make -f tests/dc/Makefile.raster-replay STRICT=1 REFERENCE=1
 ```
 
 Boot `build/dc/raster-replay-0-1/replay.elf` in the isolated Flycast 2.6 setup,
@@ -31,13 +32,19 @@ using OpenGL, serial console enabled, `rend.RenderToTextureBuffer=yes`, and
 `tools/dc/scrape_console.ps1`, then validate:
 
 ```sh
-python3 tools/dc/check_raster_replay.py --gpu strict.log --reference reference.log
+python3 tools/dc/check_raster_replay.py --gpu strict.log --reference target-reference.log
 ```
 
 The target prints one completion summary and stays idle so serial results can
 be captured. Close that test instance after collection. The checker rejects
 missing, repeated, truncated or failing fixture results. `--gpu` also requires
 completed scenes for every fixture that is supposed to exercise hardware.
+
+Capture `target-reference.log` from `raster-replay-0-1-reference/replay.elf` with
+the same emulator settings. Use the same CPU target for the exact floating-point
+sample comparisons: the near-boundary three-point cases expose differences
+between ARM and SH4 even in the unchanged sampler. The checker deliberately
+rejects those differences; do not introduce a tolerance to hide them.
 
 For the negative control, build with `STRICT=0` and boot
 `build/dc/raster-replay-0-0/replay.elf`. This mode currently fails the suite;
@@ -52,6 +59,7 @@ the checker must return nonzero. A successful build is not a successful replay.
 | GPU/software/GPU transition | Rejected alpha-test samples preserve the destination; an intervening CPU edit survives the next batch |
 | Two-cycle producer, one-cycle consumer | Matches the software combiner's defined prior-state behavior on cold and hot cache candidates |
 | Opaque software texture rectangles | Analytic RGB/alpha ramp plus 96 reference comparisons of framebuffer, depth, boundary words and exact floating-point combiner/blender state |
+| Decoded sample cache | 64 before/after mutation cases across RGBA, CI, IA and I formats, palette/TMEM/tile changes, collisions, epoch wrap and a partially valid upload; fractional and large coordinate boundaries |
 
 The first three have analytic expected framebuffer values. The last establishes
 software parity; it does not independently establish the architectural meaning
@@ -134,3 +142,34 @@ The strict OOT warm interval remains **0.516 FPS**: frames 60-120 take
 There is no meaningful menu improvement. The new rectangle path does not address
 this scene's dominant work; the next performance work should profile and qualify
 textured triangle spans, rather than extrapolating the synthetic rectangle gain.
+
+## Decoded samples and coordinate floor
+
+`REFERENCE=1` also disables the decoded-sample cache and positive-coordinate
+floor optimization. The 64 `cache-case` records compare raw float colors before
+and after mutations, in addition to the existing pixel/state replays. Run both
+builds on the same CPU target when comparing near-boundary filter arithmetic.
+The cache retains decoded colors only; no filter result or blend result is
+reused. Its generation changes on every texture, palette, LUT or tile mutation,
+including uploads which write a valid row before encountering invalid bounds.
+
+Final sampler correctness evidence: `floor-host.log` versus `floor-reference.log`,
+and `floor-kos.log` versus `floor-kos-reference.log`. Both pass all fixtures;
+the cross-CPU boundary mismatch is retained as a failing control. Full host
+regressions pass in `floor-full-host.log`. `floor-scenes/menu.ppm` and the saved
+slot 1 match the prior menu image and complete state byte for byte;
+`floor-scenes/opening.ppm` matches the established 60-frame opening reference.
+
+The cache is not faster for every workload. The 24 full-screen nearest/clamped
+rectangle benchmark takes 5,312,926 us with cache plus floor versus 4,727,047 us
+with the preceding span-only implementation (about 12% slower). Raw coordinates
+which clamp to the same edge texel still occupy different cache keys. Keep this
+case in performance comparisons; the measured OOT gain does not establish a
+general renderer speedup. Cache admission/canonicalization needs its own measured
+change and equivalence checks before altering this policy.
+
+With profiling disabled, the final strict OOT menu run improves to **0.586 FPS**:
+60 frames / 102.413547 s (`floor-game.log`, frames 60-120), compared with
+0.516 FPS / 116.322003 s in `span-game.log`. This is 13.6% more throughput
+in one warm Flycast interval. The separate private image is
+`not64-oot-quality-floor.cdi`; the existing Downloads launcher is unchanged.

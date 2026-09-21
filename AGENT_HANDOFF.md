@@ -8,6 +8,30 @@ are KallistiOS-only.
 
 ## Integration checkpoint — 2026-09-20
 
+2026-09-21 sampler follow-up: strict menu improves **0.516 -> 0.586 FPS**
+(13.6% throughput), frames 60-120 / 102.413547 s in `floor-game.log`. The final
+private image is `not64-oot-quality-floor.cdi`; Downloads remains unchanged.
+An 8 KiB decoded-sample cache invalidates on TMEM, palette, LUT and tile/size
+changes; filter arithmetic is unchanged. Positive bounded coordinate floor uses
+exact truncation. `SOFT_PROFILE=1` adds per-draw-category timing; the ARM menu
+profile found textured triangles account for ~86% of raster time. Keep profiling
+off for FPS results. The cache-only warm result was 0.561 FPS.
+
+All host regressions pass. Menu/opening images and the menu's complete saved
+state match their references. Replay now includes 64 sample mutation/boundary
+cases in addition to the prior 96 pixel/state cases. **Use same-target references**:
+the unchanged SH4 and ARM three-point filters differ near floating-point
+boundaries. `floor-kos.log` matches `floor-kos-reference.log`; `floor-host.log`
+matches `floor-reference.log`. No comparison tolerance was relaxed. Evidence is
+in ignored `build/dc/validation/`, including `floor-scenes/` and
+`triangle-profile/`. Optional profiler also compiles on KOS.
+
+Known tradeoff: nearest/clamped full-screen rectangle microbenchmark slows
+4.73 -> 5.31 s with the cache. Raw out-of-bounds coordinates miss despite
+clamping to the same texel. Next: test cache admission/canonicalization or exact
+triangle/blender specialization against both this case and the menu. Compatible
+5 FPS and the full Q5 acceptance criteria remain unfinished.
+
 2026-09-21 exact-span follow-up: opaque one-cycle software texture rectangles
 hoist invariant blend/bounds checks while preserving sampler, combiner and final
 blender state. `REFERENCE=1` on `tests/dc/Makefile.raster-replay` selects the old

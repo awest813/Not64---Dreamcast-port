@@ -15,6 +15,16 @@ static unsigned char ram[4*1024*1024];
 static unsigned failures;
 static const unsigned target=0x10000;
 struct RasterReplayProbe {
+    static void wrapEpoch(TX &tx) {
+        // Seed tags from the next generation so wrap must actually clear them.
+        for(auto &entry:tx.sampleCache)if(entry.epoch==tx.sampleEpoch)entry.epoch=1;
+        tx.sampleEpoch=~0u;
+    }
+    static unsigned cached(TX &tx) {
+        unsigned count=0;
+        for(auto &entry:tx.sampleCache)if(entry.epoch==tx.sampleEpoch)++count;
+        return count;
+    }
     static unsigned state(RDP &r) {
         CC &c=*r.cc; BL &b=*r.bl;
         Color32 values[]={c.texel0,c.texel1,c.texel0Alpha,c.texel1Alpha,
@@ -245,6 +255,77 @@ static void texture_spans(GFX_INFO info) {
     std::printf("REPLAY span-benchmark draws=24 us=%llu hash=%08x\n",micros()-start,checksum(target,320*240));
     failures+=(errors!=0);
 }
+static unsigned sample_hash(TX &tx,TF &tf) {
+    unsigned hash=2166136261u;
+    for(int pass=0;pass<2;pass++)for(int y=-2;y<10;y++)for(int x=-2;x<18;x++) {
+        Color32 c=tx.getTexel(x*0.75f,y*0.75f,0,&tf);
+        const unsigned char *p=reinterpret_cast<const unsigned char*>(&c);
+        for(unsigned i=0;i<sizeof(c);i++)hash=(hash^p[i])*16777619u;
+    }
+    // Deliberate cache-index collisions and out-of-range coordinates.
+    const int collisions[]={0,256,0,-256,0};
+    for(int x:collisions) {
+        Color32 c=tx.getTexel(x,0,0,&tf);
+        hash=(hash^(unsigned)(int)c)*16777619u;
+    }
+    const float boundaries[]={-0.0f,0.0f,-0.01f,0.49999997f,0.5f,0.99999994f,
+        1.0f,1.00000012f,255.99998f,8388607.5f,8388608.0f,-8388607.5f};
+    for(float value:boundaries) {
+        Color32 c=tx.getTexel(value,0.25f,0,&tf);
+        const unsigned char *p=reinterpret_cast<const unsigned char*>(&c);
+        for(unsigned i=0;i<sizeof(c);i++)hash=(hash^p[i])*16777619u;
+    }
+    return hash;
+}
+static void texture_cache(GFX_INFO info) {
+    TX tx(info);TF tf;
+    const unsigned source=0x1000,pal=0x3000;
+    unsigned errors=0;
+    for(unsigned n=0;n<64;n++) {
+        const int formats[]={0,0,2,2,3,3,3,4};
+        const int sizes[]={2,3,0,1,0,1,2,1};
+        int fmt=formats[n%8],size=sizes[n%8];
+        for(unsigned i=0;i<1024;i++)ram[(source+i)^3]=(i*37+n*11)&255;
+        for(unsigned i=0;i<256;i++)put16(pal+i*2,initial(i,n));
+        tx.setTImg(0,2,256,ram+pal);
+        tx.setTile(0,2,1,256,7,0,2,0,0,2,0,0);
+        tx.loadTLUT(7,256);
+        tx.setTextureLUT(2);
+        tx.setTImg(fmt,size,16,ram+source);
+        tx.setTile(fmt,size,8,0,0,0,2,0,0,2,0,0);
+        tx.setTileSize(0,0,15,7,0);
+        tx.loadBlock(0,0,0,255,0);
+        tf.setTextureFilter(n%3==0?0:n%3==1?2:3);
+        unsigned before=sample_hash(tx,tf);
+        for(unsigned i=0;i<1024;i++)ram[(source+i)^3]^=0x5a;
+        switch(n%6) {
+        case 0:tx.loadBlock(0,0,0,255,0);break;
+        case 1:tx.loadTile(0,0,0,15,7);break;
+        case 2:
+            for(unsigned i=0;i<256;i++)put16(pal+i*2,initial(i+7,n+3));
+            tx.setTImg(0,2,256,ram+pal);tx.loadTLUT(7,256);break;
+        case 3:tx.setTextureLUT(3);break;
+        case 4:tx.setTile(fmt,size,8,0,0,3,1,3,1,1,4,1);break;
+        case 5:tx.setTileSize(2,1,6,4,0);break;
+        }
+        if(n==63) { RasterReplayProbe::wrapEpoch(tx);tx.setTileSize(0,0,7,3,0); }
+        unsigned after=sample_hash(tx,tf);
+#ifndef DC_SOFT_REFERENCE
+        if(!RasterReplayProbe::cached(tx))++errors;
+#endif
+        std::printf("REPLAY cache-case %u before=%08x after=%08x\n",n,before,after);
+    }
+    // A valid first row is written before an invalid second row aborts loadTile.
+    tx.setTextureLUT(2);tx.setTImg(0,2,4,ram+source);
+    tx.setTile(0,2,1,511,0,0,2,0,0,2,0,0);tx.setTileSize(0,0,3,1,0);
+    tx.loadBlock(0,0,0,3,0);sample_hash(tx,tf);
+    tx.getTexel(0,0,0,nullptr); // Keep this exact key hot across the partial write.
+    for(unsigned i=0;i<4;i++)put16(source+i*2,0xf801);
+    tx.loadTile(0,0,0,3,1);
+    if((unsigned)(int)tx.getTexel(0,0,0,nullptr)!=0xff0000ffu)++errors;
+    std::printf("REPLAY texture-cache mismatches=%u %s\n",errors,errors?"FAIL":"PASS");
+    failures+=(errors!=0);
+}
 int main() {
 #ifdef DC_RASTER_PVR
     vid_set_mode(DM_640x480,PM_RGB565);
@@ -262,6 +343,7 @@ int main() {
     mixed_transition(info);
     combined_transition(info);
     texture_spans(info);
+    texture_cache(info);
     std::printf("REPLAY RESULT failures=%u stop=%d %s\n",failures,stop,
         failures||stop?"FAIL":"PASS");
 #ifdef DC_RASTER_PVR
