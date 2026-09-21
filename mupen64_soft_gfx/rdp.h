@@ -41,6 +41,9 @@
 class RDP
 {
    friend class PVRRaster;
+#ifdef DC_RASTER_REPLAY
+   friend struct RasterReplayProbe;
+#endif
    GFX_INFO gfxInfo;
    TX *tx;
    RS *rs;

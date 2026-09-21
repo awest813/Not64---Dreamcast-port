@@ -252,3 +252,19 @@ Measured strict menu baseline: 0.516 FPS over frames 60-120 (116.317821 s),
 with AICA initialized. The remaining speed gap is explicit; the 5.45 FPS
 experimental result does not transfer to strict mode. Next: reference-tested
 texture sampling/combiner fixtures and a narrowly qualified texture path.
+
+## Exact rectangle span follow-up
+
+An exact software opaque one-cycle texture-rectangle path now hoists bounds and
+blend selection out of the pixel loop. It retains sampling, filtering, combiner
+state and final blender state; unsupported cases use the prior loop. ARM32 and
+KOS replay comparisons cover 96 framebuffer/depth/boundary/state cases, and the
+full host regression suite passes. The 60-frame OOT menu capture and complete
+saved state match the prior reference byte for byte.
+
+The isolated target rectangle workload is 1.78x faster (24 full-screen draws:
+8.40 -> 4.73 seconds), but the strict OOT warm sample remains 0.516 FPS
+(116.322003 seconds for frames 60-120). Do not project the microbenchmark gain
+onto the game. Next: attribute the textured-triangle cost, extend exact span
+qualification to the dominant cases, and retain software for unproven GPU
+filtering/quantization. No new GPU capability or Downloads launcher change.

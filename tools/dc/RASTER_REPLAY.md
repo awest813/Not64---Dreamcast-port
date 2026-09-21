@@ -9,9 +9,12 @@ post-readback RGBA5551 words before VI conversion, not screenshots.
 From the repository root in the existing ARM32 Docker build environment:
 
 ```sh
-make -f tests/dc/Makefile.raster-replay HOST=1
-qemu-arm -L /usr/arm-linux-gnueabihf build/dc/raster-replay-1-0/replay.elf > reference.log
+make -f tests/dc/Makefile.raster-replay HOST=1 REFERENCE=1
+qemu-arm -L /usr/arm-linux-gnueabihf build/dc/raster-replay-1-0-reference/replay.elf > reference.log
 python3 tools/dc/check_raster_replay.py reference.log
+make -f tests/dc/Makefile.raster-replay HOST=1
+qemu-arm -L /usr/arm-linux-gnueabihf build/dc/raster-replay-1-0/replay.elf > optimized.log
+python3 tools/dc/check_raster_replay.py optimized.log --reference reference.log
 ```
 
 ## Run the actual GPU path
@@ -28,7 +31,7 @@ using OpenGL, serial console enabled, `rend.RenderToTextureBuffer=yes`, and
 `tools/dc/scrape_console.ps1`, then validate:
 
 ```sh
-python3 tools/dc/check_raster_replay.py --gpu strict.log
+python3 tools/dc/check_raster_replay.py --gpu strict.log --reference reference.log
 ```
 
 The target prints one completion summary and stays idle so serial results can
@@ -48,6 +51,7 @@ the checker must return nonzero. A successful build is not a successful replay.
 | 512 opaque fills | Every input channel value, exact five-bit output; at least two GPU scenes exercise the submission limit |
 | GPU/software/GPU transition | Rejected alpha-test samples preserve the destination; an intervening CPU edit survives the next batch |
 | Two-cycle producer, one-cycle consumer | Matches the software combiner's defined prior-state behavior on cold and hot cache candidates |
+| Opaque software texture rectangles | Analytic RGB/alpha ramp plus 96 reference comparisons of framebuffer, depth, boundary words and exact floating-point combiner/blender state |
 
 The first three have analytic expected framebuffer values. The last establishes
 software parity; it does not independently establish the architectural meaning
@@ -73,7 +77,8 @@ The rounded RGB565 conversion is visible in the official
 
 For a game build, add `RASTER_STRICT=1` to `RASTER_PVR=1 GFX=soft VIDEO=pvr`.
 Only opaque one-cycle fills are accelerated. Textures, blended fills and fill-cycle
-word operations go through the existing software renderer. These restrictions
+word operations go through the software renderer; eligible opaque one-cycle texture
+rectangles use the exact span optimization below. These GPU restrictions
 are deliberate until equivalent implementations have target evidence.
 
 This is an opt-in correctness baseline, not a new 5 FPS claim or a complete N64
@@ -91,3 +96,41 @@ PVR scene batch counters appeared; the menu's operations currently use software
 under the strict capability restrictions. The previous 5.45 FPS Downloads image
 is unchanged. Recovering speed now requires tested texture acceleration, not
 claiming that this fill-only strict baseline meets the goal.
+
+## Exact software texture spans (2026-09-21)
+
+Opaque one-cycle texture rectangles now validate bounds and select the identity
+blender once per rectangle. They retain the original row/column order, floating
+coordinate increments, sampler, filter and combiner. Color32 conversion supplies
+the same channel clamping and RGBA5551 packing; final pixel/shade registers are
+restored explicitly. Depth, active alpha comparisons, alpha-to-coverage,
+destination reads, blending, empty rectangles and invalid bounds retain the
+original per-pixel loop. Alpha-from-coverage remains supported and preserves its
+final register value. There are no new GPU capabilities or timing shortcuts.
+
+`REFERENCE=1` disables only this span optimization and selects a separate output
+directory by default. The replay compares 96 cases covering fractional sampling,
+point/three-point/average filters, scissoring, alpha, depth, blending and RDRAM
+boundaries. Each case hashes framebuffer words, depth words, the end-of-RDRAM
+guard region, and the raw floating-point combiner/blender registers. The initial
+32x8 texture also has an analytic expected result. Always supply `--reference`
+when validating optimized runs; the self-contained PASS lines alone do not
+establish differential equivalence.
+
+In isolated Flycast 2.6 strict builds, 24 full-screen texture rectangles took
+8,402,565 us with the original loop and 4,727,047 us with the optimized loop:
+43.7% less time (1.78x throughput). Both produced hash `d6ea0d85`. This is one
+synthetic sample per build, not an OOT FPS claim or hardware measurement.
+Evidence: `span-kos-reference.log`, `span-kos-benchmark.log`, and the corresponding ARM32
+`span-reference.log` / `span-host.log` under ignored `build/dc/validation/`.
+
+The existing full ARM32 suite passes (`span-full-host.log`). A 60-frame menu
+capture and complete saved state also match the prior direct-interpreter
+reference byte for byte (`span-menu/` versus `direct-opt/final.ppm` and its
+saved slot 1). The Downloads build remains unchanged.
+
+The strict OOT warm interval remains **0.516 FPS**: frames 60-120 take
+116,322,003 us (`span-game.log`), versus 116,317,821 us before this change.
+There is no meaningful menu improvement. The new rectangle path does not address
+this scene's dominant work; the next performance work should profile and qualify
+textured triangle spans, rather than extrapolating the synthetic rectangle gain.

@@ -247,6 +247,24 @@ void BL::cycleModeDraw(int x, int y, Color32 c, float z, Color32 shade, bool two
    p[pixel]=((out>>16)&0xf800)|((out>>13)&0x7c0)|((out>>10)&0x3e)|1;
 }
 
+bool BL::opaqueRectangle(int x0, int y0, int x1, int y1) const
+{
+   // One-cycle identity output only. Reject all per-pixel tests, destination
+   // reads and blending before hoisting address validation out of the loop.
+   return format==0 && size==2 && !z_cmp && !z_upd && !force_bl &&
+      !cvg_x_alpha && !(alphaCompare&1) && !readMemory1 &&
+      psa1==&pixelColor && x0<x1 && y0<y1 &&
+      validPixel(cImg,x0,y0,2) && validPixel(cImg,x1-1,y1-1,2);
+}
+
+void BL::finishOpaqueRectangle(Color32 color)
+{
+   color.clamp();
+   if(alpha_cvg_sel)color.setAlpha(255);
+   pixelColor=color;
+   shadeColor=Color32(0,0,0,0);
+}
+
 void BL::copyModeDraw(int x, int y, Color32 c)
 {
    if(!validPixel(cImg,x,y,2)) return;

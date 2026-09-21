@@ -1,9 +1,13 @@
 # Run from the repository root. Independent synthetic target, no game ROM.
 HOST ?= 0
 STRICT ?= 0
-OUT ?= build/dc/raster-replay-$(HOST)-$(STRICT)
+REFERENCE ?= 0
+OUT ?= build/dc/raster-replay-$(HOST)-$(STRICT)$(if $(filter 1,$(REFERENCE)),-reference,)
 SOURCES = tests/dc/test_raster_replay.cpp $(addprefix mupen64_soft_gfx/,rdp.cpp rs.cpp tx.cpp tf.cpp cc.cpp bl.cpp)
-DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DPIXEL_FORMAT=RGB565 -I. -include platform/dc_abi.h
+DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DDC_RASTER_REPLAY -DPIXEL_FORMAT=RGB565 -I. -include platform/dc_abi.h
+ifeq ($(REFERENCE),1)
+DEFS += -DDC_SOFT_REFERENCE
+endif
 ifeq ($(HOST),1)
 CXX = arm-linux-gnueabihf-g++
 FLAGS = -O2 -fno-strict-aliasing -std=gnu++11

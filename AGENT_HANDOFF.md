@@ -8,6 +8,18 @@ are KallistiOS-only.
 
 ## Integration checkpoint — 2026-09-20
 
+2026-09-21 exact-span follow-up: opaque one-cycle software texture rectangles
+hoist invariant blend/bounds checks while preserving sampler, combiner and final
+blender state. `REFERENCE=1` on `tests/dc/Makefile.raster-replay` selects the old
+loop in a separate output directory. Use `check_raster_replay.py --reference`
+for 96 framebuffer/depth/boundary/raw-state comparisons. Full ARM32 tests pass;
+the 60-frame menu image and complete saved state match `direct-opt` byte for byte.
+The target synthetic workload improves 8.40 -> 4.73 s, but strict menu frames
+60-120 still take 116.322003 s (0.516 FPS): **no measurable menu gain**.
+Evidence: `span-*.log` and `span-menu/` in ignored validation. The private test
+image is `not64-oot-quality-span.cdi`; Downloads is unchanged. Next: profile and
+qualify textured-triangle spans and identify this menu's remaining rendering cost.
+
 2026-09-21 correctness follow-up: the initial Q0/Q1 slice now has a ROM-free
 RDP replay on ARM32 and real KOS/PVR readback. Opt-in `RASTER_STRICT=1` passes
 exact disjoint-fill RGB/alpha, opaque color ramps, mixed CPU/GPU writes and

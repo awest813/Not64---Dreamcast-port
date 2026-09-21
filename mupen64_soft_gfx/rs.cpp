@@ -93,6 +93,28 @@ void RS::texRect(int tile, float ux, float uy, float lx, float ly, float s, floa
 	lry = slry > ly ? (int)ly : (int)slry;
 	if (sulx > ux) s += (sulx - ux) * dsdx;
 	if (suly > uy) t += (suly - uy) * dtdy;
+#ifndef DC_SOFT_REFERENCE
+        if(rdp->cycleType==0 && rdp->bl->opaqueRectangle(ulx,uly,lrx,lry)) {
+            BL &bl=*rdp->bl;
+            unsigned short *dst=(unsigned short*)bl.cImg;
+            Color32 last;
+            float pt=t;
+            for(int y=uly;y<lry;y++,pt+=dtdy) {
+                float ps=s;
+                unsigned row=y*bl.width;
+                for(int x=ulx;x<lrx;x++,ps+=dsdx) {
+                    last=rdp->cc->combine1(rdp->tx->getTexel(ps,pt,tile,rdp->tf));
+                    // Color32's integer conversion already clamps every channel.
+                    unsigned out=(unsigned)(int)last;
+                    dst[(row+x)^S16]=((out>>16)&0xf800)|((out>>13)&0x7c0)|((out>>10)&0x3e)|1;
+                }
+            }
+            // Sampling/combining retains its original order and side effects;
+            // only unobservable intermediate blender registers were elided.
+            bl.finishOpaqueRectangle(last);
+            return;
+        }
+#endif
 	float ps = s;
 	float pt = t;
 	for (int i=uly; i<lry; i++,pt+=dtdy)

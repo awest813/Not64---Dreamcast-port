@@ -35,6 +35,12 @@
 class BL
 {
    friend class PVRRaster;
+#ifdef DC_RASTER_REPLAY
+   friend struct RasterReplayProbe;
+#endif
+   friend class RS;
+   bool opaqueRectangle(int x0, int y0, int x1, int y1) const;
+   void finishOpaqueRectangle(Color32 color);
    GFX_INFO gfxInfo;
    bool validPixel(void *image, int x, int y, unsigned bytes) const;
    
