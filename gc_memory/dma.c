@@ -181,6 +181,7 @@ void dma_pi_read()
 
    ROMCache_write(rdramb + pi_register.pi_dram_addr_reg, i, longueur);
 
+#ifndef __DREAMCAST__
    if(!interpcore)
      {
 	for (i=0; i<longueur; i++)
@@ -192,6 +193,9 @@ void dma_pi_read()
 	     invalidate_func(rom_address2);
 	  }
      }
+#endif
+   /* Dreamcast stays on the pure interpreter, where invalidate_func is a
+    * stub; the per-byte sweep cost a no-op call per byte of every cart DMA. */
 
    pi_register.read_pi_status_reg |= 3;
    update_count();
@@ -259,6 +263,7 @@ void dma_pi_write()
 
    ROMCache_read(rdramb + pi_register.pi_dram_addr_reg, i, longueur);
 
+#ifndef __DREAMCAST__
    if(!interpcore)
      {
 	for (i=0; i<longueur; i++)
@@ -270,6 +275,7 @@ void dma_pi_write()
 	     invalidate_func(rdram_address2);
 	  }
      }
+#endif
 
    // Set the RDRAM memory size when copying main ROM code
    // (This is just a convenient way to run this code once at the beginning)

@@ -211,6 +211,16 @@ Core linked on host: `r4300/pure_interp.c` + `gc_memory/` + `rsp_hle/` with `-D_
     differential fuzz of the new converter against the pre-polish version
     (scratch harness, not committed) reported identical textures on ~80k READY
     frames per seed.
+    Follow-up: `dma_pi_read`/`dma_pi_write` also swept every byte of every cart
+    DMA calling the no-op `invalidate_func` stub (the sweep exists for the
+    Wii/GC recompilers), so Dreamcast now skips it — that loop ran per game
+    DMA during gameplay, not just at boot. Benchmarked on the ILP32 regression
+    build under QEMU, the polished converter converts a 320x240 16bpp frame
+    1.85x faster at the target's `-O2` (90.9 vs 167.8 us/frame; the ratio, not
+    the absolute time, is what transfers — SH4 cycle timing still needs the
+    GCC 15.1 SDK build plus Flycast, and the toolchain here is single-lib
+    `-m4-single-only`, so KOS cannot just be rebuilt for the 64-bit-double
+    contract). The differential fuzz passes at `-O2` as well.
 
 ---
 
