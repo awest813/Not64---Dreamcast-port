@@ -121,6 +121,17 @@ int main(void)
     CHECK(dc_vi_convert(&state, memory, 0, &frame) == DC_VI_INVALID);
     CHECK(dc_vi_convert(&state, memory, sizeof(memory) - 1, &frame) == DC_VI_INVALID);
     CHECK(dc_vi_convert(&state, memory, sizeof(memory), NULL) == DC_VI_INVALID);
+    /* Exhaust all RGBA5551 values against independent channel expansion. */
+    bad = (dc_vi_state){2, 0, 128, 256, 2, 512, 1024};
+    for(unsigned base=0;base<65536;base+=128) {
+        for(x=0;x<128;x++)pixel16(x*2,(uint16_t)(base+x));
+        CHECK(dc_vi_convert(&bad,memory,sizeof(memory),&frame)==DC_VI_READY);
+        for(x=0;x<128;x++) {
+            unsigned v=base+x,red=v>>11,green=(v>>6)&31,blue=(v>>1)&31;
+            unsigned expected=(red<<11)|((green*2+green/16)<<5)|blue;
+            CHECK(frame.pixels[x]==expected);
+        }
+    }
     puts("VI conversion + software presentation PASS");
     return 0;
 }

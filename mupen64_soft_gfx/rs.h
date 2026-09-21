@@ -37,6 +37,7 @@ class RDP;
 
 class RS
 {
+   friend class PVRRaster;
    // scissor
    float sulx, suly, slrx, slry;
    int mode;

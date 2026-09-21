@@ -32,6 +32,9 @@
 #include <string.h>
 
 #include "tx.h"
+#ifdef DC_RASTER_PVR
+#include "../platform/dc_raster_pvr.h"
+#endif
 #include "global.h"
 
 TX::TX(GFX_INFO info) : gfxInfo(info)
@@ -103,6 +106,9 @@ void TX::loadBlock(float uls, float ult, int tile, float lrs, int dxt)
    unsigned src=(unsigned char *)tImg-gfxInfo.RDRAM;
    src+=((unsigned)ult*width+(unsigned)uls)*bits/8;
    if(dst>4096 || bytes>4096-dst || src>SOFT_RDRAM_BYTES || bytes>SOFT_RDRAM_BYTES-src) return;
+#ifdef DC_RASTER_PVR
+   PVRRaster::readMemory(gfxInfo.RDRAM+src,bytes);
+#endif
    for(unsigned i=0;i<bytes;i++) tmem[dst+i]=gfxInfo.RDRAM[(src+i)^S8];
 }
 void TX::loadTile(int tile, float uls, float ult, float lrs, float lrt)
@@ -115,6 +121,9 @@ void TX::loadTile(int tile, float uls, float ult, float lrs, float lrt)
        unsigned src=base+(((unsigned)ult+y)*width+(unsigned)uls)*bits/8;
        unsigned dst=descriptor[tile].tmem*8+y*descriptor[tile].line*8;
        if(dst>4096 || bytes>4096-dst || src>SOFT_RDRAM_BYTES || bytes>SOFT_RDRAM_BYTES-src) return;
+#ifdef DC_RASTER_PVR
+       PVRRaster::readMemory(gfxInfo.RDRAM+src,bytes);
+#endif
        for(unsigned x=0;x<bytes;x++) tmem[dst+x]=gfxInfo.RDRAM[(src+x)^S8];
    }
 }
@@ -123,6 +132,9 @@ void TX::loadTLUT(int tile, int count)
    int dst=descriptor[tile].tmem-256;
    unsigned src=(unsigned char *)tImg-gfxInfo.RDRAM;
    if(dst<0 || count<0 || dst+count>256 || src>SOFT_RDRAM_BYTES-(unsigned)count*2) return;
+#ifdef DC_RASTER_PVR
+   PVRRaster::readMemory(gfxInfo.RDRAM+src,(unsigned)count*2);
+#endif
    for(int i=0;i<count;i++) paletteData[dst+i]=(gfxInfo.RDRAM[(src+i*2)^S8]<<8)|gfxInfo.RDRAM[(src+i*2+1)^S8];
 }
 

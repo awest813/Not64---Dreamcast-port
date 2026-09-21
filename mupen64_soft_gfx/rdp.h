@@ -40,6 +40,7 @@
 
 class RDP
 {
+   friend class PVRRaster;
    GFX_INFO gfxInfo;
    TX *tx;
    RS *rs;

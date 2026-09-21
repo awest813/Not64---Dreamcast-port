@@ -87,6 +87,9 @@ CORE_OBJS = \
 	rsp_hle/plugin.o
 
 DC_DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DUSE_TLB_CACHE -DPIXEL_FORMAT=RGB565
+ifeq ($(INTERP_DIRECT),1)
+DC_DEFS += -DDC_INTERP_DIRECT
+endif
 ifeq ($(PERF),1)
 DC_DEFS += -DDC_PERF
 endif
@@ -110,6 +113,22 @@ VIDEO_OBJS =
 SOFT_OBJS =
 ifeq ($(GFX),soft)
 SOFT_OBJS = platform/dc_soft.o $(addprefix mupen64_soft_gfx/,rsp.o rdp.o rs.o tx.o tf.o cc.o bl.o)
+endif
+ifeq ($(RASTER_PVR),1)
+ifneq ($(GFX),soft)
+$(error RASTER_PVR=1 requires GFX=soft)
+endif
+ifeq ($(HOST),1)
+$(error RASTER_PVR=1 requires the KOS target)
+endif
+ifneq ($(VIDEO),pvr)
+$(error RASTER_PVR=1 requires VIDEO=pvr)
+endif
+DC_DEFS += -DDC_RASTER_PVR
+ifeq ($(RASTER_PROFILE),1)
+DC_DEFS += -DDC_RASTER_PROFILE
+endif
+SOFT_OBJS += platform/dc_raster_pvr.o
 endif
 
 SKIP_TOOLCHAIN :=
@@ -238,6 +257,8 @@ help:
 	  'KallistiOS (requires KOS_BASE):' \
 	  '  make -f Makefile.dc' \
 	  '  make -f Makefile.dc VIDEO=pvr|software [DEMO=1] [GFX=soft] [GAME_DISC=1]' \
+	  '  RASTER_PVR=1 enables experimental PVR geometry; INTERP_DIRECT=1 streamlines operand decoding.' \
+	  '  RASTER_PROFILE=1 adds expensive per-texture timings; PERF=1 measures actual game frames.' \
 	  '  Add UPLOAD_SKIP=1 to measure PVR hash/upload reuse (slower in Flycast).' \
 	  '  PERF=1 prints cumulative game-phase timings every 60 frames; LTO=1 enables cross-file optimization.' \
 	  '  GAME_DISC=1 GAME_FRAMES=0 GAME_STEPS=0 GAME_START=0 runs without diagnostic limits or synthetic Start.' \

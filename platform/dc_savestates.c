@@ -54,18 +54,22 @@ static int crc_on;
 
 static uint32_t crc32_update(uint32_t crc, const void *p, size_t n)
 {
-	const unsigned char *b = p;
-	size_t i;
-	unsigned k;
-
-	for (i = 0; i < n; ++i) {
-		crc ^= b[i];
-		for (k = 0; k < 8; ++k)
-			crc = (crc >> 1) ^ (0xEDB88320u & (uint32_t)-(int)(crc & 1u));
-	}
-	return crc;
+    /* Two nibble lookups replace eight polynomial steps per byte. Keep the
+     * existing unfinalized CRC state so v3 checkpoints remain byte-compatible. */
+    static const uint32_t table[16] = {
+        0x00000000,0x1db71064,0x3b6e20c8,0x26d930ac,
+        0x76dc4190,0x6b6b51f4,0x4db26158,0x5005713c,
+        0xedb88320,0xf00f9344,0xd6d6a3e8,0xcb61b38c,
+        0x9b64c2b0,0x86d3d2d4,0xa00ae278,0xbdbdf21c
+    };
+    const unsigned char *b = p;
+    while(n--) {
+        crc ^= *b++;
+        crc = (crc >> 4) ^ table[crc & 15];
+        crc = (crc >> 4) ^ table[crc & 15];
+    }
+    return crc;
 }
-
 static void cart_name(char *dst)
 {
 	memset(dst, 0, SS_NAME_LEN);
@@ -825,6 +829,9 @@ void savestates_select_filename(void)
 int savestates_selftest(void)
 {
 	int fails = 0;
+    if(crc32_update(0xffffffffu,"123456789",9)!=0x340bc6d9u) {
+        puts("savestate FAIL: CRC32 reference vector"); ++fails;
+    }
 	unsigned old_slot = slot;
 	unsigned char old_byte, old_eep0, old_eep1, old_sram;
 	BOOL old_ew, old_sw;

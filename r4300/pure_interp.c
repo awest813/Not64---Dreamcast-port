@@ -36,6 +36,9 @@
 #include "../gc_memory/TLB-Cache.h"
 #include "macros.h"
 #include "interupt.h"
+#ifdef DC_INTERP_DIRECT
+#include "../platform/dc_interp_decode.h"
+#endif
 
 #ifdef __PPC__
 #include "../main/ROM-Cache.h"
@@ -138,7 +141,7 @@ static void JR()
 
 static void JALR()
 {
-   unsigned long long int *dest = PC->f.r.rd;
+   long long int *dest = &rrd;
    local_rs32 = rrs32;
    interp_addr+=4;
    delay_slot=1;
@@ -1106,7 +1109,7 @@ static void (*interp_tlb[64])(void) =
 
 static void MFC0()
 {
-   switch(PC->f.r.nrd)
+   switch(rfs)
      {
       case 1:
 	printf("lecture de Random\n");
@@ -1115,7 +1118,7 @@ static void MFC0()
   _break();
 #endif     
       default:
-	rrt32 = reg_cop0[PC->f.r.nrd];
+	rrt32 = reg_cop0[rfs];
 	sign_extended(rrt);
      }
    interp_addr+=4;
@@ -1123,7 +1126,7 @@ static void MFC0()
 
 static void MTC0()
 {
-   switch(PC->f.r.nrd)
+   switch(rfs)
      {
       case 0:    // Index
 	Index = rrt & 0x8000003F;
@@ -1219,7 +1222,7 @@ static void MTC0()
 	ErrorEPC = rrt;
 	break;
       default:
-	printf("unknown mtc0 write : %d\n", PC->f.r.nrd);
+	printf("unknown mtc0 write : %u\n", (unsigned)rfs);
 	stop=1;
 #ifdef DEBUGON
   _break();
@@ -2229,7 +2232,7 @@ static void REGIMM()
 
 static void J()
 {
-   unsigned long naddr = (PC->f.j.inst_index<<2) | (interp_addr & 0xF0000000);
+   unsigned long naddr = (jinst_index<<2) | (interp_addr & 0xF0000000);
    if (naddr == interp_addr)
      {
 	if (probe_nop(interp_addr+4))
@@ -2256,7 +2259,7 @@ static void J()
 
 static void JAL()
 {
-   unsigned long naddr = (PC->f.j.inst_index<<2) | (interp_addr & 0xF0000000);
+   unsigned long naddr = (jinst_index<<2) | (interp_addr & 0xF0000000);
    if (naddr == interp_addr)
      {
 	if (probe_nop(interp_addr+4))
@@ -3247,7 +3250,11 @@ void prefetch()
    if (mem != NULL)
      {
 	op = *mem;
-	prefetch_opcode(op);
+#ifdef DC_INTERP_DIRECT
+        PC->addr = interp_addr;
+#else
+        prefetch_opcode(op);
+#endif
      }
    else
      {

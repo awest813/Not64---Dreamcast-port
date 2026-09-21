@@ -7,6 +7,25 @@ audio CPU time actually go on the Dreamcast configuration (pure interpreter,
 and the ordered plan to reduce both. The audit below describes that baseline;
 phase headings and implementation notes record subsequent validation.
 
+## 2026-09-21: native-resolution menu above 5 FPS
+
+The optional `RASTER_PVR=1 INTERP_DIRECT=1` build reaches **5.423 actual game
+FPS** in the file-selection checkpoint: 360 frames in 66.377854 seconds after
+warmup, with 32006 Hz AICA streaming active. `Game perf` counters are the source,
+not Flycast's display refresh. Source evidence: `fps5-pvr14-target.log` under
+ignored `build/dc/validation/`. Downloads now launches `not64-oot-5fps.cdi`.
+
+The hybrid path bakes supported combiner equations into a bounded PVR texture
+cache, drains before software framebuffer consumers, and handles the menu's
+pixel-aligned alpha-test text without a software pass. Constant fill work,
+paired VI conversion, direct interpreter operand views and checkpoint CRC
+also reduce CPU work. Full default/optimized host suites pass; reference menu
+pixels and complete checkpoint state remain byte-identical in software.
+
+This is an experimental menu result, not full-game or physical Dreamcast
+validation. Filtering and alpha precision differ in PVR. See
+[backend build and validation notes](tools/dc/PVR_RASTER.md).
+
 ## What runs per emulated frame today
 
 ```

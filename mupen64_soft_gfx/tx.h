@@ -59,6 +59,7 @@ typedef struct
 
 class TX
 {
+   friend class PVRRaster;
    GFX_INFO gfxInfo;
    
    int textureLUT;

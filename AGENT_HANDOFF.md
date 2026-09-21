@@ -8,7 +8,25 @@ are KallistiOS-only.
 
 ## Integration checkpoint — 2026-09-20
 
-2026-09-21 latest: Downloads launches `not64-oot-fast3.cdi`. Direct S/T
+2026-09-21 current: **OOT file selection exceeds 5 actual FPS in Flycast.**
+The Downloads launcher uses `not64-oot-5fps.cdi` and a separate official
+`flycast-not64-2.6` installation (OpenGL, RTT readback on, framebuffer emulation
+off). Its previous software renderer remains available through
+`Play Zelda OOT (software fallback).cmd` and `not64-oot-fast3.cdi`.
+The opt-in `RASTER_PVR=1 INTERP_DIRECT=1` build renders the native-resolution
+menu using cached PVR geometry/textures, with synchronous RDRAM fallback for
+unsupported operations. Paired VI conversion and checkpoint CRC are also faster.
+`fps5-pvr14-target.log`: frames 60 -> 420, total-us 14006507 -> 80384361:
+360 frames / 66.377854 s = **5.423 FPS**, with 32006 Hz AICA active.
+The full ARM32 default and direct-interpreter suites pass; the final 60-frame
+software menu capture and complete saved state match the reference byte for
+byte (`fps5-default-host.log`, `fps5-final-host.log`, `direct-opt/final.log`).
+All evidence lives under ignored `build/dc/validation/`. See
+[experimental PVR backend](tools/dc/PVR_RASTER.md) for build flags and limits.
+This validates the file-selection checkpoint, not full gameplay or real hardware.
+PVR filtering/alpha differ from the reference; existing menu seams remain.
+
+2026-09-21 previous: Downloads launches `not64-oot-fast3.cdi`. Direct S/T
 translation avoids temporary arrays, and the combiner caches zero-product
 RGB equations while retaining alpha and combined state. Flycast menu time
 is 121.702 s per 60 frames vs 126.680 s (4.1% throughput gain; 30.0% over

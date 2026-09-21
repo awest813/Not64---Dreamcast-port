@@ -34,7 +34,16 @@ static int pvr_idle(void)
 int dc_video_init(void)
 {
     pvr_init_params_t params = {
-        .opb_sizes = { PVR_BINSIZE_16, 0, 0, 0, 0 },
+        .opb_sizes = { PVR_BINSIZE_16, 0,
+#ifdef DC_RASTER_PVR
+                      PVR_BINSIZE_16,
+#else
+                      0,
+#endif
+                      0, 0 },
+#ifdef DC_RASTER_PVR
+        .autosort_disabled = 1,
+#endif
         .vertex_buf_size = 128 * 1024,
         .opb_overflow_count = 1
         /* vbuf_doublebuf_disabled left 0: with a single vertex buffer KOS
@@ -153,10 +162,10 @@ int dc_video_present(const dc_vi_frame *frame)
         return 0;
     }
     if (upload) {
-        float left = (640.0f - frame->width * 2.0f) / 2.0f;
-        float top = (480.0f - frame->height * 2.0f) / 2.0f;
-        float right = left + frame->width * 2.0f;
-        float bottom = top + frame->height * 2.0f;
+        int left = (640 - (int)frame->width * 2) / 2;
+        int top = (480 - (int)frame->height * 2) / 2;
+        int right = left + (int)frame->width * 2;
+        int bottom = top + (int)frame->height * 2;
         float u = (float)frame->width / DC_VI_TEXTURE_WIDTH;
         float v = (float)frame->height / DC_VI_TEXTURE_HEIGHT;
         pvr_vertex_t vertices[4] __attribute__((aligned(32))) = {
@@ -170,6 +179,7 @@ int dc_video_present(const dc_vi_frame *frame)
     }
     if (pvr_list_finish() < 0) result = 0;
     if (pvr_scene_finish() < 0) result = 0;
+
     if (!result) {
         present_failed = !pvr_idle();
         cached_valid = 0;

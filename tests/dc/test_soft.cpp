@@ -222,6 +222,33 @@ int main() {
         CHECK(half(0x22008)==0 && (half(0x2200a)&0xfffe)==0xfffe);
     }
 
+    // A constant fill still blends against each destination pixel and applies
+    // position-dependent alpha dither. Hoisting the combiner must preserve both.
+    {
+        RDP rect(info);
+        BL reference(info);
+        rect.setCImg(0,2,4,ram+0x23000);
+        reference.setCImg(0,2,4,ram+0x23100);
+        rect.setScissor(0,0,4,4,0);
+        rect.setOtherMode_h(20,0);
+        rect.setOtherMode_l(3,0x00404000>>3);
+        reference.setBlender(0x00404000);
+        rect.setOtherMode_l(0,3);
+        reference.setAlphaCompare(3);
+        rect.setCombineMode((15u<<5)|31u,
+            (15u<<24)|(7u<<21)|(7u<<18)|(3u<<6)|(7u<<3)|3u);
+        rect.setPrimColor(0xff402080,0,0);
+        for(unsigned i=0;i<8;i++) {
+            unsigned v=(i&1)?0x07c1003fu:0x003f07c1u;
+            word(0x23000+i*4,v); word(0x23100+i*4,v);
+        }
+        rect.fillRect(0,0,4,4);
+        for(int y=0;y<4;y++) for(int x=0;x<4;x++)
+            reference.cycle1ModeDraw(x,y,Color32(255,64,32,128));
+        CHECK(std::memcmp(ram+0x23000,ram+0x23100,32)==0);
+        CHECK(half(0x23000)!=half(0x23002));
+    }
+
     // Execute an actual F3DEX2 display list: 4x4 red fill and FullSync.
     const char *uc="RSP Gfx ucode F3DEX fifo 2.08";
     for(unsigned i=0;i<std::strlen(uc);i++) byte(0x2000+i,uc[i]);

@@ -31,6 +31,7 @@
 
 class CC
 {
+   friend class PVRRaster;
    int combineKey;
    Color32 *pa0, *pb0, *pc0, *pd0, *pa1, *pb1, *pc1, *pd1;
    float *pAa0, *pAb0, *pAc0, *pAd0, *pAa1, *pAb1, *pAc1, *pAd1;

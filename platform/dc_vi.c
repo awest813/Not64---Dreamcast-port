@@ -67,13 +67,15 @@ dc_vi_result dc_vi_convert(const dc_vi_state *s, const uint8_t *mem,
                 const uint8_t *src = mem + row;
                 unsigned pairs = width >> 1;
                 while (pairs--) {
-                    uint32_t w, even, odd;
+                    uint32_t w, rgb;
                     memcpy(&w, src, 4);
                     src += 4;
-                    even = w >> 16;
-                    odd = w & 0xffffu;
-                    dst[0] = vi_rgba16_to_rgb565(even);
-                    dst[1] = vi_rgba16_to_rgb565(odd);
+                    /* Convert both packed pixels in parallel, then swap
+                     * halves from N64 word order to the little-endian scanout. */
+                    rgb = (w & 0xffc0ffc0u) | ((w >> 1) & 0x001f001fu) |
+                          ((w >> 5) & 0x00200020u);
+                    rgb = (rgb << 16) | (rgb >> 16);
+                    memcpy(dst, &rgb, 4);
                     dst += 2;
                 }
                 if (width & 1u) {

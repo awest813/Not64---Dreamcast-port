@@ -34,6 +34,7 @@
 
 class BL
 {
+   friend class PVRRaster;
    GFX_INFO gfxInfo;
    bool validPixel(void *image, int x, int y, unsigned bytes) const;
    

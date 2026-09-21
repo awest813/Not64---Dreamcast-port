@@ -30,8 +30,12 @@
 /* Hash TLB only; no 8 MiB LUT */
 #define DC_TLB_MISC_SIZE        (512 * DC_KB)
 
-/* Graphics cache: 0 until a renderer exists */
+/* Optional PVR texture keys, decoded texture staging and readback scratch. */
+#ifdef DC_RASTER_PVR
+#define DC_TEXCACHE_SIZE        (1280 * DC_KB)
+#else
 #define DC_TEXCACHE_SIZE        0
+#endif
 
 /* Fixed 512x256 RGB565 scanout staging; texture memory is a separate budget. */
 #define DC_VIDEO_STAGING_SIZE   (256 * DC_KB)

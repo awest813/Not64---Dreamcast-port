@@ -30,6 +30,9 @@
 #include <stdio.h>
 
 #include "rdp.h"
+#ifdef DC_RASTER_PVR
+#include "../platform/dc_raster_pvr.h"
+#endif
 
 RDP::RDP(GFX_INFO info) : gfxInfo(info)
 {
@@ -43,6 +46,9 @@ RDP::RDP(GFX_INFO info) : gfxInfo(info)
 
 RDP::~RDP()
 {
+#ifdef DC_RASTER_PVR
+   PVRRaster::reset();
+#endif
    delete tx;
    delete rs;
    delete tf;
@@ -122,6 +128,9 @@ void RDP::setCombineMode(int cycle1, int cycle2)
 
 void RDP::setCImg(int format, int size, int width, void *cimg)
 {
+#ifdef DC_RASTER_PVR
+   PVRRaster::flush();
+#endif
    bl->setCImg(format, size, width, cimg);
 }
 
@@ -162,6 +171,10 @@ void RDP::setPrimColor(int color, float mLOD, float lLOD)
 
 void RDP::fillRect(float ulx, float uly, float lrx, float lry)
 {
+#ifdef DC_RASTER_PVR
+   if(PVRRaster::fill(this,ulx,uly,lrx,lry)) return;
+   PVRRaster::flush();
+#endif
    rs->fillRect(ulx, uly, lrx, lry, this);
 }
 
@@ -183,6 +196,10 @@ void RDP::setTileSize(float uls, float ult, float lrs, float lrt, int tile)
 
 void RDP::texRect(int tile, float ulx, float uly, float lrx, float lry, float s, float t, float dsdx, float dtdy)
 {
+#ifdef DC_RASTER_PVR
+   if(PVRRaster::rectangle(this,tile,ulx,uly,lrx,lry,s,t,dsdx,dtdy)) return;
+   PVRRaster::flush();
+#endif
    rs->texRect(tile, ulx, uly, lrx, lry, s, t, dsdx, dtdy, this);
 }
 
@@ -198,12 +215,18 @@ void RDP::loadTile(int tile, float uls, float ult, float lrs, float lrt)
 
 void RDP::debug_tri(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,4>& v2)
 {
+#ifdef DC_RASTER_PVR
+   PVRRaster::flush();
+#endif
    rs->debug_tri(v0, v1, v2, this);
 }
 
 void RDP::tri_shade_zbuff(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,4>& v2,
 			  Color32& c0, Color32& c1, Color32& c2, float z0, float z1, float z2)
 {
+#ifdef DC_RASTER_PVR
+   PVRRaster::flush();
+#endif
    rs->tri_shade_zbuff(v0, v1, v2, c0, c1, c2, z0, z1, z2, this);
 }
 
@@ -212,6 +235,10 @@ void RDP::tri_shade_txtr_zbuff(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<
 			       float s0, float t0, float s1, float t1, float s2, float t2, int tile,
 			       float w0, float w1, float w2, float z0, float z1, float z2)
 {
+#ifdef DC_RASTER_PVR
+   if(PVRRaster::triangle(this,v0,v1,v2,c0,c1,c2,s0,t0,s1,t1,s2,t2,tile,w0,w1,w2)) return;
+   PVRRaster::flush();
+#endif
    rs->tri_shade_txtr_zbuff(v0, v1, v2, c0, c1, c2, s0, t0, s1, t1, s2, t2, tile, w0, w1, w2, z0, z1, z2, this);
 }
 
@@ -219,11 +246,17 @@ void RDP::tri_shade_txtr(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,
 			 Color32& c0, Color32& c1, Color32& c2, 
 			 float s0, float t0, float s1, float t1, float s2, float t2, int tile, float w0, float w1, float w2)
 {
+#ifdef DC_RASTER_PVR
+   PVRRaster::flush();
+#endif
    rs->tri_shade_txtr(v0, v1, v2, c0, c1, c2, s0, t0, s1, t1, s2, t2, tile, w0, w1, w2, this);
 }
 
 void RDP::tri_shade(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,4>& v2,
 		    Color32& c0, Color32& c1, Color32& c2)
 {
+#ifdef DC_RASTER_PVR
+   PVRRaster::flush();
+#endif
    rs->tri_shade(v0, v1, v2, c0, c1, c2, this);
 }

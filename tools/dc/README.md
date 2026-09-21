@@ -5,6 +5,9 @@ and plugin words). Native 64-bit macOS/Linux builds now fail with an explicit
 diagnostic rather than silently giving RDRAM and SP memory the wrong layout.
 This is a supported-configuration restriction, not a completed LP64 port.
 
+See [Experimental PVR geometry](PVR_RASTER.md) for the optional hardware
+rasterizer, required Flycast readback settings, and validation limits.
+
 ## Host regression tests on macOS or Linux with Docker
 
 From the repository root:
