@@ -327,6 +327,12 @@ Follow **Gap plan** in `PORTING.md`. Short form:
 6. ~~**P5 — pakMode + Joybus mempak/rumble latch**~~ — host shipped; Jump Pack send and VMU still need KOS.
 7. Menu 8a–8d is done. `dc_draw_kos.c` still uncompiled.
 8. Software/TA/dynarec only after P0 produces a VI framebuffer.
+9. **Video/audio performance plan** — [VIDEO_AUDIO_PERF_PLAN.md](VIDEO_AUDIO_PERF_PLAN.md)
+   audits the per-frame and per-task costs (measured where possible) and
+   orders the wins: PVR present unserialization, upload skip, soft-renderer
+   span work, AICA `snd_stream` wiring, `rsp_hle` bulk sample paths, and the
+   `count_per_op`/`vilimit` settings levers. Host-side phases need no new
+   toolchain; Flycast-measured numbers need the GCC 15.1 SDK first.
 
 Skip SH4 dynarec and TA/RDP until 1–3 have a ROM that is more than a BEQ spin.
 
