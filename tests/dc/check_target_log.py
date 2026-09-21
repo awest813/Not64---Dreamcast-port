@@ -18,7 +18,7 @@ def check(path, backend):
     tail = text[match.end():]
     assert 'vid_set_mode:' in tail, 'final display shutdown not observed; wait for the 60-second hold'
     if backend == 'pvr':
-        free = re.findall(r'PVR: staging=262144 texture=262144 VRAM-free=(\d+) bytes', text)
+        free = re.findall(r'PVR: staging=262144 texture=524288 VRAM-free=(\d+) bytes', text)
         assert len(free) == 9 and len(set(free)) == 1, 'VRAM allocation drift or missing initialization'
         timings = re.findall(r'PVR timing: samples=(\d+) uploads=(\d+) wait-avg-us=(\d+) upload-avg-us=(\d+) submit-avg-us=(\d+)', text)
         assert len(timings) == 9, 'missing shutdown/timing samples'

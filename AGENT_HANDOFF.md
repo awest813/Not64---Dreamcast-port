@@ -331,8 +331,14 @@ Follow **Gap plan** in `PORTING.md`. Short form:
    audits the per-frame and per-task costs (measured where possible) and
    orders the wins: PVR present unserialization, upload skip, soft-renderer
    span work, AICA `snd_stream` wiring, `rsp_hle` bulk sample paths, and the
-   `count_per_op`/`vilimit` settings levers. Host-side phases need no new
-   toolchain; Flycast-measured numbers need the GCC 15.1 SDK first.
+   `count_per_op`/`vilimit` settings levers.
+   **V1 is done (2026-09-20)**: ping-pong textures + double vertex buffer +
+   DMA upload; Flycast-measured upload 618 → 30 us/frame, present path
+   ≈632 → ≈45 us, full `check_target_log.py` run passes. **DreamSDK
+   (`C:\DreamSDK`) is the working target toolchain on this machine** (GCC
+   15.1, `-m4-single`): build via its MSYS2 bash, capture Flycast serial with
+   `tools/dc/scrape_console.ps1` (resize to 220 cols early, then read).
+   Next: V2 (upload skip), A1 (snd_stream), then V4 (soft-renderer spans).
 
 Skip SH4 dynarec and TA/RDP until 1–3 have a ROM that is more than a BEQ spin.
 

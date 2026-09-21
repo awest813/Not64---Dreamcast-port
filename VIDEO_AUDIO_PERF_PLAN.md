@@ -50,21 +50,27 @@ Ordered by (win x safety); each phase lands with the same validation pattern
 the VI work used: host ILP32 suite + differential fuzz against the old code,
 plus target evidence where the toolchain allows.
 
-### V1 — Unserialize the PVR present (largest video wall-clock win)
+### V1 — Unserialize the PVR present (largest video wall-clock win) — DONE 2026-09-20
 
-`dc_video_present` waits for the previous render before overwriting its single
-texture, every frame. Allocate **two** PVR textures and alternate: upload
-frame N+1 while the PVR is still scanning out N, then submit without waiting.
-Optionally move the copy to `pvr_txr_load_dma` (KOS kernel) so the SH4 does not
-drive the copy through the store queues.
+Shipped as ping-pong textures + double vertex buffer + DMA upload:
+two 256 KiB textures alternate (512 KiB VRAM total, stable across reopen
+cycles), `vbuf_doublebuf_disabled` was removed so `pvr_scene_begin` no longer
+waits render-done internally, the per-frame `pvr_wait_render_done` is gone
+(shutdown still drains both), and `pvr_txr_load_dma` hands the texture copy to
+the G2 DMA engine with a store-queue fallback. Safety: KOS clears what
+`pvr_wait_ready` waits on only when the submitted scene's render *starts*, and
+renders are sequential — so by upload time the render that read the texture
+being overwritten has finished.
 
-- Expected: removes wait-avg plus most of upload from the critical path;
-  measured via the existing `PVR timing:` serial lines.
-- Touches: `platform/dc_pvr.c` only. `tests/dc/check_target_log.py` asserts
-  the `PVR: staging=… texture=…` line and stable allocations across reopen
-  cycles — update it for two allocations and keep the stability check.
-- Risk: low-moderate (texture lifetime vs scene lifecycle; the existing
-  reopen-cycle stress covers it).
+Flycast-measured (DreamSDK GCC 15.1 `-m4-single` build, emulated SH4 µs/frame,
+272-frame demo): upload **618 → 30**, submit 14–15 unchanged, wait 0 in both
+(Flycast's PVR model completes renders instantly, so the de-serialization is
+a real-hardware win the emulator cannot show). Present-path total
+≈632 → ≈45 µs/frame. `check_target_log.py` passes the full run, now expecting
+`texture=524288` and VRAM-free 6,281,896. Evidence:
+`build/dc/validation/` serial captures; Windows capture tooling:
+`tools/dc/scrape_console.ps1` (attach + read the emulator's serial console)
+and `tools/dc/shot_flycast.ps1` (window screenshot).
 
 ### V2 — Skip redundant texture uploads
 
@@ -161,11 +167,21 @@ and a broader game set), Expansion Pak, and any LP64 host relaxation. The
 biggest possible lever — the dynarec — stays locked until a human revisits
 `AGENT_HANDOFF.md` "Locked".
 
-### Prerequisite for target numbers on this machine
+### Prerequisite for target numbers on this machine — RESOLVED 2026-09-20
 
-The validated SH4 SDK (GCC 15.1, `-m4-single`, 64-bit double) is not on this
-workstation, and the available einsteinx2 image is single-lib
-`-m4-single-only`, so KOS cannot simply be rebuilt for the 64-bit-double
-memory contract (`dc_contract.c` rejects it). Bringing up that SDK here — or
-building a multilib sh-elf toolchain + KOS — is the gate for Flycast-measured
-`PVR timing:`/audio numbers; every host-side phase above proceeds without it.
+DreamSDK (`C:\DreamSDK`) provides the validated configuration directly:
+sh-elf **GCC 15.1.0** with KOS 2.2-era headers and libs defaulting to
+`-m4-single` (64-bit double) — `dc_contract.c` compiles and the demo ELFs
+build and run. Build via DreamSDK's MSYS2:
+
+```sh
+/c/DreamSDK/usr/bin/bash.exe -lc 'source /opt/toolchains/dc/kos/environ.sh \
+  >/dev/null 2>&1; cd /f/GitHub/Not64---Dreamcast-port && \
+  make -f Makefile.dc VIDEO=pvr DEMO=1 -j8'
+```
+
+Flycast 2.7 (`%USERPROFILE%\Downloads\flycast-win64-2.7`) runs the ELF; serial
+output goes to its own console window — capture with
+`tools/dc/scrape_console.ps1` (resize early to 220 columns so long lines do
+not wrap, read the buffer after the run). The einsteinx2 Docker image remains
+`-m4-single-only`-only and stays unusable for full links.

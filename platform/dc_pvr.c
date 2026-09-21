@@ -4,15 +4,25 @@
 #include <kos.h>
 #include <stdio.h>
 
+/* Two textures ping-pong and the vertex buffer is double-buffered, so the
+ * texture upload for frame N+1 overlaps the render of frame N. Safety: KOS
+ * clears ta_busy (what pvr_wait_ready waits on) only when it starts the
+ * render of the just-submitted scene, and renders are strictly sequential —
+ * so once wait_ready returns, the render that read the texture being
+ * overwritten has completed. No render-done wait is needed per frame. */
+#define TEXTURE_COUNT 2
+
 static int initialized;
-static pvr_ptr_t texture;
-static pvr_poly_hdr_t header;
+static pvr_ptr_t textures[TEXTURE_COUNT];
+static pvr_poly_hdr_t headers[TEXTURE_COUNT];
+static unsigned texture_next;
 #ifdef DC_EMBED_VITEST
 static uint64_t wait_us, upload_us, submit_us;
 static unsigned samples, uploads;
 #endif
 
-/* Drain TA work, then the render that still owns this texture. */
+/* Drain TA work and any render that still owns our textures. Shutdown-only:
+ * per-frame presents no longer wait for the render. */
 static int pvr_idle(void)
 {
     return pvr_wait_ready() >= 0 && pvr_wait_render_done() >= 0;
@@ -23,10 +33,13 @@ int dc_video_init(void)
     pvr_init_params_t params = {
         .opb_sizes = { PVR_BINSIZE_16, 0, 0, 0, 0 },
         .vertex_buf_size = 128 * 1024,
-        .opb_overflow_count = 1,
-        .vbuf_doublebuf_disabled = 1
+        .opb_overflow_count = 1
+        /* vbuf_doublebuf_disabled left 0: with a single vertex buffer KOS
+         * waits for render-done inside pvr_scene_begin, which would put the
+         * serialization back. */
     };
     pvr_poly_cxt_t context;
+    int i;
     if (!dc_video_claim_display()) return 0;
     if (pvr_init(&params) < 0) {
         dc_log(DC_LOG_ERROR, "PVR: pvr_init failed");
@@ -38,24 +51,30 @@ int dc_video_init(void)
     wait_us = upload_us = submit_us = 0;
     samples = uploads = 0;
 #endif
-    texture = pvr_mem_malloc(DC_VI_TEXTURE_BYTES);
-    if (!texture) {
-        dc_log(DC_LOG_ERROR, "PVR: texture alloc %u failed", (unsigned)DC_VI_TEXTURE_BYTES);
-        dc_video_shutdown();
-        return 0;
+    for (i = 0; i < TEXTURE_COUNT; ++i) {
+        textures[i] = pvr_mem_malloc(DC_VI_TEXTURE_BYTES);
+        if (!textures[i]) {
+            dc_log(DC_LOG_ERROR, "PVR: texture %d alloc %u failed",
+                   i, (unsigned)DC_VI_TEXTURE_BYTES);
+            dc_video_shutdown();
+            return 0;
+        }
+        pvr_poly_cxt_txr(&context, PVR_LIST_OP_POLY,
+                        PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED,
+                        DC_VI_TEXTURE_WIDTH, DC_VI_TEXTURE_HEIGHT, textures[i],
+                        PVR_FILTER_NONE);
+        context.gen.culling = PVR_CULLING_NONE;
+        context.depth.comparison = PVR_DEPTHCMP_ALWAYS;
+        context.depth.write = PVR_DEPTHWRITE_DISABLE;
+        context.txr.env = PVR_TXRENV_REPLACE;
+        pvr_poly_compile(&headers[i], &context);
     }
-    pvr_poly_cxt_txr(&context, PVR_LIST_OP_POLY,
-                    PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED,
-                    DC_VI_TEXTURE_WIDTH, DC_VI_TEXTURE_HEIGHT, texture, PVR_FILTER_NONE);
-    context.gen.culling = PVR_CULLING_NONE;
-    context.depth.comparison = PVR_DEPTHCMP_ALWAYS;
-    context.depth.write = PVR_DEPTHWRITE_DISABLE;
-    context.txr.env = PVR_TXRENV_REPLACE;
-    pvr_poly_compile(&header, &context);
+    texture_next = 0;
     pvr_set_bg_color(0, 0, 0);
     /* Exact serial line: tests/dc/check_target_log.py */
     printf("PVR: staging=%u texture=%u VRAM-free=%lu bytes\n",
-           (unsigned)DC_VI_TEXTURE_BYTES, (unsigned)DC_VI_TEXTURE_BYTES,
+           (unsigned)DC_VI_TEXTURE_BYTES,
+           (unsigned)(TEXTURE_COUNT * DC_VI_TEXTURE_BYTES),
            (unsigned long)pvr_mem_available());
     return 1;
 }
@@ -64,17 +83,14 @@ int dc_video_present(const dc_vi_frame *frame)
 {
     int result = 1;
     size_t upload;
+    unsigned slot;
 #ifdef DC_EMBED_VITEST
     uint64_t begin = timer_us_gettime64(), ready, uploaded;
 #endif
-    if (!initialized || !texture || !frame ||
+    if (!initialized || !textures[0] || !textures[1] || !frame ||
         frame->width > DC_VI_MAX_WIDTH || frame->height > DC_VI_MAX_HEIGHT)
         return 0;
-    /* Readiness for another scene does not release textures from the previous
-     * scene. Wait for rendering before overwriting this single texture. */
-    /* First drain queued TA work, which can still start a render; then wait
-     * for that render. Reversing these waits can overwrite a queued texture. */
-    if (!pvr_idle()) {
+    if (pvr_wait_ready() < 0) {
         dc_log(DC_LOG_ERROR, "PVR: wait failed before present");
         return 0;
     }
@@ -82,8 +98,15 @@ int dc_video_present(const dc_vi_frame *frame)
     ready = timer_us_gettime64();
 #endif
     upload = dc_video_pvr_upload_bytes(frame->width, frame->height);
-    if (upload)
-        pvr_txr_load(frame->pixels, texture, upload);
+    slot = texture_next;
+    if (upload) {
+        /* Blocking PVR DMA hands the copy to the G2 DMA engine instead of
+         * the SH4 store queues; fall back to the CPU copy if the channel
+         * refuses (misalignment would be a programming error on our side,
+         * and the busy case cannot happen: the previous blocking DMA done). */
+        if (pvr_txr_load_dma(frame->pixels, textures[slot], upload, true, NULL, NULL) < 0)
+            pvr_txr_load(frame->pixels, textures[slot], upload);
+    }
 #ifdef DC_EMBED_VITEST
     uploaded = timer_us_gettime64();
     if (upload) {
@@ -109,11 +132,12 @@ int dc_video_present(const dc_vi_frame *frame)
             { .flags=PVR_CMD_VERTEX, .x=left, .y=bottom, .z=1.0f, .u=0, .v=v, .argb=0xffffffff },
             { .flags=PVR_CMD_VERTEX_EOL, .x=right, .y=bottom, .z=1.0f, .u=u, .v=v, .argb=0xffffffff }
         };
-        if (pvr_prim(&header, sizeof(header)) < 0 ||
+        if (pvr_prim(&headers[slot], sizeof(headers[slot])) < 0 ||
             pvr_prim(vertices, sizeof(vertices)) < 0) result = 0;
     }
     if (pvr_list_finish() < 0) result = 0;
     if (pvr_scene_finish() < 0) result = 0;
+    texture_next = (slot + 1) % TEXTURE_COUNT;
 #ifdef DC_EMBED_VITEST
     wait_us += ready - begin;
     submit_us += timer_us_gettime64() - uploaded;
@@ -124,6 +148,7 @@ int dc_video_present(const dc_vi_frame *frame)
 
 void dc_video_shutdown(void)
 {
+    int i;
     if (initialized) {
 #ifdef DC_EMBED_VITEST
         if (samples)
@@ -133,15 +158,17 @@ void dc_video_shutdown(void)
                    (unsigned long)(submit_us / samples));
 #endif
         if (!pvr_idle())
-            dc_log(DC_LOG_ERROR, "PVR: wait failed; freeing texture before shutdown");
+            dc_log(DC_LOG_ERROR, "PVR: wait failed; freeing textures before shutdown");
         /* pvr_shutdown tears down the allocator; free user VRAM first even if
          * the wait failed — GPU work is abandoned on shutdown. */
-        if (texture) pvr_mem_free(texture);
-        texture = NULL;
+        for (i = 0; i < TEXTURE_COUNT; ++i) {
+            if (textures[i]) pvr_mem_free(textures[i]);
+            textures[i] = NULL;
+        }
         pvr_shutdown();
     }
     initialized = 0;
-    texture = NULL;
+    texture_next = 0;
     dc_video_release_display();
 }
 const char *dc_video_name(void) { return "pvr"; }
