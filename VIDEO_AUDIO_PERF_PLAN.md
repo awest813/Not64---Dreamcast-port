@@ -168,6 +168,26 @@ the menu is visually verified and AICA starts successfully. This is still only
 about 0.47 emulated menu frames/second; full gameplay and hardware performance
 remain unverified.
 
+Third renderer pass (2026-09-21): texture-coordinate translation handles S
+and T directly without temporary arrays or an axis loop. Clamp-before-mask,
+mirroring, and negative-coordinate rejection retain their existing order.
+The combiner caches RGB equations whose product is zero and copies their
+addend; alpha equations and first-cycle combined state are still evaluated.
+
+Host 60-frame menu time improves 16.231 -> 15.632 s (3.8% throughput), and
+opening time improves 6.281 -> 5.987 s (4.9%). Both captures are byte-identical
+to the preceding build. Full regression passes, including 78,400 coordinate
+comparisons and direct-color/alpha/mux-transition cases. Local evidence:
+`perf3-before.log`, `perf3-axis.log`, `perf3-scene-before.log`,
+`perf3-scene-after.log`, and `perf3-regression.log`.
+
+Flycast's same 60-frame menu sample takes **121.702 s**, versus 126.680 s
+before this pass (4.1% more throughput, 30.0% above the original baseline).
+Raster time is 111.818 s; conversion is 1.085 s. Evidence: `perf3-target.log`.
+The Downloads launcher selects `not64-oot-fast3.cdi` with the same checkpoint
+and build flags. AICA starts successfully. Roughly 0.49 emulated menu FPS
+remains far below playable speed; full gameplay and hardware remain unverified.
+
 Profile first (V3), then in this order:
 
 1. **Hoist `validPixel` to span level** — it is called twice per pixel

@@ -43,6 +43,36 @@ int main() {
     tx.setTImg(2,0,2,ram+0x400000); tx.loadBlock(0,0,0,1,0);
     c=tx.getTexel(0,0,0,NULL); CHECK((unsigned)(int)c==0xff0000ffu);
 
+    // Coordinate translation preserves clamp-before-mask ordering, mirrors,
+    // negative coordinates, and independent S/T modes.
+    {
+        TX mapped(info), reference(info);
+        for(unsigned i=0;i<64;i++) byte(0x800+i,i*3+1);
+        mapped.setTImg(4,1,8,ram+0x800); reference.setTImg(4,1,8,ram+0x800);
+        mapped.setTile(4,1,1,0,0,0,0,0,0,0,0,0);
+        reference.setTile(4,1,1,0,0,0,0,0,0,0,0,0);
+        mapped.setTileSize(0,0,7,7,0); reference.setTileSize(0,0,7,7,0);
+        mapped.loadTile(0,0,0,7,7); reference.loadTile(0,0,0,7,7);
+        for(int sm=0;sm<4;sm++) for(int tm=0;tm<4;tm++)
+        for(int mask=0;mask<=3;mask++) {
+            mapped.setTile(4,1,1,0,0,0,tm,mask,0,sm,mask,0);
+            for(int y=-17;y<=17;y++) for(int x=-17;x<=17;x++) {
+                int coords[2]={x,y},modes[2]={sm,tm};
+                for(int a=0;a<2;a++) {
+                    int &q=coords[a];
+                    if(modes[a]&2) { if(q<0)q=0; if(q>=8)q=7; }
+                    if(mask) {
+                        int span=1<<mask; bool mirror=(modes[a]&1)&&(q&span);
+                        q&=span-1; if(mirror)q=span-1-q;
+                    }
+                }
+                Color32 expected=reference.getTexel(coords[0],coords[1],0,NULL);
+                Color32 actual=mapped.getTexel(x,y,0,NULL);
+                CHECK((unsigned)(int)actual==(unsigned)(int)expected);
+            }
+        }
+    }
+
     // One-cycle rendering uses the second mux cycle: texture times shade.
     CC combiner;
     combiner.setShade(Color32(128,255,0,255));
@@ -50,6 +80,33 @@ int main() {
     c=combiner.combine1(Color32(255,128,128,255));
     CHECK((unsigned)(int)c==0x808000ffu);
     c=Color32(-10,300,20,400); CHECK((unsigned)(int)c==0x00ff14ffu);
+    // Zero RGB products must still evaluate alpha independently, in both
+    // cycles, and a subsequent mux change must restore the full equation.
+    {
+        CC direct;
+        direct.setPrimColor(0x315579ab,0,0);
+        direct.setEnvColor(0x24688ace);
+        for(unsigned equal=0;equal<2;equal++) {
+            unsigned a=equal?1:2, b=1, factor=equal?4:31;
+            unsigned hi=(a<<20)|(factor<<15)|(1<<12)|(4<<9)|(a<<5)|factor;
+            unsigned lo=(b<<28)|(b<<24)|(1<<21)|(4<<18)|(3<<15)|
+                        (7<<12)|(7<<9)|(5<<6)|(7<<3)|7;
+            direct.setCombineMode(hi,lo);
+            direct.setShade(Color32(43,123,221,255));
+            c=direct.combine2(Color32(200,17,88,91),Color32(33,44,55,66));
+            CHECK((unsigned)(int)c==0x24688a5bu);
+            c=direct.combine1(Color32(9,10,11,37));
+            CHECK((unsigned)(int)c==0x24688a25u);
+            // Feed the first cycle's direct result into the second cycle.
+            direct.setCombineMode(hi,(lo & ~(7u<<6)) | (0u<<6));
+            c=direct.combine2(Color32(200,17,88,91),Color32(33,44,55,66));
+            CHECK((unsigned)(int)c==0x3155795bu);
+        }
+        direct.setCombineMode((1u<<5)|4u,(15u<<24)|(7u<<21)|(7u<<18)|(7u<<6)|(7u<<3)|1u);
+        direct.setShade(Color32(128,255,0,255));
+        c=direct.combine1(Color32(255,128,128,255));
+        CHECK((unsigned)(int)c==0x808000ffu);
+    }
     TF filter; filter.setTextureFilter(2);
     Color32 corners[4]={Color32(255,0,0,255),Color32(0,255,0,255),Color32(0,0,255,255),Color32(255,255,255,255)};
     float distances[4]={0.125f,0.625f,1.125f,0.625f};

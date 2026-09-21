@@ -2,6 +2,12 @@
 
 ## Integration update - 2026-09-20
 
+2026-09-21: the latest Downloads image is `not64-oot-fast3.cdi`. Direct
+texture-coordinate handling and cached zero-product RGB combiner equations
+improve the same Flycast 60-frame menu sample from 126.680 to 121.702 seconds
+(another 4.1% throughput). Exact menu/opening host captures and the full suite
+pass. At ~0.49 emulated menu FPS, performance is still below playable speed.
+
 2026-09-21: a second renderer pass improves the same Flycast menu benchmark
 from 141.779 to 126.680 seconds per 60 frames (another 11.9% throughput gain).
 The Downloads shortcut uses `not64-oot-fast2.cdi`. Texture filtering avoids the

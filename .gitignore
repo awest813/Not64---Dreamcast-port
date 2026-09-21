@@ -5,6 +5,7 @@
 *.d
 /obj/
 /build/
+/flycast.log
 /saves/dc_host.txt
 /saves/settings.cfg
 /saves/not64.log

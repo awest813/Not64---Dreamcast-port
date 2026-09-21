@@ -136,6 +136,10 @@ void CC::setCombineMode(int cycle1, int cycle2)
    pAb1 = getAlphaSource(Ab1,2);
    pAc1 = getAlphaSource(Ac1,3);
    pAd1 = getAlphaSource(Ad1,4);
+   // Mux inputs are finite channel values. Cache equations whose RGB
+   // product is zero, avoiding three floating-point divides per pixel.
+   directColor0 = pc0 == &zero || pa0 == pb0;
+   directColor1 = pc1 == &zero || pa1 == pb1;
 }
 
 void CC::setPrimColor(int color, float m, float l)
@@ -163,7 +167,7 @@ Color32 CC::combine1(const Color32& texel)
 {
    texel0 = texel;
    texel0Alpha = Color32(texel0.getAlpha(), texel0.getAlpha(), texel0.getAlpha(), texel0.getAlpha());
-   Color32 c =  (*pa1 - *pb1)* *pc1 + *pd1;
+   Color32 c = directColor1 ? *pd1 : (*pa1 - *pb1)* *pc1 + *pd1;
    float Ac0 = *pAc1 / 255.0f;
    c.setAlpha((Ac0 * (*pAa1 - *pAb1)) + *pAd1);
    return c;
@@ -176,12 +180,12 @@ Color32 CC::combine2(const Color32& texela, const Color32& texelb)
    texel1 = texelb;
    texel1Alpha = Color32(texel1.getAlpha(), texel1.getAlpha(), texel1.getAlpha(), texel1.getAlpha());
    
-   combined = (*pa0 - *pb0)* *pc0 + *pd0;
+   combined = directColor0 ? *pd0 : (*pa0 - *pb0)* *pc0 + *pd0;
    float Ac0 = *pAc0 / 255.0f;
    combined.setAlpha((Ac0 * (*pAa0 - *pAb0)) + *pAd0);
    
    combinedAlpha=Color32(combined.getAlpha(),combined.getAlpha(),combined.getAlpha(),combined.getAlpha());
-   Color32 c = (*pa1 - *pb1)* *pc1 + *pd1;
+   Color32 c = directColor1 ? *pd1 : (*pa1 - *pb1)* *pc1 + *pd1;
    float Ac1 = *pAc1 / 255.0f;
    c.setAlpha((Ac1 * (*pAa1 - *pAb1)) + *pAd1);
    

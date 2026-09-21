@@ -8,6 +8,15 @@ are KallistiOS-only.
 
 ## Integration checkpoint — 2026-09-20
 
+2026-09-21 latest: Downloads launches `not64-oot-fast3.cdi`. Direct S/T
+translation avoids temporary arrays, and the combiner caches zero-product
+RGB equations while retaining alpha and combined state. Flycast menu time
+is 121.702 s per 60 frames vs 126.680 s (4.1% throughput gain; 30.0% over
+the original baseline). Host menu/opening captures are byte-identical and
+the full suite passes with coordinate/mux regression coverage. Evidence is
+`perf3-*.log`, especially `perf3-target.log` and `perf3-regression.log`.
+AICA starts; the menu still runs at only ~0.49 FPS. No full gameplay claim.
+
 2026-09-21 follow-up: Downloads now launches `not64-oot-fast2.cdi`. Three-point
 filtering omits the unused fourth texel and blender modes skip unused memory
 RGB reads. Flycast's same 60-frame menu sample improves 141.779 -> 126.680 s

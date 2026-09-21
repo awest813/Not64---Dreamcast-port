@@ -53,6 +53,7 @@ class CC
    Color32 combinedAlpha;
    
    int oldCycle1, oldCycle2;
+   bool directColor0, directColor1;
    Color32* getColorSource(int src, int var);
    float* getAlphaSource(int src, int var);
    

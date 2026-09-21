@@ -187,20 +187,27 @@ Color32 TX::unpack_IA4(int tile, int s, int t)
    return color;
 }
 
+static inline int translateAxis(int c, int limit, int mode, int mask)
+{
+   if(mode&2) { if(c<0)c=0; if(c>=limit)c=limit-1; }
+   if(mask) {
+       int span=1<<mask;
+       bool mirror=(mode&1) && (c&span);
+       c&=span-1;
+       if(mirror)c=span-1-c;
+   }
+   return c;
+}
+
 bool TX::translateCoordinates(int &s, int &t, int tile)
 {
    Descriptor &d=descriptor[tile];
    int w=d.sampleWidth, h=d.sampleHeight;
    if(w<=0 || h<=0) return false;
-   int *coords[2]={&s,&t};
-   int limits[2]={w,h}, modes[2]={d.cms,d.cmt}, masks[2]={d.masks,d.maskt};
-   for(int a=0;a<2;a++) {
-       int &c=*coords[a];
-       if(modes[a]&2) { if(c<0)c=0; if(c>=limits[a])c=limits[a]-1; }
-       if(masks[a]) { int span=1<<masks[a]; bool mirror=(modes[a]&1) && (c&span); c&=span-1; if(mirror)c=span-1-c; }
-       if(c<0) return false;
-   }
-   return true;
+   s=translateAxis(s,w,d.cms,d.masks);
+   if(s<0) return false;
+   t=translateAxis(t,h,d.cmt,d.maskt);
+   return t>=0;
 }
 
 Color32 TX::sample(int tile, int s, int t)
