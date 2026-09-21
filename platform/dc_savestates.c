@@ -25,6 +25,8 @@
 #include "../main/rom.h"
 #include "dc_debug.h"
 #include "dc_memory.h"
+#include "dc_audio.h"
+#include "../main/plugin.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -755,10 +757,9 @@ void savestates_save(void)
 	dc_log(DC_LOG_INFO, "savestate: saved slot %u (%s)", slot, path);
 }
 
-void savestates_load(void)
+void savestates_load_path(const char *path)
 {
 	FILE *fp;
-	const char *path = slot_path();
 
 	savestates_job &= ~LOADSTATE;
 	last_ok = 0;
@@ -782,8 +783,14 @@ void savestates_load(void)
 		return;
 	}
 	fclose(fp);
+	audio_dc_restore(ROM_HEADER.Country_code);
 	last_ok = 1;
 	dc_log(DC_LOG_INFO, "savestate: loaded slot %u (%s)", slot, path);
+}
+
+void savestates_load(void)
+{
+	savestates_load_path(slot_path());
 }
 
 int savestates_exists(int mode)
@@ -824,6 +831,7 @@ int savestates_selftest(void)
 	unsigned long old_pc;
 	long long old_r1;
 	unsigned long old_vi;
+	unsigned long old_dacrate = ai_register.ai_dacrate;
 	const char *path;
 	char stem[SS_STEM_LEN];
 
@@ -862,6 +870,7 @@ int savestates_selftest(void)
 	dc_eeprom_debug_set(1, 0xA5);
 	dc_cart_sram()[0] = 0x5A;
 	sramWritten = TRUE;
+	ai_register.ai_dacrate = 1499;
 	savestates_save();
 	if (!last_ok || !savestates_exists(SAVESTATE)) {
 		printf("savestate FAIL: did not write %s\n", path);
@@ -874,7 +883,27 @@ int savestates_selftest(void)
 	vi_register.vi_origin = 0;
 	init_eeprom();
 	dc_cart_sram()[0] = 0;
+	ai_register.ai_dacrate = 2199;
+	aiDacrateChanged(SYSTEM_NTSC);
+	ai_register.ai_dram_addr = 0;
+	ai_register.ai_len = 8;
+	aiLenChanged();
+	if (audio_dc_buffered() != 8) ++fails;
 	savestates_load();
+	{
+		unsigned int clock;
+		switch (ROM_HEADER.Country_code & 0xff) {
+		case 0x44: case 0x46: case 0x49: case 0x50:
+		case 0x53: case 0x55: case 0x58: case 0x59:
+			clock = 49656530; break;
+		default: clock = 48681812; break;
+		}
+		if (audio_dc_buffered() || aiReadLength() ||
+		    audio_dc_rate() != clock / 1500) {
+			puts("savestate FAIL: audio queue/rate was not restored");
+			++fails;
+		}
+	}
 	if (!last_ok) {
 		printf("savestate FAIL: load reported error\n");
 		fails++;
@@ -1022,6 +1051,8 @@ int savestates_selftest(void)
 
 	printf("savestate selftest: %s (%d failure(s))\n",
 	       fails ? "FAIL" : "PASS", fails);
+	ai_register.ai_dacrate = old_dacrate;
+	audio_dc_restore(ROM_HEADER.Country_code);
 	return fails;
 }
 #endif

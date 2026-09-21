@@ -22,6 +22,7 @@
 #include "dc_debug.h"
 
 extern char audioEnabled;
+#include "dc_audio.h"
 extern char printToSD;
 extern char saveEnabled;
 extern char *get_savespath(void);
@@ -112,7 +113,7 @@ static void set_int(int i, int v)
 		v = table[i].nnames - 1;
 
 	switch (i) {
-	case DC_SET_AUDIO:    audioEnabled = (char)v; break;
+	case DC_SET_AUDIO:    audio_dc_set_enabled(v); break;
 	case DC_SET_FPS:      showFPSonScreen = (char)v; break;
 	case DC_SET_DEBUG:    printToScreen = (char)v; break;
 	case DC_SET_LOGFILE:  dc_debug_set_file(v); break;
@@ -133,7 +134,7 @@ static void set_int(int i, int v)
 void dc_settings_defaults(void)
 {
 	skipMenu = 0;
-	audioEnabled = 1;
+	audio_dc_set_enabled(1);
 	showFPSonScreen = 1;
 	printToScreen = 1;
 	printToSD = 1;

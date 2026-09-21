@@ -40,7 +40,10 @@ TX::TX(GFX_INFO info) : gfxInfo(info)
    memset(paletteData,0,sizeof(paletteData));
    textureLUT=textureLOD=textureDetail=texturePersp=0;
    tImg=NULL; format=size=width=0;
-   for(int i=0; i<8; i++) unpackTexel[i] = &TX::sample;
+   for(int i=0; i<8; i++) {
+       unpackTexel[i] = &TX::sample;
+       descriptor[i].sampleWidth = descriptor[i].sampleHeight = 1;
+   }
 }
 
 TX::~TX()
@@ -129,6 +132,8 @@ void TX::setTileSize(float uls, float ult, float lrs, float lrt, int tile)
    descriptor[tile].ult = ult;
    descriptor[tile].lrs = lrs;
    descriptor[tile].lrt = lrt;
+   descriptor[tile].sampleWidth = (int)(lrs-uls)+1;
+   descriptor[tile].sampleHeight = (int)(lrt-ult)+1;
 }
 
 Color32 TX::unpack_RGBA16(int tile, int s, int t)
@@ -185,7 +190,7 @@ Color32 TX::unpack_IA4(int tile, int s, int t)
 bool TX::translateCoordinates(int &s, int &t, int tile)
 {
    Descriptor &d=descriptor[tile];
-   int w=(int)(d.lrs-d.uls)+1, h=(int)(d.lrt-d.ult)+1;
+   int w=d.sampleWidth, h=d.sampleHeight;
    if(w<=0 || h<=0) return false;
    int *coords[2]={&s,&t};
    int limits[2]={w,h}, modes[2]={d.cms,d.cmt}, masks[2]={d.masks,d.maskt};
@@ -233,8 +238,8 @@ Color32 TX::getTexel(float _s, float _t, int tile, TF* tf)
    tile &= 7;
    /* RGB texels do not require the YUV conversion coefficients. */
    int ss=descriptor[tile].shifts, st=descriptor[tile].shiftt;
-   _s=ss<=10?_s/(1<<ss):_s*(1<<(16-ss));
-   _t=st<=10?_t/(1<<st):_t*(1<<(16-st));
+   if(ss) _s=ss<=10?_s/(1<<ss):_s*(1<<(16-ss));
+   if(st) _t=st<=10?_t/(1<<st):_t*(1<<(16-st));
    float s = _s - descriptor[tile].uls;
    float t = _t - descriptor[tile].ult;
    
@@ -243,10 +248,16 @@ Color32 TX::getTexel(float _s, float _t, int tile, TF* tf)
    if (!tf) return sample(tile,(int)floorf(s),(int)floorf(t));
    float fs=floorf(s), ft=floorf(t);
    if(s==fs && t==ft) return sample(tile,(int)fs,(int)ft);
-   Color32 texels[4]={sample(tile,(int)fs,(int)ft), sample(tile,(int)fs+1,(int)ft),
-                      sample(tile,(int)fs+1,(int)ft+1), sample(tile,(int)fs,(int)ft+1)};
    float dx=s-fs,dy=t-ft;
    float distance[4]={dx*dx+dy*dy,(1-dx)*(1-dx)+dy*dy,
                       (1-dx)*(1-dx)+(1-dy)*(1-dy),dx*dx+(1-dy)*(1-dy)};
+   if (tf->getTextureFilter() == 0) {
+       int nearest=0;
+       for(int i=1;i<4;i++) if(distance[i]<distance[nearest]) nearest=i;
+       return sample(tile,(int)fs+(nearest==1 || nearest==2),
+                          (int)ft+(nearest==2 || nearest==3));
+   }
+   Color32 texels[4]={sample(tile,(int)fs,(int)ft), sample(tile,(int)fs+1,(int)ft),
+                      sample(tile,(int)fs+1,(int)ft+1), sample(tile,(int)fs,(int)ft+1)};
    return tf->filter(texels,distance);
 }

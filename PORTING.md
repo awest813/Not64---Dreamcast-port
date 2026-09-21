@@ -2,6 +2,38 @@
 
 ## Integration update - 2026-09-20
 
+Performance: the Downloads launcher now uses `not64-oot-fast.cdi` with the
+same menu checkpoint. Renderer work reduction plus opt-in `LTO=1` improves
+measured Flycast menu throughput by 11.6% (60 frames: 158.247 -> 141.779 s).
+Host menu/opening captures remain identical and the full regression suite
+passes. This is still far below playable speed. `PERF=1` exposes cumulative
+phase timings for further work; see `VIDEO_AUDIO_PERF_PLAN.md` for evidence.
+
+Latest: OOT's file-selection/new-game menu is now visually verified in Flycast.
+Two separate Start presses take the game through the title into file selection.
+The local Downloads shortcut opens `not64-oot-menu.cdi` with a verified menu
+checkpoint (`GAME_CHECKPOINT=1`, `/cd/boot.st`); it restores that snapshot on
+each launch. The normal-boot image remains available. Host checkpoint/input
+validation and the full regression suite pass; full gameplay remains unverified.
+
+Ocarina of Time (USA) now boots through the software renderer after adding
+two-cycle rectangles and F3DEX2 CULLDL and fixing DreamSDK's out-of-line mutex
+compatibility at C++ startup. The host opening run completed 600 frames without
+decoder failures; a follow-up 1,500-frame run (634 lists) reached the title
+screen with zero decoder/presentation failures. Copy-mode scissor offsets now
+advance in the correct direction and use the quarter-rate horizontal step;
+horizontal and vertical regression checks pass. Title artwork still has visible
+corruption, and an early Start pulse did not establish menu entry.
+Flycast boots and starts audio. This is not full-game or
+hardware validation. See `tools/dc/README.md` for interactive build flags.
+
+Audio now outputs stereo PCM16 through KOS `snd_stream`, with paced ring
+consumption, rate changes, underrun silence, mute/pause and ROM-close cleanup.
+Host PCM tests and Flycast audio lifecycle/drain checks pass; hardware listening
+and game audio quality are still unverified. PVR redundant-upload skipping is
+available via `UPLOAD_SKIP=1`, disabled normally because the measured hash pass
+costs more than DMA. See `VIDEO_AUDIO_PERF_PLAN.md` for the measurements.
+
 Graphics, controller, ROM browser, and cache branches are combined on master.
 See tools/dc/README.md for current builds, merged regression results, and
 safe diagnostic cleanup and idle. Older phase notes below are historical.

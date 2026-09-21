@@ -45,10 +45,19 @@
 
 /* Audio ring in gc_audio/audio-dc.c */
 #define DC_AUDIO_RING_SIZE      (64 * DC_KB)
+/* KOS PCM staging plus stereo separation scratch. Worker stack remains in
+ * OS/code reserve; the two AICA channel buffers live outside main RAM. */
+#define DC_AUDIO_STREAM_BYTES   (8 * DC_KB)
+#ifdef DC_HOST_STUB
+#define DC_AUDIO_OUTPUT_SIZE    0
+#else
+#define DC_AUDIO_OUTPUT_SIZE    (2 * DC_AUDIO_STREAM_BYTES)
+#endif
 
 #define DC_EMU_FIXED_SIZE \
 	(DC_N64_RDRAM_SIZE + DC_ROM_STREAM_SIZE + DC_TLB_MISC_SIZE + \
-	 DC_TEXCACHE_SIZE + DC_AUDIO_RING_SIZE + DC_VIDEO_STAGING_SIZE + DC_SOFT_RENDERER_SIZE)
+	 DC_TEXCACHE_SIZE + DC_AUDIO_RING_SIZE + DC_AUDIO_OUTPUT_SIZE + \
+	 DC_VIDEO_STAGING_SIZE + DC_SOFT_RENDERER_SIZE)
 
 #define DC_HEAP_REMAINDER \
 	(DC_MAIN_RAM_SIZE - DC_OS_AND_CODE_RESERVE - DC_EMU_FIXED_SIZE)

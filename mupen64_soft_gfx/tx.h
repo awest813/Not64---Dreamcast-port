@@ -54,6 +54,7 @@ typedef struct
    float ult;
    float lrs;
    float lrt;
+   int sampleWidth, sampleHeight;
 } Descriptor;
 
 class TX

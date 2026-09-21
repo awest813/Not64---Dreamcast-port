@@ -26,6 +26,16 @@ int main(void)
         CHECK(frame.pixels[y * DC_VI_TEXTURE_WIDTH + x] == rgb565[y * 4 + x]);
     CHECK(frame.pixels[4] == 0 && frame.pixels[DC_VI_TEXTURE_WIDTH * 2] == 0);
     CHECK(frame.pixels[DC_VI_TEXTURE_WIDTH * DC_VI_TEXTURE_HEIGHT - 1] == 0);
+    {
+        uint32_t hash = dc_video_frame_hash(&frame);
+        CHECK(hash == dc_video_frame_hash(&frame));
+        frame.pixels[DC_VI_TEXTURE_WIDTH * 2 - 1] ^= 1;
+        CHECK(hash != dc_video_frame_hash(&frame));
+        frame.pixels[DC_VI_TEXTURE_WIDTH * 2 - 1] ^= 1;
+        frame.pixels[DC_VI_TEXTURE_WIDTH * 2] ^= 1;
+        CHECK(hash == dc_video_frame_hash(&frame));
+        frame.pixels[DC_VI_TEXTURE_WIDTH * 2] ^= 1;
+    }
 
     /* Verify the actual software presentation kernel and its black borders. */
     output[0] = 0x1234; output[640 * 480 + 1] = 0xabcd;

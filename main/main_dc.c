@@ -13,6 +13,7 @@
 #endif
 
 #include "../platform/dc_memory.h"
+#include "../platform/dc_audio.h"
 #include "../platform/dc_gfx.h"
 #include "../fileBrowser/fileBrowser.h"
 #include "../fileBrowser/fileBrowser-kos.h"
@@ -52,13 +53,15 @@ extern BOOL mempakWritten;
 #endif
 extern void init_controller_ts(void);
 extern void controller_DC_set_start_pulse(unsigned vi);
+extern int controller_DC_add_start_pulse(unsigned vi);
 extern void auto_assign_controllers(void);
-extern unsigned int audio_dc_buffered(void);
-extern unsigned int audio_dc_drain(unsigned int n);
 extern DWORD aiReadLength(void);
 extern void native_ReadController(int Control, unsigned char *Command);
 
 static const char *capture_path;
+#ifdef DC_HOST_STUB
+static unsigned checkpoint_save, checkpoint_load;
+#endif
 static GFX_INFO gfx_info;
 static AUDIO_INFO audio_info;
 static CONTROL_INFO control_info;
@@ -74,6 +77,7 @@ static void print_budget(void)
 	printf("  TLB/misc          %d KiB\n", DC_TLB_MISC_SIZE / DC_KB);
 	printf("  tex cache         %d\n", DC_TEXCACHE_SIZE);
 	printf("  audio ring        %d KiB\n", DC_AUDIO_RING_SIZE / DC_KB);
+	printf("  audio output      %d KiB\n", DC_AUDIO_OUTPUT_SIZE / DC_KB);
 	printf("  heap remainder    %d bytes\n", DC_HEAP_REMAINDER);
 }
 
@@ -197,6 +201,68 @@ static int smoke_io(void)
 		printf("audio smoke: ring not empty after full drain\n");
 		fail = 1;
 	}
+#ifdef DC_HOST_STUB
+	{
+		unsigned char pcm[12];
+		unsigned char *source = (unsigned char *)rdram;
+		unsigned int i;
+		/* Move through a ring wrap; distinguish signed L/R sample bytes. */
+		for (i = 0; i < DC_AUDIO_RING_SIZE - 68; ++i) source[i] = 0;
+		ai_register.ai_len = DC_AUDIO_RING_SIZE - 68;
+		aiLenChanged();
+		audio_dc_drain(DC_AUDIO_RING_SIZE);
+		memcpy(source, "\x34\x12\xfe\xff\x78\x56\x00\x80", 8);
+		ai_register.ai_len = 8;
+		aiLenChanged();
+		if (audio_dc_read_pcm(pcm, sizeof(pcm)) != 8 ||
+		    memcmp(pcm, "\xfe\xff\x34\x12\x00\x80\x78\x56\0\0\0\0", 12) ||
+		    aiReadLength() || audio_dc_buffered()) fail = 1;
+		/* Two queued DMAs: consuming the older one preserves the new tail. */
+		aiLenChanged(); aiLenChanged();
+		audio_dc_drain(8);
+		if (aiReadLength() != 8) fail = 1;
+		audio_dc_read_pcm(pcm, sizeof(pcm));
+		/* Oversized DMA retains exactly the newest ring, including its
+		 * first stereo word; no discarded prefix may leak into output. */
+		memset(source, 0x55, DC_AUDIO_RING_SIZE + 8);
+		memcpy(source + 8, "\x34\x12\xfe\xff", 4);
+		ai_register.ai_len = DC_AUDIO_RING_SIZE + 8;
+		aiLenChanged();
+		if (audio_dc_buffered() != DC_AUDIO_RING_SIZE ||
+		    aiReadLength() != DC_AUDIO_RING_SIZE ||
+		    audio_dc_read_pcm(pcm, 4) != 4 ||
+		    memcmp(pcm, "\xfe\xff\x34\x12", 4)) fail = 1;
+		audio_dc_drain(DC_AUDIO_RING_SIZE);
+		/* Clamp at the final stereo word, even for an invalid huge length. */
+		ai_register.ai_dram_addr = DC_N64_RDRAM_SIZE - 4;
+		ai_register.ai_len = 0xffffffffu;
+		memcpy(source + DC_N64_RDRAM_SIZE - 4, "\x34\x12\xfe\xff", 4);
+		aiLenChanged();
+		if (audio_dc_read_pcm(pcm, 8) != 4 ||
+		    memcmp(pcm, "\xfe\xff\x34\x12\0\0\0\0", 8)) fail = 1;
+		memset(source + DC_N64_RDRAM_SIZE - 4, 0, 4);
+		ai_register.ai_dram_addr = 0;
+		ai_register.ai_len = 8;
+		ai_register.ai_dacrate = 1499;
+		aiDacrateChanged(SYSTEM_NTSC);
+		aiLenChanged();
+		aiDacrateChanged(SYSTEM_NTSC);
+		if (audio_dc_buffered() != 8) fail = 1;
+		ai_register.ai_dacrate = 2199;
+		aiDacrateChanged(SYSTEM_NTSC);
+		if (audio_dc_buffered() || aiReadLength()) fail = 1;
+		aiLenChanged();
+		audio_dc_set_enabled(0);
+		aiLenChanged();
+		if (audio_dc_buffered() || aiReadLength()) fail = 1;
+		audio_dc_set_enabled(1);
+		ai_register.ai_dacrate = 0;
+		aiDacrateChanged(-1); /* Restore the plugin's default rate. */
+		memset(source, 0, DC_AUDIO_RING_SIZE + 8);
+		printf("audio PCM wrap/channel order/underrun %s\n", fail ? "FAIL" : "PASS");
+		printf("audio DMA bounds/overflow/rate/mute %s\n", fail ? "FAIL" : "PASS");
+	}
+#endif
 	/* The ROM runs next: do not leave the smoke pattern in RDRAM. */
 	memset(rdram, 0, 64);
 	return fail;
@@ -1133,6 +1199,10 @@ static int stress_video(void)
         vi_register.vi_status = 2;
         updateScreen();
         for (n = 0; n < 16; ++n) {
+            /* Static A, changed B, then A again exercises both textures after
+             * repeated reuse. Restore before the exact pixel check below. */
+            if (n == 4 || n == 8)
+                ((uint32_t *)rdram)[0x10000 / 4] ^= 0x08000800u;
             uint64_t begin = timer_us_gettime64();
             updateScreen();
             total_us += timer_us_gettime64() - begin;
@@ -1364,6 +1434,7 @@ static int load_and_step(const char *path, unsigned long steps)
 
 #ifdef DC_HOST_STUB
 	if (!strncmp(ROM_SETTINGS.goodname, "DC ", 3) && (smoke_map() || smoke_menu() || smoke_tlbcache() || smoke_romcache() || smoke_io() || smoke_pif() || smoke_pak())) {
+		romClosed_audio();
 		romClosed_gfx();
 		closeDLL_gfx();
 		cpu_deinit();
@@ -1375,10 +1446,22 @@ static int load_and_step(const char *path, unsigned long steps)
 
 #endif
 	dc_interp_step_limit = steps;
-	go();
+	ret = 0;
+#ifdef DC_GAME_CHECKPOINT
+	savestates_load_path("/cd/boot.st");
+	if (!savestates_ok()) ret = 1;
+#endif
+#ifdef DC_HOST_STUB
+	if (checkpoint_load) {
+		savestates_select_slot(checkpoint_load);
+		savestates_load();
+		if (!savestates_ok()) ret = 1;
+	}
+#endif
+	if (!ret) go();
 	printf("Interpreter stopped (budget=%lu interp_addr=0x%08lx stop=%d)\n",
 	       steps, interp_addr, stop);
-	ret = check_cputest(path) | check_vitest();
+	ret |= check_cputest(path) | check_vitest();
 	{
 		dc_gfx_stats stats = dc_gfx_get_stats();
 		printf("Graphics %s: VI=%lu presented=%lu DList=%lu RDP=%lu invalid=%lu unsupported=%lu failures=%lu\n",
@@ -1395,7 +1478,15 @@ static int load_and_step(const char *path, unsigned long steps)
         fprintf(stderr, "Framebuffer capture failed: %s\n", capture_path);
         ret = 1;
     }
+#ifdef DC_HOST_STUB
+    if (!ret && checkpoint_save) {
+        savestates_select_slot(checkpoint_save);
+        savestates_save();
+        if (!savestates_ok()) ret = 1;
+    }
+#endif
 #ifdef DC_EMBED_VITEST
+    if (!ret && audio_dc_stream_test()) ret = 1;
     if (!ret && stress_video()) ret = 1;
 #endif
 #ifndef DC_HOST_STUB
@@ -1407,6 +1498,7 @@ static int load_and_step(const char *path, unsigned long steps)
     thd_sleep(1000);
 #endif
 #endif
+	romClosed_audio();
 	romClosed_gfx();
 	closeDLL_gfx();
 	dc_nativesave_save();
@@ -1444,8 +1536,8 @@ int main(int argc, char **argv)
     unsigned long steps = 10000, frames = 0;
 #ifdef DC_GAME_DISC
     rompath = "/cd/game.z64";
-    steps = 500000000;
-    controller_DC_set_start_pulse(400);
+    steps = DC_GAME_STEPS;
+    controller_DC_set_start_pulse(DC_GAME_START);
 #endif
 #ifdef DC_EMBED_VITEST
     rompath = "/rd/roms/dc_vitest.z64";
@@ -1454,7 +1546,7 @@ int main(int argc, char **argv)
 #ifndef DC_HOST_STUB
     frames = 120; /* Prevent an idle ROM presenting thousands of real frames. */
 #ifdef DC_GAME_DISC
-    frames = 600;
+    frames = DC_GAME_FRAMES;
 #endif
 #endif
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -1477,8 +1569,16 @@ int main(int argc, char **argv)
         } else if (!strcmp(argv[arg], "--start-at") && arg + 1 < argc) {
             unsigned long start_vi;
             if (!positive_number(argv[arg + 1], &start_vi)) goto usage;
-            controller_DC_set_start_pulse((unsigned)start_vi);
+            if (!controller_DC_add_start_pulse((unsigned)start_vi)) goto usage;
             arg += 2;
+#ifdef DC_HOST_STUB
+        } else if ((!strcmp(argv[arg], "--save-slot") || !strcmp(argv[arg], "--load-slot")) && arg + 1 < argc) {
+            unsigned long slot;
+            if (!positive_number(argv[arg + 1], &slot) || slot > 9) goto usage;
+            if (!strcmp(argv[arg], "--save-slot")) checkpoint_save = slot;
+            else checkpoint_load = slot;
+            arg += 2;
+#endif
         } else if (!strcmp(argv[arg], "--capture") && arg + 1 < argc) {
             capture_path = argv[arg + 1];
             arg += 2;
@@ -1559,5 +1659,8 @@ int main(int argc, char **argv)
     return fail;
 usage:
     fprintf(stderr, "Usage: %s [--menu] [rom.z64 [positive-step-budget]] [--frames positive-count] [--capture output.ppm] [--start-at VI]\n", argv[0]);
+#ifdef DC_HOST_STUB
+    fprintf(stderr, "Host checkpoints: --load-slot 1..9 --save-slot 1..9; repeat --start-at for separate presses (up to 16).\n");
+#endif
     return 1;
 }

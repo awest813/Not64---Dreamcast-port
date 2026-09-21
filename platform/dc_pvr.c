@@ -16,13 +16,16 @@ static int initialized;
 static pvr_ptr_t textures[TEXTURE_COUNT];
 static pvr_poly_hdr_t headers[TEXTURE_COUNT];
 static unsigned texture_next;
+static unsigned texture_current, cached_width, cached_height;
+static uint32_t cached_hash;
+static int cached_valid;
+static int present_failed;
 #ifdef DC_EMBED_VITEST
-static uint64_t wait_us, upload_us, submit_us;
+static uint64_t wait_us, hash_us, upload_us, submit_us;
 static unsigned samples, uploads;
 #endif
 
-/* Drain TA work and any render that still owns our textures. Shutdown-only:
- * per-frame presents no longer wait for the render. */
+/* Drain TA work and renders on shutdown or failed submission only. */
 static int pvr_idle(void)
 {
     return pvr_wait_ready() >= 0 && pvr_wait_render_done() >= 0;
@@ -48,7 +51,7 @@ int dc_video_init(void)
     }
     initialized = 1;
 #ifdef DC_EMBED_VITEST
-    wait_us = upload_us = submit_us = 0;
+    wait_us = hash_us = upload_us = submit_us = 0;
     samples = uploads = 0;
 #endif
     for (i = 0; i < TEXTURE_COUNT; ++i) {
@@ -70,6 +73,14 @@ int dc_video_init(void)
         pvr_poly_compile(&headers[i], &context);
     }
     texture_next = 0;
+    texture_current = 0;
+    cached_valid = 0;
+    present_failed = 0;
+#ifdef DC_VIDEO_UPLOAD_SKIP
+    puts("PVR upload-skip: enabled");
+#else
+    puts("PVR upload-skip: disabled");
+#endif
     pvr_set_bg_color(0, 0, 0);
     /* Exact serial line: tests/dc/check_target_log.py */
     printf("PVR: staging=%u texture=%u VRAM-free=%lu bytes\n",
@@ -84,10 +95,12 @@ int dc_video_present(const dc_vi_frame *frame)
     int result = 1;
     size_t upload;
     unsigned slot;
+    uint32_t hash = 0;
+    int changed;
 #ifdef DC_EMBED_VITEST
-    uint64_t begin = timer_us_gettime64(), ready, uploaded;
+    uint64_t begin = timer_us_gettime64(), ready, hashed, uploaded;
 #endif
-    if (!initialized || !textures[0] || !textures[1] || !frame ||
+    if (!initialized || present_failed || !textures[0] || !textures[1] || !frame ||
         frame->width > DC_VI_MAX_WIDTH || frame->height > DC_VI_MAX_HEIGHT)
         return 0;
     if (pvr_wait_ready() < 0) {
@@ -98,25 +111,45 @@ int dc_video_present(const dc_vi_frame *frame)
     ready = timer_us_gettime64();
 #endif
     upload = dc_video_pvr_upload_bytes(frame->width, frame->height);
-    slot = texture_next;
-    if (upload) {
+#ifdef DC_VIDEO_UPLOAD_SKIP
+    if (upload) hash = dc_video_frame_hash(frame);
+    changed = upload && (!cached_valid || cached_hash != hash ||
+                        cached_width != frame->width || cached_height != frame->height);
+#else
+    changed = upload != 0;
+#endif
+#ifdef DC_EMBED_VITEST
+    hashed = timer_us_gettime64();
+#endif
+    slot = changed ? texture_next : texture_current;
+    if (changed) {
         /* Blocking PVR DMA hands the copy to the G2 DMA engine instead of
          * the SH4 store queues; fall back to the CPU copy if the channel
          * refuses (misalignment would be a programming error on our side,
          * and the busy case cannot happen: the previous blocking DMA done). */
         if (pvr_txr_load_dma(frame->pixels, textures[slot], upload, true, NULL, NULL) < 0)
             pvr_txr_load(frame->pixels, textures[slot], upload);
+        cached_hash = hash;
+        cached_width = frame->width;
+        cached_height = frame->height;
+        cached_valid = 1;
+        texture_current = slot;
+        texture_next = (slot + 1) % TEXTURE_COUNT;
     }
 #ifdef DC_EMBED_VITEST
     uploaded = timer_us_gettime64();
-    if (upload) {
-        upload_us += uploaded - ready;
+    if (changed) {
+        upload_us += uploaded - hashed;
         ++uploads;
     }
 #endif
     pvr_scene_begin();
     if (pvr_list_begin(PVR_LIST_OP_POLY) < 0) {
         pvr_scene_finish();
+        /* If draining fails, reject further presents until reopen: either
+         * texture may still be owned by a render after this failed scene. */
+        present_failed = !pvr_idle();
+        cached_valid = 0;
         return 0;
     }
     if (upload) {
@@ -137,9 +170,13 @@ int dc_video_present(const dc_vi_frame *frame)
     }
     if (pvr_list_finish() < 0) result = 0;
     if (pvr_scene_finish() < 0) result = 0;
-    texture_next = (slot + 1) % TEXTURE_COUNT;
+    if (!result) {
+        present_failed = !pvr_idle();
+        cached_valid = 0;
+    }
 #ifdef DC_EMBED_VITEST
     wait_us += ready - begin;
+    hash_us += hashed - ready;
     submit_us += timer_us_gettime64() - uploaded;
     ++samples;
 #endif
@@ -152,10 +189,11 @@ void dc_video_shutdown(void)
     if (initialized) {
 #ifdef DC_EMBED_VITEST
         if (samples)
-            printf("PVR timing: samples=%u uploads=%u wait-avg-us=%lu upload-avg-us=%lu submit-avg-us=%lu\n",
+            printf("PVR timing: samples=%u uploads=%u wait-avg-us=%lu upload-avg-us=%lu submit-avg-us=%lu hash-avg-us=%lu\n",
                    samples, uploads, (unsigned long)(wait_us / samples),
                    (unsigned long)(uploads ? upload_us / uploads : 0),
-                   (unsigned long)(submit_us / samples));
+                   (unsigned long)(submit_us / samples),
+                   (unsigned long)(hash_us / samples));
 #endif
         if (!pvr_idle())
             dc_log(DC_LOG_ERROR, "PVR: wait failed; freeing textures before shutdown");

@@ -4,8 +4,8 @@ Audit date: 2026-09-20. Repository revision: `e5aa1c9` (after the VI/present
 kernel polish and the DMA invalidate-sweep fix). Scope: where frame time and
 audio CPU time actually go on the Dreamcast configuration (pure interpreter,
 200 MHz SH4, 4 MiB RDRAM, PVR textured-quad presenter, no AICA output yet),
-and the ordered plan to reduce both. This is a plan, not an implementation;
-nothing here marks a phase done.
+and the ordered plan to reduce both. The audit below describes that baseline;
+phase headings and implementation notes record subsequent validation.
 
 ## What runs per emulated frame today
 
@@ -72,7 +72,24 @@ a real-hardware win the emulator cannot show). Present-path total
 `tools/dc/scrape_console.ps1` (attach + read the emulator's serial console)
 and `tools/dc/shot_flycast.ps1` (window screenshot).
 
-### V2 — Skip redundant texture uploads
+### V2 — Skip redundant texture uploads — IMPLEMENTED, OPT-IN 2026-09-20
+
+Enable with `UPLOAD_SKIP=1` on PVR builds. XXH32 hashes the uploaded rows;
+matching dimensions and hash reuse the current texture while still submitting
+the quad. Changed frames use the other texture. Blank frames preserve the
+cache, reopen invalidates it, and failed submissions drain rendering before
+texture reuse. State lives in the presenter, which owns the texture lifetime.
+
+The measured result changes the recommendation: Flycast saves 119 of 120
+uploads on the initial static run, but hashing costs about **3.7 ms/frame**
+against **30–31 us/upload** for V1 DMA. Leave this **off by default**; it saves
+transfer traffic, not frame time on this emulator. Physical hardware timing
+is required before enabling it normally. The diagnostic reports hash time
+separately and exercises static A → changed B → A, blank recovery and reopen.
+Final Flycast scanout/present means were 22,651 us with skipping versus
+18,422 us with normal DMA (the converter is included in these totals).
+
+Original proposal:
 
 Menus, pauses, and static scenes re-submit identical frames at 60 Hz. Keep a
 rolling checksum (the tree already carries `xxhash`/`adler32`) over the
@@ -85,7 +102,17 @@ screen.
 - Touches: `platform/dc_gfx.c` (frame state), `platform/dc_pvr.c` (skip flag).
 - Risk: low; exact-capture tests unaffected (conversion still runs).
 
-### V3 — Frame-phase profiling as a diagnostic
+### V3 — Frame-phase profiling as a diagnostic — IMPLEMENTED
+
+`PERF=1` prints cumulative wall-clock, software-renderer, VI conversion and
+presentation microseconds every 60 presented frames, on host and KOS. The
+remaining time includes CPU emulation and audio; it is not a pure interpreter
+measurement. Timing starts at the first display-list/VI callback so ROM and
+checkpoint loading do not contaminate game-frame measurements.
+
+The OOT file-selection checkpoint measured 19.933 s for 60 host frames,
+including 19.132 s in software rendering (96%). This identifies the rasterizer
+as the dominant cost for this scene, rather than the upload path.
 
 `DC_EMBED_VITEST` already times wait/upload/submit, but only in demo builds.
 Generalize: a debug setting that accumulates interp/raster/convert/upload/
@@ -94,6 +121,30 @@ present microseconds and prints one summary line on ROM close (reuses
 measurements instead of source reading.
 
 ### V4 — Soft renderer span work (biggest gameplay video CPU win)
+
+First measured improvements (2026-09-20): skip disabled depth/alpha arithmetic,
+cache tile dimensions, avoid zero texture shifts, and fetch only the selected
+texel in point-filter mode while preserving the original distance/tie rules.
+`LTO=1` optionally enables cross-file compiler optimization; no fast-math or
+frame skipping is used. The point path has a 625-coordinate differential test.
+
+With these changes and LTO, the 60-frame host menu sample fell from 19.933 s to
+17.450 s (14.2% higher throughput). An opening-scene sample fell from 7.588 s
+to 6.697 s (13.3% higher throughput). Both final PPM captures are byte-identical
+to their baselines. These are ARM/QEMU-host measurements, not Dreamcast FPS.
+The full optimized host suite passes. Evidence: `perf-before.log`,
+`perf-lto.log`, `perf-scene-before.log`, `perf-scene-after.log`, and
+`perf-regression.log` under `build/dc/validation/`.
+
+Dreamcast/Flycast confirmation, same menu checkpoint and 200 MHz SH4 setting:
+60 frames fell from **158.247 s to 141.779 s** (11.6% higher throughput;
+10.4% less frame time). Raster time fell from 148.846 s to 131.932 s.
+Evidence: `perf-target-before.log` / `perf-target-after.log`. The optimized
+unrestricted local image is `not64-oot-fast.cdi`, built with `PERF=1 LTO=1`;
+the Downloads launcher now selects it. It retains the verified menu checkpoint.
+This remains roughly 0.42 emulated menu frames/second, not playable speed;
+Flycast's 60 FPS counter measures its display cadence, not N64 throughput.
+Physical hardware performance and full gameplay are still unverified.
 
 Profile first (V3), then in this order:
 
@@ -119,7 +170,36 @@ Unroll to four pixels per iteration with two loads, add row-ahead
 `__builtin_prefetch`, keep `-O2`. Diminishing returns after the 1.85x round;
 do not start here.
 
-### A1 — Wire AICA output via snd_stream (prerequisite for audible anything)
+### A1 — Wire AICA output via snd_stream — IMPLEMENTED 2026-09-20
+
+The installed SDK has callback + `snd_stream_poll`, **no `snd_stream_push`**.
+The Dreamcast build links the plugin statically, so `main/plugin.c` is not
+its dispatch path. A 5 ms KOS worker calls `aiUpdate`, which starts/polls the
+stereo PCM16 stream. A mutex protects the ring, rate and stream state. The
+consumer swaps R/L halfwords from word-swapped RDRAM and pads underruns with
+silence. DAC rates are bounded to 1–48000 Hz. The existing bounded overflow
+policy drops old ring data; emulation is not blocked waiting for audio.
+
+Pause/overlay and mute stop output; mute discards queued samples. Clock changes
+discard old-rate PCM; repeated notifications of the same rate preserve it.
+Successful save-state loads flush pre-load output and synchronize the restored
+AI clock without changing the overlay's pause state. ROM close
+joins the worker before releasing stream resources, including error cleanup
+and repeated close/reopen. Main RAM overhead beyond the existing ring is an
+8 KiB PCM staging buffer, 8 KiB KOS stereo scratch, and the worker's stack;
+AICA uses two 8 KiB channel buffers. `AiReadLength` tracks the latest DMA's
+remaining ring bytes, not samples already transferred into AICA's buffers.
+
+Host checks cover PCM channel/byte order, ring wrap, silence padding,
+latest-DMA accounting, oversized DMA retention, end-of-RDRAM bounds, rate/mute
+and save-state audio synchronization. Oversized DMAs retain the newest ring
+with at most 64 KiB copied while holding the mutex. The embedded Flycast
+diagnostic uses the public DMA and DAC-rate entry points and checks three
+reopen cycles, paced draining beyond prefill, pause, live rate changes,
+mute/unmute and underruns. It emits short tones for listening. Physical hardware
+listening and commercial-game audio quality remain unverified.
+
+Original proposal (superseded by the installed API above):
 
 The KOS kernel ships `kernel/arch/dreamcast/sound/snd_stream.c`. Wire it:
 `AiDacrateChanged` picks the stream rate; `AiUpdate` (currently dead — see

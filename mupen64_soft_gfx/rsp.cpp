@@ -151,6 +151,26 @@ void RSP::executeDList()
        if ((pc & 7) || pc > SOFT_RDRAM_BYTES-8) { error = true; break; }
        currentCommand = (unsigned long *)(gfxInfo.RDRAM + pc);
        unsigned op = currentCommand[0] >> 24;
+       if (f3dex2 && op == 0x03) { // CULLDL: return from this list if invisible.
+           unsigned first = (currentCommand[0] & 0xffff) >> 1;
+           unsigned last = (currentCommand[1] & 0xffff) >> 1;
+           if (first > last || last >= 32) { error=true; break; }
+           unsigned outside = 63;
+           for (unsigned i=first; i<=last; ++i) {
+               if (!(validVertices & (1u << i))) { error=true; break; }
+               Vektor<float,4>& v = vtx[i].v;
+               unsigned clip = (v[0] < -v[3] ? 1 : 0) | (v[0] > v[3] ? 2 : 0) |
+                               (v[1] < -v[3] ? 4 : 0) | (v[1] > v[3] ? 8 : 0) |
+                               (v[2] < -v[3] ? 16 : 0) | (v[2] > v[3] ? 32 : 0);
+               outside &= clip;
+           }
+           if (error) break;
+           if (outside) {
+               if (!depth) { end=true; break; }
+               pc = stack[--depth];
+           } else pc += 8;
+           continue;
+       }
        if (op == (f3dex2 ? 0xdf : 0xb8)) {
            if (!depth) { end = true; break; }
            pc = stack[--depth]; continue;
@@ -358,6 +378,7 @@ void RSP::VTX()
 	vtx[v0+i].v[2] = (int)(*((short*)(p + i*16 + (4^(S16<<1)))));
 	vtx[v0+i].v[3] = 1;
 	vtx[v0+i].v = vtx[v0+i].v * MP;
+	validVertices |= 1u << (v0+i);
 	
 	vtx[v0+i].s = *((short*)(p + i*16 + (8^(S16<<1)))) / 32.0f;
 	vtx[v0+i].t = *((short*)(p + i*16 + (10^(S16<<1)))) / 32.0f;

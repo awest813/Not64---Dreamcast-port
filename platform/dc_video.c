@@ -1,5 +1,13 @@
 #include "dc_video.h"
 #include <string.h>
+#define XXH_INLINE_ALL
+#include "../main/xxhash.h"
+
+uint32_t dc_video_frame_hash(const dc_vi_frame *frame)
+{
+    return XXH32(frame->pixels,
+                 dc_video_pvr_upload_bytes(frame->width, frame->height), 0);
+}
 
 int dc_video_expand_2x(const dc_vi_frame *frame, uint16_t *out, size_t count)
 {

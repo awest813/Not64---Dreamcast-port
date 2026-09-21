@@ -252,7 +252,9 @@ extern void readScreen(void **dest, long *width, long *height);
 extern void aiDacrateChanged(int SystemType);
 extern void aiLenChanged();
 extern DWORD aiReadLength();
-//extern void aiUpdate(BOOL Wait);
+#ifdef __DREAMCAST__
+extern void aiUpdate(BOOL Wait);
+#endif
 extern void closeDLL_audio();
 extern BOOL initiateAudio(AUDIO_INFO Audio_Info);
 extern void processAList();

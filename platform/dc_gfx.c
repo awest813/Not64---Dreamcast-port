@@ -4,6 +4,20 @@
 #include "../main/plugin.h"
 #include <stdio.h>
 #include <string.h>
+#ifdef DC_PERF
+#ifdef DC_HOST_STUB
+#include <time.h>
+static uint64_t perf_now(void) {
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint64_t)t.tv_sec * 1000000 + t.tv_nsec / 1000;
+}
+#else
+#include <kos.h>
+static uint64_t perf_now(void) { return timer_us_gettime64(); }
+#endif
+static uint64_t perf_begin, perf_raster, perf_convert, perf_present;
+static void perf_touch(void) { if (!perf_begin) perf_begin = perf_now(); }
+#endif
 
 #ifdef DC_SOFT_GFX
 extern int dc_soft_dlist(const GFX_INFO *);
@@ -47,6 +61,9 @@ void closeDLL_gfx(void)
 BOOL initiateGFX(GFX_INFO candidate)
 {
     closeDLL_gfx();
+#ifdef DC_PERF
+    perf_begin = perf_raster = perf_convert = perf_present = 0;
+#endif
     memset(&stats, 0, sizeof(stats));
     if (!candidate.MemoryBswaped || !candidate.RDRAM || !candidate.DMEM ||
         !candidate.IMEM || !candidate.MI_INTR_REG || !candidate.DPC_START_REG ||
@@ -95,7 +112,14 @@ void processDList(void)
 #ifdef DC_SOFT_GFX
     if (active()) {
         ++stats.display_lists;
+#ifdef DC_PERF
+        perf_touch();
+        uint64_t begin = perf_now();
+#endif
         if (!dc_soft_dlist(&info)) { ++stats.decode_failures; stop = 1; }
+#ifdef DC_PERF
+        perf_raster += perf_now() - begin;
+#endif
     }
 #else
     if (active() && ++stats.display_lists == 1) {
@@ -135,7 +159,14 @@ void updateScreen(void)
         *info.VI_H_START_REG, *info.VI_V_START_REG,
         *info.VI_X_SCALE_REG, *info.VI_Y_SCALE_REG
     };
+#ifdef DC_PERF
+    perf_touch();
+    uint64_t begin = perf_now();
+#endif
     result = dc_vi_convert(&state, info.RDRAM, DC_N64_RDRAM_SIZE, &frame);
+#ifdef DC_PERF
+    perf_convert += perf_now() - begin;
+#endif
     blank = result != DC_VI_READY;
     if (result == DC_VI_READY) ++stats.converted;
     else if (result == DC_VI_BLANK) ++stats.blanked;
@@ -147,7 +178,13 @@ void updateScreen(void)
     /* Blank once on transition. Never leave the previous game image visible
      * after blanking, invalid bounds, or an unsupported mode. */
     if (!blank || last_blank != blank) {
+#ifdef DC_PERF
+        begin = perf_now();
+#endif
         if (!dc_video_present(&frame)) { ++stats.present_failures; stop = 1; return; }
+#ifdef DC_PERF
+        perf_present += perf_now() - begin;
+#endif
         if (!blank) ++stats.presented;
 #ifdef DC_SOFT_GFX
         if (!blank && stats.presented % 60 == 0)
@@ -155,6 +192,15 @@ void updateScreen(void)
 #endif
     }
     last_blank = blank;
+#ifdef DC_PERF
+    if (!blank && stats.presented && stats.presented % 60 == 0) {
+        uint64_t total = perf_now() - perf_begin;
+        printf("Game perf: frames=%lu total-us=%llu raster-us=%llu convert-us=%llu present-us=%llu\n",
+               (unsigned long)stats.presented, (unsigned long long)total,
+               (unsigned long long)perf_raster, (unsigned long long)perf_convert,
+               (unsigned long long)perf_present);
+    }
+#endif
     if (frame_limit && stats.presented >= frame_limit) stop = 1;
 }
 void viStatusChanged(void) { if (active()) ++stats.status_changes; }

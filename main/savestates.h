@@ -43,6 +43,7 @@ void savestates_select_filename();
 unsigned savestates_get_slot(void);
 const char *savestates_filename(void);
 #ifdef __DREAMCAST__
+void savestates_load_path(const char *path);
 int savestates_ok(void);
 const char *savestates_error(void);
 #ifdef DC_HOST_STUB

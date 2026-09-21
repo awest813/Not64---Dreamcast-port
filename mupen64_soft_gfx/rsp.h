@@ -141,6 +141,7 @@ class RSP
    Matrix<float, 4> projection;
    Matrix<float, 4> MP;
    Vertex vtx[32];
+   unsigned int validVertices = 0;
    int fm;
    int fo;
    

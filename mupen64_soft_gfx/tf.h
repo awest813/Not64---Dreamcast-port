@@ -44,6 +44,7 @@ class TF
    void setTextureFilter(int value);
    void setTextureConvert(int value);
    int getTextureConvert();
+   int getTextureFilter() const { return textureFilter; }
    
    Color32 filter(Color32 nearestTexels[4], float nearestTexelsDistances[4]);
 };

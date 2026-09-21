@@ -8,6 +8,60 @@ are KallistiOS-only.
 
 ## Integration checkpoint — 2026-09-20
 
+Performance follow-up: Downloads now launches `not64-oot-fast.cdi`, the menu
+checkpoint build with `PERF=1 LTO=1`. The same first 60 menu frames measure
+158.247 s before vs 141.779 s after in Flycast (11.6% throughput gain).
+Renderer changes skip unused depth/blend work, cache tile dimensions and avoid
+unneeded texture samples. Menu and opening-scene host captures are byte-identical;
+full optimized host suite passes. See `VIDEO_AUDIO_PERF_PLAN.md` and local
+`perf-*.log` evidence. The menu is still far below playable speed (~0.42 FPS).
+
+Latest milestone: **OOT file selection is verified in Flycast**, showing
+File 1–3 / Copy / Erase / Options. The Downloads launcher now opens
+`build/dc/not64-oot-menu.cdi`, built with `GAME_CHECKPOINT=1` and a private
+`/cd/boot.st` captured after reaching the menu through two ordinary Start pulses.
+Host evidence: `oot-menu2.log`/`.png` (600 resumed frames, no decode failures).
+Target evidence: `oot-menu-flycast.log`, loaded checkpoint and 32006 Hz AICA,
+plus visual verification in the Flycast window. Full host regression passed
+in `oot-menu-regression.log`. No new save file/name was created.
+The shortcut always restores this menu snapshot, not subsequent gameplay.
+Use `not64-oot-polished.cdi` for normal boot without restoring a snapshot.
+Host CLI now supports repeated `--start-at`, `--save-slot`, and `--load-slot`;
+the checkpoint files contain private ROM-derived data and remain ignored.
+
+Zelda OOT follow-up: the local USA ROM reaches the opening scene. The host
+completed 600 frames / 334 lists with no decoder or presentation failures;
+Flycast now boots the game and starts 32006 Hz AICA output. Fixed missing
+two-cycle texture rectangles, F3DEX2 CULLDL, and a DreamSDK C++ startup crash
+caused by libgcc resolving `mutex_lock` to a weak no-op. The repo supplies
+the real KOS wrapper in `platform/dc_kos_compat.c`; no SDK edits are needed.
+`GAME_FRAMES=0 GAME_STEPS=0 GAME_START=0` makes a game-disc build interactive.
+The updated local unrestricted image is `build/dc/not64-oot-polished.cdi`,
+launched by the Downloads shortcut. Copy-mode rectangle clipping is also fixed
+and regression-tested in both axes. `oot-progress.log`/`.png` in validation
+record 1,500 presented frames / 634 lists and the title screen, with no decoder
+or presentation failures. That run used Start at VI 700 (too early to establish
+menu entry); next try a later press. Title textures remain visibly corrupted.
+Rendering and
+speed are imperfect; full gameplay and hardware compatibility are unverified.
+
+Audit follow-up: `oot-audit-suite.log` records the full host suite passing,
+including expanded CULLDL shared-plane/spanning/invalid-range coverage.
+`oot-menu-audit.log`/`.png` records 1,800 frames / 734 lists with zero renderer
+failures, but Start at VI 1450 still left the final capture at the title screen.
+Do not claim file selection or gameplay is verified; investigate input delivery
+and title timing next. The console capture helper now validates read/resize
+results, requires an output path for reads, and closes its console handle;
+`oot-audit-flycast.log` verifies capture from the running Downloads instance.
+
+V2/A1 follow-up: KOS stereo `snd_stream` output is wired through a 5 ms worker,
+with ring conversion, silence padding, rate/mute/pause and joined teardown.
+Host PCM tests and Flycast's three-cycle audio diagnostic pass. V2 is available
+as `UPLOAD_SKIP=1`, but stays off by default: Flycast XXH32 costs ~3.7 ms/frame
+versus ~30 us for V1 DMA despite reducing static uploads from 120 to one.
+See `VIDEO_AUDIO_PERF_PLAN.md` and `tools/dc/README.md` for evidence and commands.
+Hardware listening/timing and game audio quality remain unverified.
+
 Resumed at the user's request to finish, merge, commit, and push all work.
 The graphics changes and the performance/menu checkout are preserved in commits
 and combined on `master`. The historical checkpoints below describe earlier
@@ -338,7 +392,8 @@ Follow **Gap plan** in `PORTING.md`. Short form:
    (`C:\DreamSDK`) is the working target toolchain on this machine** (GCC
    15.1, `-m4-single`): build via its MSYS2 bash, capture Flycast serial with
    `tools/dc/scrape_console.ps1` (resize to 220 cols early, then read).
-   Next: V2 (upload skip), A1 (snd_stream), then V4 (soft-renderer spans).
+   V2/A1 are implemented (see the follow-up above). Next: V3 profiling before
+   V4 soft-renderer spans; measure V2 on hardware before enabling it by default.
 
 Skip SH4 dynarec and TA/RDP until 1–3 have a ROM that is more than a BEQ spin.
 

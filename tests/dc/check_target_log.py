@@ -11,6 +11,8 @@ def check(path, backend):
     assert not re.search(r'FAIL|Fatal:|Verify Failed|Unhandled exception', text), 'target or emulator reported failure'
     assert text.count('KallistiOS v') == 1, 'unexpected kernel restart'
     assert 'Dreamcast run complete: status=0; diagnostic idle' in text, 'missing successful cleanup and diagnostic idle'
+    assert 'AICA stream PASS: cycles=3 DMA/drain/pause/rate/mute/underrun/close' in text, 'missing AICA lifecycle/DMA checks'
+    assert text.count(f'AICA stream started: rate={48681812 // 2200} stereo PCM16') == 6, 'missing rate changes or unmute restarts'
     assert text.count('VITEST PASS (76800 CPU-written pixels + VI scanout)') == 9, 'missing pixel checks'
     assert f'Graphics {backend}: VI=121 presented=120 DList=0 RDP=0 invalid=0 unsupported=0 failures=0' in text, 'initial run failed'
     match = re.search(rf'VIDEO STRESS PASS: backend={backend} cycles=8 valid-frames=152 scanout-present-avg-us=(\d+)', text)
@@ -22,8 +24,10 @@ def check(path, backend):
         assert len(free) == 9 and len(set(free)) == 1, 'VRAM allocation drift or missing initialization'
         timings = re.findall(r'PVR timing: samples=(\d+) uploads=(\d+) wait-avg-us=(\d+) upload-avg-us=(\d+) submit-avg-us=(\d+)', text)
         assert len(timings) == 9, 'missing shutdown/timing samples'
-        assert timings[0][:2] == ('121', '120'), 'initial timing counts'
-        assert all(t[:2] == ('22', '19') for t in timings[1:]), 'stress timing counts'
+        skip = 'PVR upload-skip: enabled' in text
+        assert text.count(f'PVR upload-skip: {"enabled" if skip else "disabled"}') == 9, 'missing upload mode'
+        assert timings[0][:2] == ('121', '1' if skip else '120'), 'initial timing counts'
+        assert all(t[:2] == ('22', '3' if skip else '19') for t in timings[1:]), 'stress timing counts'
     print(f'Target log PASS: {backend}, 8 reopen cycles, 272 valid frames, scanout/present mean {match[1]} us (emulated clock)')
 
 

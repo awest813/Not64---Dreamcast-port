@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 #include "../../mupen64_soft_gfx/rsp.h"
 #include "../../mupen64_soft_gfx/tx.h"
 
@@ -54,6 +55,25 @@ int main() {
     float distances[4]={0.125f,0.625f,1.125f,0.625f};
     c=filter.filter(corners,distances); CHECK((unsigned)(int)c==0xbf7f3fffu);
 
+    // Optimized point sampling must match the four-corner reference,
+    // including halfway ties, negative coordinates and clamped edges.
+    {
+        TX point(info); TF nearest;
+        byte(0x600,0xf8); byte(0x601,1); byte(0x602,0x07); byte(0x603,0xc1);
+        byte(0x604,0); byte(0x605,0x3f); byte(0x606,0xff); byte(0x607,0xff);
+        point.setTImg(0,2,2,ram+0x600);
+        point.setTile(0,2,1,0,0,0,2,0,0,2,0,0);
+        point.setTileSize(0,0,1,1,0); point.loadTile(0,0,0,1,1);
+        for(int y=-8;y<=16;y++) for(int x=-8;x<=16;x++) {
+            float s=x/4.0f,t=y/4.0f,fs=floorf(s),ft=floorf(t),dx=s-fs,dy=t-ft;
+            Color32 q[4]={point.getTexel(fs,ft,0,NULL),point.getTexel(fs+1,ft,0,NULL),
+                          point.getTexel(fs+1,ft+1,0,NULL),point.getTexel(fs,ft+1,0,NULL)};
+            float d[4]={dx*dx+dy*dy,(1-dx)*(1-dx)+dy*dy,
+                        (1-dx)*(1-dx)+(1-dy)*(1-dy),dx*dx+(1-dy)*(1-dy)};
+            CHECK((int)point.getTexel(s,t,0,&nearest)==(int)nearest.filter(q,d));
+        }
+    }
+
     // Transparent texels must not overwrite either the framebuffer or depth.
     BL blender(info); blender.setCImg(0,2,4,ram+0x20000); blender.setZImg(ram+0x21000);
     word(0x20000,0x07c107c1); word(0x21000,0xffffffff);
@@ -69,6 +89,39 @@ int main() {
     blender.setBlender(0x00404000); // pixel*alpha + memory*(1-alpha)
     blender.cycle1ModeDraw(0,0,Color32(0,0,255,128));
     CHECK((half(0x20000)&0xf800)==0x7800 && (half(0x20000)&0x3e)==0x20);
+
+    // Two-cycle texture rectangles (used by Zelda's opening): cycle 0
+    // takes TEXEL0, cycle 1 takes COMBINED. Clip away red, retain green.
+    {
+        RDP rect(info);
+        rect.setCImg(0,2,4,ram+0x22000);
+        rect.setScissor(1,0,2,1,0);
+        rect.setOtherMode_h(20,1);
+        rect.setOtherMode_l(3,0);
+        rect.setOtherMode_h(12,0);
+        rect.setTImg(0,2,2,ram+0x100);
+        rect.setTile(0,2,1,0,0,0,2,0,0,2,0,0);
+        rect.setTileSize(0,0,1,0,0);
+        rect.loadTile(0,0,0,1,0);
+        rect.setCombineMode((15u<<20)|(31u<<15)|(7u<<12)|(7u<<9)|(15u<<5)|31u,
+                            (15u<<28)|(15u<<24)|(7u<<21)|(7u<<18)|(1u<<15)|(7u<<12)|(1u<<9)|(7u<<3));
+        rect.texRect(0,0,0,2,1,0,0,1,1);
+        CHECK(half(0x22000)==0 && half(0x22002)==0x07c1);
+        CHECK(half(0x22004)==0);
+        // Copy rectangles advance one texel per four derivative units,
+        // including the pixels discarded by the scissor.
+        word(0x22000,0);
+        rect.setOtherMode_h(20,2);
+        rect.texRect(0,0,0,1,0,0,0,4,1);
+        CHECK(half(0x22000)==0 && (half(0x22002)&0xfffe)==0x07c0);
+        byte(0x104,0); byte(0x105,0x3f);
+        byte(0x106,0xff); byte(0x107,0xff);
+        rect.setTileSize(0,0,1,1,0);
+        rect.loadTile(0,0,0,1,1);
+        rect.setScissor(1,1,2,2,0);
+        rect.texRect(0,0,0,1,1,0,0,4,1);
+        CHECK(half(0x22008)==0 && (half(0x2200a)&0xfffe)==0xfffe);
+    }
 
     // Execute an actual F3DEX2 display list: 4x4 red fill and FullSync.
     const char *uc="RSP Gfx ucode F3DEX fifo 2.08";
@@ -88,6 +141,31 @@ int main() {
     CHECK(intr==0x20 && interrupts==1);
     for(unsigned i=0;i<16;i++) CHECK(half(0x10000+i*2)==0xf801);
     CHECK(half(0xfffe)==0 && half(0x10020)==0);
+    // CULLDL returns from a child list, rather than ending its parent.
+    word(0x3000,0xde000000); word(0x3004,0x3100);
+    word(0x3008,0xe9000000); word(0x300c,0);
+    word(0x3010,0xdf000000); word(0x3014,0);
+    word(0x3100,0x01001002); word(0x3104,0x4000); // one vertex at slot 0
+    word(0x3108,0x03000000); word(0x310c,0);
+    word(0x3110,0x11000000); word(0x3114,0); // must be culled
+    byte(0x4000,0); byte(0x4001,2); // x=2, outside identity clip volume
+    intr=interrupts=0;
+    { RSP culled(info); CHECK(culled.succeeded() && intr==0x20 && interrupts==1); }
+    byte(0x4001,0); intr=interrupts=0;
+    { RSP visible(info); CHECK(!visible.succeeded() && interrupts==0); }
+    // Outside vertices on opposite sides still span the visible volume.
+    // Cull only when every vertex shares at least one outside plane.
+    word(0x3100,0x01002004); word(0x310c,2); // slots 0 through 1
+    byte(0x4001,2); byte(0x4010,0xff); byte(0x4011,0xfe);
+    intr=interrupts=0;
+    { RSP spanning(info); CHECK(!spanning.succeeded() && interrupts==0); }
+    byte(0x4010,0); byte(0x4011,3);
+    { RSP outside(info); CHECK(outside.succeeded() && intr==0x20 && interrupts==1); }
+    // An unloaded endpoint and a reversed range must stop safely.
+    intr=interrupts=0; word(0x310c,4);
+    { RSP unloaded(info); CHECK(!unloaded.succeeded() && interrupts==0); }
+    word(0x3108,0x03000002); word(0x310c,0);
+    { RSP reversed(info); CHECK(!reversed.succeeded() && interrupts==0); }
     intr=interrupts=0; word(0x3000,0x11000000);
     { RSP bad(info); CHECK(!bad.succeeded() && intr==0 && interrupts==0); }
     task[12]=0x3ffffc;

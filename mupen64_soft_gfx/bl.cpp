@@ -204,28 +204,35 @@ void BL::cycleModeDraw(int x, int y, Color32 c, float z, Color32 shade, bool two
 
    unsigned short *p=(unsigned short *)cImg, *pz=(unsigned short *)zImg;
    unsigned pixel=(y*width+x)^S16;
-   if(depthSource) z=primitiveZ;
-   int fz=(int)(z*8.0f+0.5f);
-   if(fz<0) fz=0; if(fz>0x3ffff) fz=0x3ffff;
-   unsigned short encodedZ=zLUT[fz];
-   if((z_cmp || z_upd) && !validPixel(zImg,x,y,2)) return;
-   if(z_cmp && encodedZ>pz[pixel]+((zmode_inter && zmode_xlu)?256:0)) return;
-   if(z_upd && !(zmode_inter && zmode_xlu)) pz[pixel]=encodedZ;
+   if(z_cmp || z_upd) {
+       if(!validPixel(zImg,x,y,2)) return;
+       if(depthSource) z=primitiveZ;
+       int fz=(int)(z*8.0f+0.5f);
+       if(fz<0) fz=0; if(fz>0x3ffff) fz=0x3ffff;
+       unsigned short encodedZ=zLUT[fz];
+       if(z_cmp && encodedZ>pz[pixel]+((zmode_inter && zmode_xlu)?256:0)) return;
+       if(z_upd && !(zmode_inter && zmode_xlu)) pz[pixel]=encodedZ;
+   }
 
    unsigned v=p[pixel], r=(v>>11)&31, g=(v>>6)&31, b=(v>>1)&31;
    memoryColor=Color32((r<<3)|(r>>2),(g<<3)|(g>>2),(b<<3)|(b>>2),255);
    pixelColor=c; shadeColor=shade;
-   float ca=pca1->getAlpha()/255.0f;
-   invertedAlpha=Color32(0,0,0,255.0f-pca1->getAlpha());
-   float cb=pcb1->getAlpha()/255.0f;
    Color32 result=*psa1;
-   if(twoCycles || force_bl) result=*psa1*ca+*psb1*cb;
+   if(twoCycles || force_bl) {
+       float ca=pca1->getAlpha()/255.0f;
+       invertedAlpha=Color32(0,0,0,255.0f-pca1->getAlpha());
+       float cb=pcb1->getAlpha()/255.0f;
+       result=*psa1*ca+*psb1*cb;
+   }
    if(twoCycles) {
        blendedPixelColor=result;
-       ca=pca2->getAlpha()/255.0f;
-       invertedAlpha=Color32(0,0,0,255.0f-pca2->getAlpha());
-       cb=pcb2->getAlpha()/255.0f;
-       result=force_bl?*psa2*ca+*psb2*cb:*psa2;
+       result=*psa2;
+       if(force_bl) {
+           float ca=pca2->getAlpha()/255.0f;
+           invertedAlpha=Color32(0,0,0,255.0f-pca2->getAlpha());
+           float cb=pcb2->getAlpha()/255.0f;
+           result=*psa2*ca+*psb2*cb;
+       }
    }
    unsigned out=(unsigned)(int)result;
    p[pixel]=((out>>16)&0xf800)|((out>>13)&0x7c0)|((out>>10)&0x3e)|1;

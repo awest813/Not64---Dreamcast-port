@@ -196,6 +196,7 @@ EXPORT void CALL GetDllInfo ( PLUGIN_INFO * PluginInfo )
 extern int stop;
 #ifdef __DREAMCAST__
 #include "../platform/dc_overlay.h"
+#include "../platform/dc_audio.h"
 #endif
 EXPORT void CALL GetKeys(int Control, BUTTONS * Keys )
 {
@@ -204,7 +205,9 @@ EXPORT void CALL GetKeys(int Control, BUTTONS * Keys )
 	static int combo_held;
 	if (exit_combo && !combo_held) {
 		combo_held = 1;
+		pauseAudio();
 		dc_overlay_run();
+		resumeAudio();
 	} else if (!exit_combo)
 		combo_held = 0;
 #else

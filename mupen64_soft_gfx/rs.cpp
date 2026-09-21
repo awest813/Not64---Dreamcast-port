@@ -81,15 +81,15 @@ void RS::fillRect(float ux, float uy, float lx, float ly, RDP *rdp)
 
 void RS::texRect(int tile, float ux, float uy, float lx, float ly, float s, float t, float dsdx, float dtdy, RDP *rdp)
 {
-   if (rdp->cycleType == 0) // 1 cycle mode
+   if (rdp->cycleType == 0 || rdp->cycleType == 1) // one/two cycle modes
      {
 	int ulx, uly, lrx, lry;
 	ulx = sulx < ux ? (int)ux : (int)sulx;
 	uly = suly < uy ? (int)uy : (int)suly;
 	lrx = slrx > lx ? (int)lx : (int)slrx;
 	lry = slry > ly ? (int)ly : (int)slry;
-	if (sulx > ux) s += (ux - sulx) * dsdx;
-	if (suly > uy) t += (uy - suly) * dtdy;
+	if (sulx > ux) s += (sulx - ux) * dsdx;
+	if (suly > uy) t += (suly - uy) * dtdy;
 	float ps = s;
 	float pt = t;
 	for (int i=uly; i<lry; i++,pt+=dtdy)
@@ -98,8 +98,14 @@ void RS::texRect(int tile, float ux, float uy, float lx, float ly, float s, floa
 	     for (int j=ulx; j<lrx; j++,ps+=dsdx)
 	       {
 		  Color32 t = rdp->tx->getTexel(ps, pt, tile, rdp->tf);
-		  Color32 c = rdp->cc->combine1(t);
-		  rdp->bl->cycle1ModeDraw(j,i,c);
+		  if (rdp->cycleType == 1) {
+		      Color32 t1 = rdp->tx->getTexel(ps, pt, (tile + 1) & 7, rdp->tf);
+		      Color32 c = rdp->cc->combine2(t, t1);
+		      rdp->bl->cycle2ModeDraw(j,i,c);
+		  } else {
+		      Color32 c = rdp->cc->combine1(t);
+		      rdp->bl->cycle1ModeDraw(j,i,c);
+		  }
 	       }
 	  }
      }
@@ -110,8 +116,8 @@ void RS::texRect(int tile, float ux, float uy, float lx, float ly, float s, floa
 	uly = suly < uy ? (int)uy : (int)suly;
 	lrx = slrx > lx ? (int)(lx+1) : (int)slrx;
 	lry = slry > ly ? (int)(ly+1) : (int)slry;
-	if (sulx > ux) s += (ux - sulx) * dsdx;
-	if (suly > uy) t += (uy - suly) * dtdy;
+	if (sulx > ux) s += (sulx - ux) * (dsdx / 4);
+	if (suly > uy) t += (suly - uy) * dtdy;
 	float ps = s;
 	float pt = t;
 	float pdsdx = dsdx;

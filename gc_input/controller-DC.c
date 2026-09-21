@@ -3,11 +3,20 @@
  */
 
 #include <string.h>
+#include <stdio.h>
 #include "controller.h"
 #include "../main/timers.h"
 extern timers Timers;
-static unsigned start_pulse_vi;
-void controller_DC_set_start_pulse(unsigned vi) { start_pulse_vi = vi; }
+static unsigned start_pulses[16], start_pulse_count, start_pulse_reported;
+int controller_DC_add_start_pulse(unsigned vi) {
+    if (!vi || vi > 0xffffffffu - 20u || start_pulse_count == 16) return 0;
+    start_pulses[start_pulse_count++] = vi;
+    return 1;
+}
+void controller_DC_set_start_pulse(unsigned vi) {
+    start_pulse_count = start_pulse_reported = 0;
+    if (vi) controller_DC_add_start_pulse(vi);
+}
 
 #ifndef DC_HOST_STUB
 #include <kos.h>
@@ -269,9 +278,10 @@ static int _GetKeys(int Control, BUTTONS *Keys, controller_config_t *config)
 		return 0;
 	}
 	/* Optional deterministic input for startup/title-screen regression runs. */
-	if (Control == 0 && start_pulse_vi && Timers.vis >= start_pulse_vi &&
-	    Timers.vis < start_pulse_vi + 20u)
-		b |= CONT_START;
+	if (Control == 0) for (unsigned i=0; i<start_pulse_count; ++i) {
+		if (Timers.vis >= start_pulses[i] && Timers.vis < start_pulses[i] + 20u)
+			b |= CONT_START;
+	}
 
 	b = dc_virtual_buttons(b, ltrig, rtrig);
 
@@ -288,6 +298,12 @@ static int _GetKeys(int Control, BUTTONS *Keys, controller_config_t *config)
 		c->D_DPAD       = isHeld(config->DD);
 		c->U_DPAD       = isHeld(config->DU);
 		c->START_BUTTON = isHeld(config->START);
+		if (Control == 0) for (unsigned i=0; i<start_pulse_count; ++i) {
+			if (!(start_pulse_reported & (1u << i)) && Timers.vis >= start_pulses[i]) {
+				printf("Start probe: VI=%.0f requested=%u mapped=%u\n", Timers.vis, start_pulses[i], c->START_BUTTON);
+				start_pulse_reported |= 1u << i;
+			}
+		}
 		c->B_BUTTON     = isHeld(config->B);
 		c->A_BUTTON     = isHeld(config->A);
 		c->Z_TRIG       = isHeld(config->Z);

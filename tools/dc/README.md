@@ -366,3 +366,137 @@ Validated the final diagnostic disc in Flycast: nine complete pixel checks,
 passes. The validator also rejects both the historical fatal game log and the
 intermediate BIOS-menu disc that restarted. The final game-disc ELF builds;
 its complete 600-frame commercial-game run was not repeated after integration.
+
+## V2 upload skipping and A1 audio (2026-09-20)
+
+Normal KOS builds now output stereo PCM16 through `snd_stream`. The installed
+KOS API uses a callback and `snd_stream_poll`, not `snd_stream_push`. The DC
+plugin is statically linked; its 5 ms worker calls `aiUpdate` independently of
+slow emulated VI frames. It handles stereo halfword order, silence on underrun,
+rate changes, overlay pause/resume, mute and joined ROM-close cleanup. The ring
+still drops old data when full; this does not throttle the interpreter to audio.
+Hardware listening and commercial-game audio quality have not been verified.
+
+`DEMO=1` now plays short tones and requires an `AICA stream PASS` line after
+three drain/pause/rate/underrun/reopen cycles. The host suite also checks PCM
+channel/byte order, ring wrap, underrun silence and latest-DMA accounting.
+
+To measure V2, add `UPLOAD_SKIP=1` to a `VIDEO=pvr` build. Identical converted
+rows and dimensions reuse the last texture; the PVR still submits the quad.
+The stress loop changes/restores pixels after repeated static frames and checks
+blank/invalid recovery and eight reopen cycles. The serial validator expects
+one initial upload and three uploads per stress cycle with skipping enabled,
+or the original 120/19 upload counts when disabled.
+
+V2 stays **off by default**: Flycast measured about 3.7 ms/frame for XXH32,
+versus 30–31 us for the existing DMA upload. This saves transfer traffic but
+regresses emulator frame time; measure physical SH4 before enabling it normally.
+The `hash-avg-us` field is separate from DMA timing.
+
+Windows DreamSDK build (run with access to the SDK's temporary directory):
+
+```powershell
+$env:DREAMSDK_HOME = 'C:\DreamSDK'
+& C:/DreamSDK/usr/bin/bash.exe -lc 'source /opt/toolchains/dc/kos/environ.sh >/dev/null 2>&1; cd /f/GitHub/Not64---Dreamcast-port && make -f Makefile.dc VIDEO=pvr DEMO=1 UPLOAD_SKIP=1 -j8'
+```
+
+Launch Flycast with `-config config:Debug.SerialConsoleEnabled=yes` and
+`-config config:rend.EmulateFramebuffer=yes`. Use its normal SH4 dynarec for
+comparison with V1; the interpreter setting gives different timing results.
+Resize serial capture early using `tools/dc/scrape_console.ps1 -Mode resize`.
+Wait for diagnostic idle after the 60-second image hold, capture the complete
+log, then run `python tests/dc/check_target_log.py pvr <serial.log>`.
+
+Local evidence: `build/dc/validation/v2-a1-host.log`, `v2-a1-flycast.log`
+(upload skipping), `v2-a1-default.log` (normal DMA), and the matching build logs.
+These generated logs and ELFs remain local and ignored by Git.
+
+Audit polish: oversized audio DMA now retains the newest ring with at most
+64 KiB copied under the mutex. Rate changes discard old-rate PCM, while a
+same-rate notification preserves queued samples. Successful save-state loads
+flush pre-load audio and restore the AI clock without unpausing the overlay.
+Host regressions cover those cases and end-of-RDRAM clamping. The target audio
+test now submits through the public DMA/DAC-rate functions and exercises mute
+and unmute in addition to pause, paced drain and reopen. PVR rejects further
+presents if recovery from a failed submission cannot drain rendering safely.
+The RAM budget includes the additional 16 KiB of audio output buffers.
+
+Audited-run evidence: `build/dc/validation/audit-host-final.log`,
+`audit-flycast.log` (upload skipping), `audit-default.log` (normal DMA), and
+`audit-default-build.log` / `audit-game-build.log`.
+
+## Zelda Ocarina of Time boot (2026-09-20)
+
+The local USA ROM (`THE LEGEND OF ZELDA`, 32 MiB, CIC 6105) reaches the opening
+horse-riding scene in the host renderer. A bounded host run completes 600
+presented frames / 334 display lists with zero presentation or decoder failures.
+Rendering is still imperfect; this is boot evidence, not full-game validation.
+
+The follow-up audit completed 1,800 frames / 734 lists with zero decoder or
+presentation failures (`oot-menu-audit.log`). The final capture remains at the
+title screen despite a synthetic Start at VI 1450, so menu input and gameplay
+are not yet validated. The full host suite passed (`oot-audit-suite.log`).
+
+Menu follow-up: **file selection is now verified**. The first title-animation
+press reveals the logo; a separate press enters file selection. The host can
+now repeat `--start-at VI` (up to 16 distinct pulses, each held for 20 VIs),
+and logs the sampled mapped input. Use `--save-slot 1..9` after a bounded run
+and `--load-slot 1..9` to resume; pulse times start from the resumed run's VI
+counter. Slots use the normal per-ROM save directory and saving replaces the
+selected slot. A successful 600-frame checkpoint run with presses at 100 and
+300 reached “Please select a file” (`oot-menu2.log`/`.png`), without renderer
+failures. This confirms menu entry, not full gameplay.
+
+`GAME_DISC=1 GAME_CHECKPOINT=1` optionally loads a matching `/cd/boot.st` using
+the normal ROM identity and integrity checks before running. Missing or invalid
+checkpoints fail the diagnostic instead of silently booting. The private local
+`not64-oot-menu.cdi` contains the verified file-selection checkpoint; normal
+game-disc builds still boot the ROM normally.
+Flycast visually confirms File 1–3 / Copy / Erase / Options and starts AICA
+after restoring it (`oot-menu-flycast.log`). The Downloads shortcut now opens
+this menu snapshot on every launch; use `not64-oot-polished.cdi` for normal
+boot and subsequent gameplay saves. No player name/new save was created.
+
+This run exposed and fixed three blockers:
+- KOS C++ frame registration resolved `mutex_lock` to a weak no-op in the SDK.
+  `platform/dc_kos_compat.c` supplies the real out-of-line KOS lock wrapper;
+  the game build now reaches main and starts AICA instead of asserting on unlock.
+- Two-cycle texture rectangles were unimplemented. They now use the existing
+  two-cycle combiner/blender, with corrected clipped texture coordinates.
+- F3DEX2 CULLDL was unimplemented. It now checks loaded homogeneous vertices
+  and returns from the current display list, including nested-list callers.
+
+Focused renderer tests cover clipped two-cycle and copy-mode pixels, including
+both scissor axes. Culling tests cover nested returns, vertices spanning the
+visible volume, a shared outside plane, unloaded vertices and reversed ranges.
+Local logs/captures are under `build/dc/validation/oot-*`.
+
+The normal `GAME_DISC=1` defaults remain a bounded 600-frame diagnostic.
+For an interactive disc, build with:
+
+```sh
+make -f Makefile.dc VIDEO=pvr GFX=soft GAME_DISC=1 GAME_FRAMES=0 GAME_STEPS=0 GAME_START=0
+```
+
+Zero disables each diagnostic limit or synthetic Start pulse. The local
+`build/dc/not64-oot-polished.cdi` uses that normal-boot configuration; the user's
+Downloads `Play Zelda OOT (Dreamcast).cmd` now launches the checkpoint-based
+`not64-oot-menu.cdi` described above. The ROM and disc
+remain private, ignored build artifacts. When multiple Flycast instances are
+open, pass `-ProcessId` to `tools/dc/scrape_console.ps1` to select the intended
+serial console. The capture helper checks read/resize results and requires an
+output path for reads; a failed or incomplete capture is not reported as success.
+Pure-interpreter Dreamcast performance is slow, and full
+Ocarina of Time gameplay/hardware compatibility remain unverified.
+
+### Measured faster local build
+
+The Downloads launcher now opens `build/dc/not64-oot-fast.cdi`, retaining the
+menu checkpoint and unlimited run. Build with the interactive flags above plus
+`GAME_CHECKPOINT=1 PERF=1 LTO=1`. `PERF=1` reports cumulative game-phase
+microseconds every 60 presented frames; `LTO=1` enables cross-file optimization
+without fast-math. These flags are opt-in and recorded in the compiler stamp.
+Renderer optimizations reduce unnecessary depth/blend and texture-sampling work.
+Flycast's identical 60-frame menu sample improved from 158.247 to 141.779 seconds
+(11.6% throughput gain). The menu and opening host captures remain byte-identical,
+and the full optimized regression suite passes. This is still not playable speed.
