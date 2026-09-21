@@ -35,7 +35,7 @@
 
 unsigned short* BL::zLUT = NULL;
 
-BL::BL(GFX_INFO info) : gfxInfo(info), zero(0), one(0xFFFFFFFF)
+BL::BL(GFX_INFO info) : gfxInfo(info), zero(0), one(0xFFFFFFFF), memoryColor(0,0,0,255)
 {
    alphaCompare=colorDither=alphaDither=depthSource=0;
    cImg=zImg=NULL; width=format=size=0;
@@ -133,27 +133,34 @@ void BL::setBlender(int value)
      printf("bl: unknwown render mode:%x\n", value & ~0xffff7ff8);
    
    // blender modes
-   if (oldBlenderMode == (value>>16)) return;
-   oldBlenderMode = value>>16;
-   
-   int sa1,sb1,ca1,cb1, sa2, sb2, ca2, cb2;
-   sa1 = (value >> 30) & 3;
-   sa2 = (value >> 28) & 3;
-   ca1 = (value >> 26) & 3;
-   ca2 = (value >> 24) & 3;
-   sb1 = (value >> 22) & 3;
-   sb2 = (value >> 20) & 3;
-   cb1 = (value >> 18) & 3;
-   cb2 = (value >> 16) & 3;
+   if (oldBlenderMode != (value>>16)) {
+      oldBlenderMode = value>>16;
 
-   psa1 = getBlenderSource(sa1, 1, 1);
-   psa2 = getBlenderSource(sa2, 1, 2);
-   pca1 = getBlenderSource(ca1, 2, 1);
-   pca2 = getBlenderSource(ca2, 2, 2);
-   psb1 = getBlenderSource(sb1, 3, 1);
-   psb2 = getBlenderSource(sb2, 3, 2);
-   pcb1 = getBlenderSource(cb1, 4, 1);
-   pcb2 = getBlenderSource(cb2, 4, 2);
+      int sa1,sb1,ca1,cb1, sa2, sb2, ca2, cb2;
+      sa1 = (value >> 30) & 3;
+      sa2 = (value >> 28) & 3;
+      ca1 = (value >> 26) & 3;
+      ca2 = (value >> 24) & 3;
+      sb1 = (value >> 22) & 3;
+      sb2 = (value >> 20) & 3;
+      cb1 = (value >> 18) & 3;
+      cb2 = (value >> 16) & 3;
+
+      psa1 = getBlenderSource(sa1, 1, 1);
+      psa2 = getBlenderSource(sa2, 1, 2);
+      pca1 = getBlenderSource(ca1, 2, 1);
+      pca2 = getBlenderSource(ca2, 2, 2);
+      psb1 = getBlenderSource(sb1, 3, 1);
+      psb2 = getBlenderSource(sb2, 3, 2);
+      pcb1 = getBlenderSource(cb1, 4, 1);
+      pcb2 = getBlenderSource(cb2, 4, 2);
+   }
+   // Framebuffer alpha is always 255 in this renderer. RGB needs decoding
+   // only when a color source used by the active cycles selects memory.
+   // Recompute when force_bl changes even if the mux bits are unchanged.
+   readMemory1 = psa1==&memoryColor || (force_bl && psb1==&memoryColor);
+   readMemory2 = psa1==&memoryColor || psb1==&memoryColor ||
+                 psa2==&memoryColor || (force_bl && psb2==&memoryColor);
 }
 
 void BL::setFillColor(int color)
@@ -214,8 +221,10 @@ void BL::cycleModeDraw(int x, int y, Color32 c, float z, Color32 shade, bool two
        if(z_upd && !(zmode_inter && zmode_xlu)) pz[pixel]=encodedZ;
    }
 
-   unsigned v=p[pixel], r=(v>>11)&31, g=(v>>6)&31, b=(v>>1)&31;
-   memoryColor=Color32((r<<3)|(r>>2),(g<<3)|(g>>2),(b<<3)|(b>>2),255);
+   if(twoCycles ? readMemory2 : readMemory1) {
+       unsigned v=p[pixel], r=(v>>11)&31, g=(v>>6)&31, b=(v>>1)&31;
+       memoryColor=Color32((r<<3)|(r>>2),(g<<3)|(g>>2),(b<<3)|(b>>2),255);
+   }
    pixelColor=c; shadeColor=shade;
    Color32 result=*psa1;
    if(twoCycles || force_bl) {

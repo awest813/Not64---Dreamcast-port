@@ -491,7 +491,14 @@ Ocarina of Time gameplay/hardware compatibility remain unverified.
 
 ### Measured faster local build
 
-The Downloads launcher now opens `build/dc/not64-oot-fast.cdi`, retaining the
+Latest (2026-09-21): the launcher selects `not64-oot-fast2.cdi`, using the same
+flags/checkpoint below. Its 60-frame Flycast menu sample takes 126.680 seconds,
+versus 141.779 for the preceding build (11.9% higher throughput). Texture and
+blender work reduction preserves exact host menu/opening captures; the full
+suite and focused two-cycle/memory-alpha/filter tests pass. See `perf2-*.log`
+and `VIDEO_AUDIO_PERF_PLAN.md`. The menu remains far below playable speed.
+
+The preceding `build/dc/not64-oot-fast.cdi` build introduced these flags, retaining the
 menu checkpoint and unlimited run. Build with the interactive flags above plus
 `GAME_CHECKPOINT=1 PERF=1 LTO=1`. `PERF=1` reports cumulative game-phase
 microseconds every 60 presented frames; `LTO=1` enables cross-file optimization

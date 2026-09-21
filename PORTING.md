@@ -2,6 +2,12 @@
 
 ## Integration update - 2026-09-20
 
+2026-09-21: a second renderer pass improves the same Flycast menu benchmark
+from 141.779 to 126.680 seconds per 60 frames (another 11.9% throughput gain).
+The Downloads shortcut uses `not64-oot-fast2.cdi`. Texture filtering avoids the
+unused fourth sample and blending avoids unused memory-color reads. Exact
+host captures and regression checks pass; ~0.47 FPS remains below playable speed.
+
 Performance: the Downloads launcher now uses `not64-oot-fast.cdi` with the
 same menu checkpoint. Renderer work reduction plus opt-in `LTO=1` improves
 measured Flycast menu throughput by 11.6% (60 frames: 158.247 -> 141.779 s).

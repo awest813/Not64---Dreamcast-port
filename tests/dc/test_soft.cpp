@@ -59,7 +59,7 @@ int main() {
     // including halfway ties, negative coordinates and clamped edges.
     {
         TX point(info); TF nearest;
-        byte(0x600,0xf8); byte(0x601,1); byte(0x602,0x07); byte(0x603,0xc1);
+        byte(0x600,0xf8); byte(0x601,0); byte(0x602,0x07); byte(0x603,0xc1);
         byte(0x604,0); byte(0x605,0x3f); byte(0x606,0xff); byte(0x607,0xff);
         point.setTImg(0,2,2,ram+0x600);
         point.setTile(0,2,1,0,0,0,2,0,0,2,0,0);
@@ -71,6 +71,22 @@ int main() {
             float d[4]={dx*dx+dy*dy,(1-dx)*(1-dx)+dy*dy,
                         (1-dx)*(1-dx)+(1-dy)*(1-dy),dx*dx+(1-dy)*(1-dy)};
             CHECK((int)point.getTexel(s,t,0,&nearest)==(int)nearest.filter(q,d));
+            for(int mode=2;mode<=3;mode++) {
+                TF filtered; filtered.setTextureFilter(mode);
+                float u=(d[0]-d[1]+1)*0.5f, v=(d[0]-d[3]+1)*0.5f;
+                float w[4]={};
+                if(mode==3) for(int i=0;i<4;i++) w[i]=0.25f;
+                else if(u+v<=1) { w[0]=1-u-v; w[1]=u; w[3]=v; }
+                else { w[2]=u+v-1; w[1]=1-v; w[3]=1-u; }
+                Color32 expected(0,0,0,0); float alpha=0;
+                // Retain the original all-four-corner accumulation as oracle.
+                for(int i=0;i<4;i++) { expected+=q[i]*w[i]; alpha+=q[i].getAlpha()*w[i]; }
+                expected.setAlpha(alpha);
+                if(s==fs && t==ft) expected=q[0];
+                Color32 actual=point.getTexel(s,t,0,&filtered);
+                CHECK(actual.getR()==expected.getR() && actual.getG()==expected.getG() &&
+                      actual.getB()==expected.getB() && actual.getAlpha()==expected.getAlpha());
+            }
         }
     }
 
@@ -89,6 +105,32 @@ int main() {
     blender.setBlender(0x00404000); // pixel*alpha + memory*(1-alpha)
     blender.cycle1ModeDraw(0,0,Color32(0,0,255,128));
     CHECK((half(0x20000)&0xf800)==0x7800 && (half(0x20000)&0x3e)==0x20);
+    // Changing only force_bl must refresh the framebuffer-read decision.
+    blender.setBlender(0x00400000);
+    word(0x20000,0x07c107c1);
+    blender.cycle1ModeDraw(0,0,Color32(255,0,0,128));
+    CHECK(half(0x20000)==0xf801);
+    blender.setBlender(0x00404000);
+    word(0x20000,0x07c107c1);
+    blender.cycle1ModeDraw(0,0,Color32(255,0,0,128));
+    CHECK((half(0x20000)&0xf800)==0x8000 && (half(0x20000)&0x7c0)==0x3c0);
+    // A direct memory-color source needs a read even without forced blend.
+    blender.setBlender(0x40000000);
+    word(0x20000,0x07c107c1);
+    blender.cycle1ModeDraw(0,0,Color32(255,0,0,255));
+    CHECK(half(0x20000)==0x07c1);
+    blender.setBlender(0x10000000); // second cycle selects memory directly
+    blender.cycle2ModeDraw(0,0,Color32(255,0,0,255));
+    CHECK(half(0x20000)==0x07c1);
+    blender.setBlender(0x00400000); // first cycle blends even without force_bl
+    blender.cycle2ModeDraw(0,0,Color32(255,0,0,128));
+    CHECK((half(0x20000)&0xf800)==0x8000 && (half(0x20000)&0x7c0)==0x3c0);
+    {
+        BL alpha(info); alpha.setCImg(0,2,4,ram+0x20000);
+        alpha.setBlender(0x00044000); // memory alpha, but no memory RGB
+        alpha.cycle1ModeDraw(0,0,Color32(64,0,0,128));
+        CHECK((half(0x20000)&0xf800)==0x6000);
+    }
 
     // Two-cycle texture rectangles (used by Zelda's opening): cycle 0
     // takes TEXEL0, cycle 1 takes COMBINED. Clip away red, retain green.

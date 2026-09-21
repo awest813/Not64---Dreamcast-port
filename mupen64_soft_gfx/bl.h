@@ -62,6 +62,7 @@ class BL
    
    // blender modes
    int oldBlenderMode;
+   bool readMemory1, readMemory2;
    Color32 *psa1, *psb1, *pca1, *pcb1, *psa2, *psb2, *pca2, *pcb2;
    
    // constant colors

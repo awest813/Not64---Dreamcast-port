@@ -257,6 +257,31 @@ Color32 TX::getTexel(float _s, float _t, int tile, TF* tf)
        return sample(tile,(int)fs+(nearest==1 || nearest==2),
                           (int)ft+(nearest==2 || nearest==3));
    }
+   if(tf->getTextureFilter()==2) {
+       // Preserve the reference weight arithmetic and accumulation order,
+       // but omit the corner outside the filter's selected triangle.
+       float u=(distance[0]-distance[1]+1)*0.5f;
+       float v=(distance[0]-distance[3]+1)*0.5f;
+       Color32 a,b,c;
+       float wa,wb,wc;
+       if(u+v<=1) {
+           a=sample(tile,(int)fs,(int)ft);
+           b=sample(tile,(int)fs+1,(int)ft);
+           c=sample(tile,(int)fs,(int)ft+1);
+           wa=1-u-v; wb=u; wc=v;
+       } else {
+           a=sample(tile,(int)fs+1,(int)ft);
+           b=sample(tile,(int)fs+1,(int)ft+1);
+           c=sample(tile,(int)fs,(int)ft+1);
+           wa=1-v; wb=u+v-1; wc=1-u;
+       }
+       Color32 out(0,0,0,0);
+       out+=a*wa; out+=b*wb; out+=c*wc;
+       float alpha=0;
+       alpha+=a.getAlpha()*wa; alpha+=b.getAlpha()*wb; alpha+=c.getAlpha()*wc;
+       out.setAlpha(alpha);
+       return out;
+   }
    Color32 texels[4]={sample(tile,(int)fs,(int)ft), sample(tile,(int)fs+1,(int)ft),
                       sample(tile,(int)fs+1,(int)ft+1), sample(tile,(int)fs,(int)ft+1)};
    return tf->filter(texels,distance);

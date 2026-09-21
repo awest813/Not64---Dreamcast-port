@@ -8,6 +8,14 @@ are KallistiOS-only.
 
 ## Integration checkpoint — 2026-09-20
 
+2026-09-21 follow-up: Downloads now launches `not64-oot-fast2.cdi`. Three-point
+filtering omits the unused fourth texel and blender modes skip unused memory
+RGB reads. Flycast's same 60-frame menu sample improves 141.779 -> 126.680 s
+(another 11.9% throughput gain, 24.9% over the original baseline). Menu/opening
+host captures remain byte-identical; full suite and focused alpha/blender/filter
+tests pass. `perf2-target.log` and `perf2-*.log` contain evidence. The running
+menu is visually verified with AICA active. Speed is still only ~0.47 FPS.
+
 Performance follow-up: Downloads now launches `not64-oot-fast.cdi`, the menu
 checkpoint build with `PERF=1 LTO=1`. The same first 60 menu frames measure
 158.247 s before vs 141.779 s after in Flycast (11.6% throughput gain).

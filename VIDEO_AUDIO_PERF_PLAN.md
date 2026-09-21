@@ -146,6 +146,28 @@ This remains roughly 0.42 emulated menu frames/second, not playable speed;
 Flycast's 60 FPS counter measures its display cadence, not N64 throughput.
 Physical hardware performance and full gameplay are still unverified.
 
+Second renderer pass (2026-09-21): three-point filtering decodes only the
+selected triangle's three texels, preserving the reference weight arithmetic
+and accumulation order. Blender modes cache whether they actually use the
+framebuffer's RGB value; the renderer avoids that read/decode otherwise and
+retains the existing constant memory-alpha behavior. Mode changes recompute
+the decision even when only `force_bl` changes.
+
+Against the preceding optimized build, the host menu sample improves from
+17.914 s to 16.137 s (11.0% more throughput), and the opening sample from
+6.629 s to 6.073 s (9.2%). Both 60-frame captures are byte-identical. The
+full regression suite and additional two-cycle/alpha/mode-change tests pass.
+Evidence: `perf2-before.log`, `perf2-after.log`, `perf2-scene-before.log`,
+`perf2-scene-after.log`, `perf2-regression.log`, and `perf2-focused.log`.
+
+Flycast confirms this pass: the same 60 menu frames take **126.680 s**, down
+from 141.779 s (11.9% higher throughput). Raster time is 116.828 s. Relative
+to the original 158.247 s baseline, throughput is 24.9% higher. Evidence:
+`perf2-target.log`. The Downloads launcher now opens `not64-oot-fast2.cdi`;
+the menu is visually verified and AICA starts successfully. This is still only
+about 0.47 emulated menu frames/second; full gameplay and hardware performance
+remain unverified.
+
 Profile first (V3), then in this order:
 
 1. **Hoist `validPixel` to span level** — it is called twice per pixel
