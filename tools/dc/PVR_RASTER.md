@@ -1,5 +1,12 @@
 # Experimental PVR geometry backend
 
+See [FPS quality and compatibility audit](FPS_QUALITY_PLAN.md) for the
+correctness findings and staged plan beyond the menu throughput milestone.
+
+The opt-in `RASTER_STRICT=1` baseline accelerates only tested opaque fills.
+See [synthetic replay instructions and results](RASTER_REPLAY.md). The existing
+5.45 FPS result applies to experimental mode, not strict mode.
+
 `RASTER_PVR=1` adds selective hardware rasterization to `GFX=soft VIDEO=pvr`.
 It is opt-in and requires KallistiOS with `pvr_scene_begin_rtt`. The default
 software renderer remains available as the reference and fallback.

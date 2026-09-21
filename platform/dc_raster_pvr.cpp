@@ -47,7 +47,14 @@ void fail(const char *stage) {
 }
 alignas(32) unsigned short pixels[PITCH*256];
 alignas(32) uint32_t colors[256*256];
-static_assert(sizeof(cache)+sizeof(key)+sizeof(pixels)+sizeof(colors)+4096<=DC_TEXCACHE_SIZE,
+// Strict mode currently accelerates only opaque one-cycle fills. Track their
+// exact union, so readback cannot modify alpha or RGB outside the written area.
+#ifdef DC_RASTER_STRICT
+uint32_t written[W*H/32];
+#else
+uint32_t written[1];
+#endif
+static_assert(sizeof(cache)+sizeof(key)+sizeof(pixels)+sizeof(colors)+sizeof(written)+4096<=DC_TEXCACHE_SIZE,
               "PVR raster scratch exceeds the main-RAM budget");
 uint32_t hashKey(const TextureKey &k) {
     auto p=reinterpret_cast<const uint32_t*>(&k);
@@ -130,6 +137,11 @@ bool PVRRaster::begin(RDP *r,bool preserve) {
     if(!initial)initial=pvr_mem_malloc(PITCH*256*2);
     if(!output || !initial)return false;
     if(pvr_wait_ready()<0 || pvr_wait_render_done()<0)return false;
+#ifdef DC_RASTER_STRICT
+    // N64 channel quantization is explicit below; KOS enables an additional
+    // framebuffer dither by default, which would alter those channel values.
+    vid_set_dithering(false);
+#endif
     destination=(unsigned short*)r->bl->cImg;
     if(preserve) {
         uint64_t start=timer_us_gettime64();
@@ -145,6 +157,9 @@ bool PVRRaster::begin(RDP *r,bool preserve) {
         pvr_scene_finish();fail("begin list");return false;
     }
     pending=true; draws=0;
+#ifdef DC_RASTER_STRICT
+    std::memset(written,0,sizeof(written));
+#endif
     if(preserve) {
         Texture t={};t.memory=initial;t.width=PITCH;t.height=256;t.format=PVR_TXRFMT_RGB565;
         header(&t,false,false,PVR_UVCLAMP_UV);
@@ -166,6 +181,14 @@ void PVRRaster::flush() {
     if(failed){pending=false;return;}
     start=timer_us_gettime64();
     auto src=(volatile unsigned short*)output;
+#ifdef DC_RASTER_STRICT
+    for(unsigned y=0;y<H;y++)for(unsigned x=0;x<W;x++) {
+        unsigned pixel=y*W+x;
+        if(!(written[pixel/32]&(1u<<(pixel%32))))continue;
+        unsigned v=src[y*PITCH+x];
+        destination[pixel^S16]=(v&0xffc0)|((v&31)<<1)|1;
+    }
+#else
     auto srcWords=(volatile uint32_t*)output;
     auto dstWords=(uint32_t*)destination;
     if(!((uintptr_t)destination&3)) {
@@ -180,6 +203,7 @@ void PVRRaster::flush() {
             destination[(y*W+x)^S16]=(v&0xffc0)|((v&31)<<1)|1;
         }
     }
+#endif
     readbackUs+=timer_us_gettime64()-start;
     pending=false;
     if(++submissions%60==0) {
@@ -205,6 +229,8 @@ void PVRRaster::reset() {
     waitUs=readbackUs=textureUs=importUs=0;
     failed=false;
 }
+
+unsigned PVRRaster::completedScenes() { return submissions; }
 
 void PVRRaster::readMemory(const void *source,unsigned bytes) {
     if(!pending || !bytes)return;
@@ -301,6 +327,11 @@ int PVRRaster::texture(RDP *r,int tile,Color32 shade,int alphaThreshold) {
 bool PVRRaster::triangle(RDP *r,Vektor<float,4>& v0,Vektor<float,4>& v1,Vektor<float,4>& v2,
     Color32& c0,Color32& c1,Color32& c2,float s0,float t0,float s1,float t1,float s2,float t2,
     int tile,float w0,float w1,float w2,bool pointAlpha) {
+#ifdef DC_RASTER_STRICT
+    // Texture filtering, baked combiner state and alpha precision have not yet
+    // passed the strict replay contract. Keep the complete operation in software.
+    ++rejected[0];return false;
+#endif
     bool blend;
     if(!eligible(r,blend,pointAlpha) || w0<=0 || w1<=0 || w2<=0){++rejected[0];return false;}
     RS &rs=*r->rs;
@@ -342,6 +373,11 @@ bool PVRRaster::triangle(RDP *r,Vektor<float,4>& v0,Vektor<float,4>& v1,Vektor<f
 
 bool PVRRaster::fill(RDP *r,float ux,float uy,float lx,float ly) {
     bool blend=false; Color32 color;
+#ifdef DC_RASTER_STRICT
+    // Fill-cycle word packing/scissor edges and blended fills need separate
+    // proof. Only the ordinary opaque one-cycle rectangle is enabled here.
+    if(r->cycleType!=0 || !eligible(r,blend) || blend)return false;
+#endif
     if(r->cycleType==3) {
         BL &b=*r->bl;
         if(b.format || b.size!=2 || b.width!=(int)W || !b.validPixel(b.cImg,W-1,H-1,2))return false;
@@ -372,8 +408,27 @@ bool PVRRaster::fill(RDP *r,float ux,float uy,float lx,float ly) {
         }
         if(unchanged){++transparentFills;return true;}
     }
+    if(draws>=400)flush();
+#ifdef DC_RASTER_STRICT
+    // Opaque fills overwrite their covered samples; no imported RGB is read.
+    // Quantize before submission so PVR's color conversion cannot change the
+    // reference's five-bit channels through different rounding/dithering.
+    unsigned rgba=(unsigned)(int)color;
+    unsigned red=(rgba>>27)&31,green=(rgba>>19)&31,blue=(rgba>>11)&31;
+    // Exact quantization-bin origins survive both truncating and rounding
+    // RGB565 readback. Bit replication would bias rounded channels upward.
+    color=Color32(red<<3,green<<3,blue<<3,255);
+    if(!begin(r,false))return false;
+#else
     bool full=x0==0 && y0==0 && x1==(int)W && y1==(int)H && (!blend || color.getAlpha()==255);
     if(!begin(r,!full))return false;
+#endif
+#ifdef DC_RASTER_STRICT
+    for(int y=y0;y<y1;y++)for(int x=x0;x<x1;x++) {
+        unsigned pixel=y*W+x;
+        written[pixel/32]|=1u<<(pixel%32);
+    }
+#endif
     header(nullptr,blend,false,0);quad(x0,y0,x1,y1,argb(color));++draws;return true;
 }
 

@@ -125,10 +125,18 @@ ifneq ($(VIDEO),pvr)
 $(error RASTER_PVR=1 requires VIDEO=pvr)
 endif
 DC_DEFS += -DDC_RASTER_PVR
+ifeq ($(RASTER_STRICT),1)
+DC_DEFS += -DDC_RASTER_STRICT
+endif
 ifeq ($(RASTER_PROFILE),1)
 DC_DEFS += -DDC_RASTER_PROFILE
 endif
 SOFT_OBJS += platform/dc_raster_pvr.o
+endif
+ifeq ($(RASTER_STRICT),1)
+ifneq ($(RASTER_PVR),1)
+$(error RASTER_STRICT=1 requires RASTER_PVR=1)
+endif
 endif
 
 SKIP_TOOLCHAIN :=
@@ -258,6 +266,7 @@ help:
 	  '  make -f Makefile.dc' \
 	  '  make -f Makefile.dc VIDEO=pvr|software [DEMO=1] [GFX=soft] [GAME_DISC=1]' \
 	  '  RASTER_PVR=1 enables experimental PVR geometry; INTERP_DIRECT=1 streamlines operand decoding.' \
+	  '  RASTER_STRICT=1 restricts GPU work to replay-tested opaque fills (requires RASTER_PVR=1).' \
 	  '  RASTER_PROFILE=1 adds expensive per-texture timings; PERF=1 measures actual game frames.' \
 	  '  Add UPLOAD_SKIP=1 to measure PVR hash/upload reuse (slower in Flycast).' \
 	  '  PERF=1 prints cumulative game-phase timings every 60 frames; LTO=1 enables cross-file optimization.' \

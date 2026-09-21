@@ -8,7 +8,20 @@ are KallistiOS-only.
 
 ## Integration checkpoint — 2026-09-20
 
-2026-09-21 current: **OOT file selection exceeds 5 actual FPS in Flycast.**
+2026-09-21 correctness follow-up: the initial Q0/Q1 slice now has a ROM-free
+RDP replay on ARM32 and real KOS/PVR readback. Opt-in `RASTER_STRICT=1` passes
+exact disjoint-fill RGB/alpha, opaque color ramps, mixed CPU/GPU writes and
+software COMBINED-state checks. GPU scene counts verify actual acceleration.
+The experimental mode fails the negative control. Strict currently accelerates
+only opaque one-cycle fills; textures and blends remain software. It is not a
+new 5 FPS claim, and the Downloads launcher remains on the experimental build.
+Strict menu frames 60-120 take 116.317821 s (0.516 FPS); see
+`quality-strict-game.log`. The next step is qualified texture acceleration.
+See [quality plan](tools/dc/FPS_QUALITY_PLAN.md) and
+[replay instructions](tools/dc/RASTER_REPLAY.md). Local evidence is
+`quality-replay-{host,strict,fast}.log` and `quality-full-host.log` in validation.
+
+2026-09-21 current launcher: **OOT file selection exceeds 5 actual FPS in Flycast.**
 The Downloads launcher uses `not64-oot-5fps.cdi` and a separate official
 `flycast-not64-2.6` installation (OpenGL, RTT readback on, framebuffer emulation
 off). Its previous software renderer remains available through
