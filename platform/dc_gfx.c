@@ -173,7 +173,12 @@ void updateScreen(void)
     else if (result == DC_VI_INVALID) {
         if (++stats.invalid_vi == 1) fprintf(stderr, "DC VI: invalid framebuffer range/stride\n");
     } else {
-        if (++stats.unsupported_vi == 1) fprintf(stderr, "DC VI: unsupported scanout mode\n");
+        if (++stats.unsupported_vi == 1)
+            fprintf(stderr, "DC VI: unsupported scanout mode status=%08lx origin=%08lx stride=%lu h=%08lx v=%08lx x=%08lx y=%08lx\n",
+                    (unsigned long)state.status, (unsigned long)state.origin,
+                    (unsigned long)state.stride, (unsigned long)state.h_start,
+                    (unsigned long)state.v_start, (unsigned long)state.x_scale,
+                    (unsigned long)state.y_scale);
     }
     /* Blank once on transition. Never leave the previous game image visible
      * after blanking, invalid bounds, or an unsupported mode. */

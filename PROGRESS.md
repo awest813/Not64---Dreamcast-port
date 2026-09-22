@@ -2,6 +2,14 @@
 
 ## Stopping point
 
+Follow-up: the genuine software-only SH4 replay now passes, and strict PVR
+matches its 96 span and 64 cache cases. Same-source fast rendering correctly
+fails the negative control. Pokémon Stadium 2 was tried on the ARM32 host:
+it submits graphics but presents no frames, blocked by 640-wide/interlaced VI
+and missing two-cycle untextured depth-enabled triangles. See
+[controlled results and next steps](tools/dc/DUAL_BUILD_RESULTS.md).
+No new FPS claim or playable Stadium 2 build is established.
+
 The exact software sampler improvements are implemented and validated. Work is
 stopped at this checkpoint, with no further optimization or benchmark running.
 The target remains **5 FPS with better compatibility**; it is not achieved yet.

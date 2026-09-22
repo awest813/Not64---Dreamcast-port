@@ -2,7 +2,8 @@
 HOST ?= 0
 STRICT ?= 0
 REFERENCE ?= 0
-OUT ?= build/dc/raster-replay-$(HOST)-$(STRICT)$(if $(filter 1,$(REFERENCE)),-reference,)
+SOFTWARE_ONLY ?= 0
+OUT ?= build/dc/raster-replay-$(HOST)-$(STRICT)$(if $(filter 1,$(REFERENCE)),-reference,)$(if $(filter 1,$(SOFTWARE_ONLY)),-software,)
 SOURCES = tests/dc/test_raster_replay.cpp $(addprefix mupen64_soft_gfx/,rdp.cpp rs.cpp tx.cpp tf.cpp cc.cpp bl.cpp)
 DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DDC_RASTER_REPLAY -DPIXEL_FORMAT=RGB565 -I. -include platform/dc_abi.h
 ifeq ($(REFERENCE),1)
@@ -18,12 +19,15 @@ CXX = $(patsubst %gcc,%g++,$(KOS_CC))
 FLAGS = $(KOS_CFLAGS) -O2 -fno-strict-aliasing -std=gnu++11
 LINK = $(KOS_LDFLAGS)
 LIBS = -lstdc++ $(KOS_LIBS)
+DEFS += -DDC_REPLAY_KOS
+ifeq ($(SOFTWARE_ONLY),0)
 DEFS += -DDC_RASTER_PVR
 SOURCES += platform/dc_raster_pvr.cpp
-EXTRA = $(OUT)/dc_kos_compat.o
 ifeq ($(STRICT),1)
 DEFS += -DDC_RASTER_STRICT
 endif
+endif
+EXTRA = $(OUT)/dc_kos_compat.o
 endif
 .PHONY: all
 all: $(OUT)/replay.elf

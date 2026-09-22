@@ -23,7 +23,7 @@ With the current KOS environment loaded, from the repository root:
 
 ```sh
 make -f tests/dc/Makefile.raster-replay STRICT=1
-make -f tests/dc/Makefile.raster-replay STRICT=1 REFERENCE=1
+make -f tests/dc/Makefile.raster-replay SOFTWARE_ONLY=1 REFERENCE=1
 ```
 
 Boot `build/dc/raster-replay-0-1/replay.elf` in the isolated Flycast 2.6 setup,
@@ -33,6 +33,7 @@ using OpenGL, serial console enabled, `rend.RenderToTextureBuffer=yes`, and
 
 ```sh
 python3 tools/dc/check_raster_replay.py --gpu strict.log --reference target-reference.log
+python3 tools/dc/check_raster_replay.py --software-only target-reference.log
 ```
 
 The target prints one completion summary and stays idle so serial results can
@@ -40,11 +41,17 @@ be captured. Close that test instance after collection. The checker rejects
 missing, repeated, truncated or failing fixture results. `--gpu` also requires
 completed scenes for every fixture that is supposed to exercise hardware.
 
-Capture `target-reference.log` from `raster-replay-0-1-reference/replay.elf` with
+Capture `target-reference.log` from `raster-replay-0-0-reference-software/replay.elf` with
 the same emulator settings. Use the same CPU target for the exact floating-point
 sample comparisons: the near-boundary three-point cases expose differences
 between ARM and SH4 even in the unchanged sampler. The checker deliberately
 rejects those differences; do not introduce a tolerance to hide them.
+
+`REFERENCE=1` disables the software optimizations; `SOFTWARE_ONLY=1` also
+excludes the PVR rasterizer from the target binary. Both are necessary for the
+unoptimized software-only SH4 reference. Every new replay reports its backend.
+The checker rejects old logs without that identity, GPU reference logs, and
+cross-CPU reference comparisons. Rebuild and recapture instead of relabeling logs.
 
 For the negative control, build with `STRICT=0` and boot
 `build/dc/raster-replay-0-0/replay.elf`. This mode currently fails the suite;

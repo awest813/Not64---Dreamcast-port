@@ -4,10 +4,12 @@
 #include <cstring>
 #include <ctime>
 #include "../../mupen64_soft_gfx/rdp.h"
-#ifdef DC_RASTER_PVR
+#ifdef DC_REPLAY_KOS
 #include <kos.h>
-#include "../../platform/dc_raster_pvr.h"
 KOS_INIT_FLAGS(INIT_DEFAULT);
+#endif
+#ifdef DC_RASTER_PVR
+#include "../../platform/dc_raster_pvr.h"
 #endif
 
 extern "C" { int stop=0; }
@@ -194,7 +196,7 @@ static unsigned checksum(unsigned address,unsigned words) {
     return hash;
 }
 static unsigned long long micros() {
-#ifdef DC_RASTER_PVR
+#ifdef DC_REPLAY_KOS
     return timer_us_gettime64();
 #else
     return (unsigned long long)std::clock()*1000000/CLOCKS_PER_SEC;
@@ -327,8 +329,10 @@ static void texture_cache(GFX_INFO info) {
     failures+=(errors!=0);
 }
 int main() {
-#ifdef DC_RASTER_PVR
+#ifdef DC_REPLAY_KOS
     vid_set_mode(DM_640x480,PM_RGB565);
+#endif
+#ifdef DC_RASTER_PVR
     pvr_init_params_t params={};
     params.opb_sizes[0]=PVR_BINSIZE_16;
     params.opb_sizes[2]=PVR_BINSIZE_16;
@@ -336,6 +340,15 @@ int main() {
     params.vertex_buf_size=128*1024;
     params.opb_overflow_count=1;
     if(pvr_init(&params)<0)return 2;
+#endif
+#if defined(DC_RASTER_STRICT)
+    std::printf("REPLAY backend=kos-pvr-strict\n");
+#elif defined(DC_RASTER_PVR)
+    std::printf("REPLAY backend=kos-pvr-fast\n");
+#elif defined(DC_REPLAY_KOS)
+    std::printf("REPLAY backend=kos-software\n");
+#else
+    std::printf("REPLAY backend=host-software\n");
 #endif
     GFX_INFO info={};info.RDRAM=ram;info.MemoryBswaped=TRUE;
     partial_fill(info);
@@ -348,6 +361,8 @@ int main() {
         failures||stop?"FAIL":"PASS");
 #ifdef DC_RASTER_PVR
     pvr_shutdown();
+#endif
+#ifdef DC_REPLAY_KOS
     // Keep serial results available to the target capture tool.
     for(;;)thd_sleep(1000);
 #endif

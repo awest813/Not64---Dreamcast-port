@@ -8,6 +8,15 @@ are KallistiOS-only.
 
 ## Integration checkpoint — 2026-09-20
 
+2026-09-21 controlled replay follow-up: `SOFTWARE_ONLY=1 REFERENCE=1` now
+provides the genuine SH4 software baseline. Strict passes against it; fast fails
+six groups as expected. The checker requires backend identity and rejects GPU
+or cross-CPU references. Pokémon Stadium 2 host trials reached display lists
+but zero presented frames: 640-wide/interlaced VI and unsupported two-cycle
+untextured depth triangles are concrete blockers. See
+[results and next bounded work](tools/dc/DUAL_BUILD_RESULTS.md). No game assets
+are tracked; Downloads launcher remains unchanged.
+
 Subsequent planning audit at `50c839b`: see
 [dual-build learning plan](tools/dc/DUAL_BUILD_LEARNING_PLAN.md). Next priority is
 same-revision strict/fast comparison, a genuine software-only SH4 replay, and
