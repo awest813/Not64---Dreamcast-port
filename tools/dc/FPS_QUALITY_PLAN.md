@@ -1,5 +1,9 @@
 # FPS quality and compatibility audit
 
+For the current cross-build experiment order, see the
+[dual-build learning plan](DUAL_BUILD_LEARNING_PLAN.md). The initial audit below
+and its appended implementation history remain the supporting record.
+
 Audit: 2026-09-21, source revision `45a0ea0`. Scope: make the Dreamcast
 hybrid renderer dependable before treating 5 FPS as a compatibility milestone.
 This document proposes implementation; no renderer or launcher change was made

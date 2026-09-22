@@ -8,6 +8,14 @@ are KallistiOS-only.
 
 ## Integration checkpoint — 2026-09-20
 
+Subsequent planning audit at `50c839b`: see
+[dual-build learning plan](tools/dc/DUAL_BUILD_LEARNING_PLAN.md). Next priority is
+same-revision strict/fast comparison, a genuine software-only SH4 replay, and
+first-divergence plus capability-cost accounting. Existing strict texture tests
+can pass through fallback; `REFERENCE=1` does not disable KOS/PVR. Qualify useful
+GPU subsets individually; keep cache regression work as a bounded supporting task.
+This audit changed documentation only and launched no new benchmark.
+
 2026-09-21 sampler follow-up: strict menu improves **0.516 -> 0.586 FPS**
 (13.6% throughput), frames 60-120 / 102.413547 s in `floor-game.log`. The final
 private image is `not64-oot-quality-floor.cdi`; Downloads remains unchanged.

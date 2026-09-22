@@ -68,6 +68,11 @@ limitations; the slower strict candidate has not replaced it.
 
 ## Resume here
 
+The subsequent [dual-build audit and learning plan](tools/dc/DUAL_BUILD_LEARNING_PLAN.md)
+sets the next priority: rebuild both modes from the same revision and localize
+their draw-level differences before choosing another optimization. The list below
+records the implementation checkpoint's remaining work.
+
 1. Address the cache's nearest/clamped regression through measured admission or
    coordinate canonicalization, preserving exact wrap/mirror/clamp behavior.
 2. Use the profiler to choose the next textured-triangle or blender optimization.
