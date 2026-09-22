@@ -162,10 +162,12 @@ int dc_video_present(const dc_vi_frame *frame)
         return 0;
     }
     if (upload) {
-        int left = (640 - (int)frame->width * 2) / 2;
-        int top = (480 - (int)frame->height * 2) / 2;
-        int right = left + (int)frame->width * 2;
-        int bottom = top + (int)frame->height * 2;
+        int sx = frame->width <= 320 ? 2 : 1;
+        int sy = frame->height <= 240 ? 2 : 1;
+        int left = (640 - (int)frame->width * sx) / 2;
+        int top = (480 - (int)frame->height * sy) / 2;
+        int right = left + (int)frame->width * sx;
+        int bottom = top + (int)frame->height * sy;
         float u = (float)frame->width / DC_VI_TEXTURE_WIDTH;
         float v = (float)frame->height / DC_VI_TEXTURE_HEIGHT;
         pvr_vertex_t vertices[4] __attribute__((aligned(32))) = {

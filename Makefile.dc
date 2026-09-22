@@ -87,6 +87,15 @@ CORE_OBJS = \
 	rsp_hle/plugin.o
 
 DC_DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DUSE_TLB_CACHE -DPIXEL_FORMAT=RGB565
+ifeq ($(VIDEO_HIRES),1)
+DC_DEFS += -DDC_VI_HIGHRES
+endif
+ifeq ($(GAME_INPUT_REPLAY),1)
+ifneq ($(GAME_DISC),1)
+$(error GAME_INPUT_REPLAY=1 requires GAME_DISC=1)
+endif
+DC_DEFS += -DDC_GAME_INPUT_REPLAY
+endif
 ifeq ($(INTERP_DIRECT),1)
 DC_DEFS += -DDC_INTERP_DIRECT
 endif
@@ -276,6 +285,8 @@ help:
 	  '  PERF=1 prints cumulative game-phase timings every 60 frames; LTO=1 enables cross-file optimization.' \
 	  '  GAME_DISC=1 GAME_FRAMES=0 GAME_STEPS=0 GAME_START=0 runs without diagnostic limits or synthetic Start.' \
 	  '  GAME_CHECKPOINT=1 resumes /cd/boot.st after loading the game ROM (GAME_DISC=1).' \
+	  '  VIDEO_HIRES=1 enables experimental 640x480 field-weave scanout (1 MiB staging).' \
+	  '  GAME_INPUT_REPLAY=1 reads recorded Maple inputs from /cd/input.txt (GAME_DISC=1).' \
 	  '' \
 	  'Flags: HOST=1  VIDEO=software|pvr  GFX=none|soft  DEMO=1  GAME_DISC=1' \
 	  'Docs:  tools/dc/README.md'
@@ -341,6 +352,13 @@ run: all
 
 $(VI_TEST_TARGET): $(BUILD_DIR)/tests/dc/test_vi.o $(BUILD_DIR)/platform/dc_vi.o $(BUILD_DIR)/platform/dc_video.o
 	$(DC_CC) $(DC_CFLAGS) $(DC_LDFLAGS) -o $@ $^ $(DC_LIBS)
+
+$(BUILD_DIR)/test-vi-hires: tests/dc/test_vi_hires.c platform/dc_vi.c platform/dc_video.c platform/dc_vi.h platform/dc_video.h $(CONFIG_STAMP)
+	$(DC_CC) $(DC_CFLAGS) -DDC_VI_HIGHRES $(DC_LDFLAGS) -o $@ tests/dc/test_vi_hires.c platform/dc_vi.c platform/dc_video.c $(DC_LIBS)
+
+.PHONY: test-hires
+test-hires: $(BUILD_DIR)/test-vi-hires
+	$(RUNNER) ./$(BUILD_DIR)/test-vi-hires
 
 TEST_SOFT_PREREQ =
 ifeq ($(GFX),soft)

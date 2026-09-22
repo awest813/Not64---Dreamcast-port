@@ -8,7 +8,7 @@ void dc_video_shutdown(void);
 const char *dc_video_name(void);
 /* CPU output kernel shared by software KOS output and host verification. */
 int dc_video_expand_2x(const dc_vi_frame *frame, uint16_t *out, size_t count);
-/* Linear 512-wide RGB565 PVR upload: used rows only. Zero if blank/invalid. */
+/* Linear RGB565 PVR upload: used rows only. Zero if blank/invalid. */
 size_t dc_video_pvr_upload_bytes(unsigned width, unsigned height);
 /* Hash exactly the uploaded rows; callers must compare dimensions as well. */
 uint32_t dc_video_frame_hash(const dc_vi_frame *frame);

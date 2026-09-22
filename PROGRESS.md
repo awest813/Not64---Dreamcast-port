@@ -1,17 +1,28 @@
 # Progress checkpoint — 2026-09-21
 
-## Stopping point
+## Current milestone: Stadium 2 gameplay
 
-Follow-up: the genuine software-only SH4 replay now passes, and strict PVR
-matches its 96 span and 64 cache cases. Same-source fast rendering correctly
-fails the negative control. Pokémon Stadium 2 was tried on the ARM32 host:
-it submits graphics but presents no frames, blocked by 640-wide/interlaced VI
-and missing two-cycle untextured depth-enabled triangles. See
-[controlled results and next steps](tools/dc/DUAL_BUILD_RESULTS.md).
-No new FPS claim or playable Stadium 2 build is established.
+The fast Dreamcast build reaches the live battle command menu in Flycast 2.6:
+Arcanine versus Nelson's Caterpie, Poké Cup / Poké Ball / Battle 1. The fast
+build accepts C-up and visibly executes "Arcanine's Flame Wheel!". Target
+validation uses genuine checkpoints produced by normal software emulation;
+uninterrupted cold-boot-to-battle validation remains outstanding.
 
-The exact software sampler improvements are implemented and validated. Work is
-stopped at this checkpoint, with no further optimization or benchmark running.
+Implemented optional 640x480 field-weave output, two-cycle shaded depth
+triangles, flipped texture rectangles and recorded controller input. Fixed a
+fill/scissor off-by-one that overwrote the next framebuffer descriptor and
+crashed the battle transition. Bounds checks stay enabled. The host completes
+a 600-frame attack with HP damage and zero graphics/VI failures. Both default
+and high-resolution regression suites pass, and both KOS fast images build.
+
+See [Stadium 2 evidence, controls and limitations](tools/dc/STADIUM2.md).
+Private launcher: `build/dc/Play-Stadium2-Fast.cmd`; private cold-boot image:
+`build/dc/not64-stadium-fast.cdi`. No game assets are tracked. The earlier Zelda
+Downloads launcher remains unchanged. **Compatible 5 FPS is still unfinished.**
+
+## Previous OOT performance checkpoint
+
+The exact software sampler improvements are implemented and validated. The measurements below are retained from the previous checkpoint.
 The target remains **5 FPS with better compatibility**; it is not achieved yet.
 
 Strict-mode OOT file selection improved from **0.516 to 0.586 FPS**, about

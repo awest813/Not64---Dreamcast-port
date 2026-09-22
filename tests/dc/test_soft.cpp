@@ -189,6 +189,35 @@ int main() {
         CHECK((half(0x20000)&0xf800)==0x6000);
     }
 
+    // Stadium 2's untextured two-cycle depth triangles. Both scanline halves
+    // must draw; alpha/depth rejection must preserve both destination planes.
+    {
+        RDP tri(info);
+        tri.setCImg(0,2,8,ram+0x24000); tri.setZImg(ram+0x25000);
+        tri.setScissor(0,0,8,8,0); tri.setOtherMode_h(20,1);
+        tri.setOtherMode_l(3,0x30>>3); tri.setOtherMode_l(0,1);
+        tri.setBlendColor(128);
+        unsigned hi=(15u<<20)|(31u<<15)|(7u<<12)|(7u<<9)|(15u<<5)|31u;
+        unsigned lo=(15u<<28)|(15u<<24)|(7u<<21)|(7u<<18)|(4u<<15)|(7u<<12)|(4u<<9)|(7u<<3);
+        tri.setCombineMode(hi,lo); // shade, then combined
+        Vektor<float,4> a,b,c;
+        a[0]=1; a[1]=0; b[0]=7; b[1]=3; c[0]=1; c[1]=7;
+        Color32 red(255,0,0,255), transparent(255,0,0,0), blue(0,0,255,255);
+        std::memset(ram+0x24000,0,128); std::memset(ram+0x25000,0xff,128);
+        tri.tri_shade_zbuff(a,b,c,transparent,transparent,transparent,100,100,100);
+        CHECK(half(0x24000+2*(1*8+2))==0 && half(0x25000+2*(1*8+2))==0xffff);
+        tri.tri_shade_zbuff(a,b,c,red,red,red,100,100,100);
+        CHECK(half(0x24000+2*(1*8+2))==0xf801 && half(0x24000+2*(4*8+2))==0xf801);
+        unsigned depth=half(0x25000+2*(1*8+2)); CHECK(depth!=0xffff);
+        tri.tri_shade_zbuff(a,b,c,blue,blue,blue,200,200,200);
+        CHECK(half(0x24000+2*(1*8+2))==0xf801 && half(0x25000+2*(1*8+2))==depth);
+        tri.setPrimColor(0x0000ffff,0,0);
+        tri.setCombineMode(hi,(lo&~((7u<<15)|(7u<<9)))|(3u<<15)|(3u<<9));
+        tri.tri_shade_zbuff(a,b,c,red,red,red,50,50,50);
+        CHECK(half(0x24000+2*(1*8+2))==0x003f);
+        CHECK(half(0x24000+2*7)==0); // outside the triangle
+    }
+
     // Two-cycle texture rectangles (used by Zelda's opening): cycle 0
     // takes TEXEL0, cycle 1 takes COMBINED. Clip away red, retain green.
     {
@@ -220,6 +249,13 @@ int main() {
         rect.setScissor(1,1,2,2,0);
         rect.texRect(0,0,0,1,1,0,0,4,1);
         CHECK(half(0x22008)==0 && (half(0x2200a)&0xfffe)==0xfffe);
+        // E5 swaps the derivatives: clipped x=1 reads source row 1,
+        // while moving down advances S. Red/green over blue/white transposes.
+        rect.setOtherMode_h(20,1); rect.setScissor(1,0,2,2,0);
+        word(0x22000,0); word(0x22008,0);
+        rect.texRect(0,0,0,2,2,0,0,1,1,true);
+        CHECK(half(0x22000)==0 && half(0x22002)==0x003f);
+        CHECK(half(0x22008)==0 && half(0x2200a)==0xffff);
     }
 
     // A constant fill still blends against each destination pixel and applies
@@ -249,6 +285,27 @@ int main() {
         CHECK(half(0x23000)!=half(0x23002));
     }
 
+    // Inclusive fill endpoints must not extend an exclusive scissor by a row.
+    // Stadium 2 fills through y=240 with a y<240 scissor; the following
+    // allocation contains its framebuffer descriptor, not drawable pixels.
+    {
+        RDP rect(info);
+        rect.setCImg(0,2,320,ram+0x40000);
+        rect.setScissor(0,0,320,240,0);
+        rect.setOtherMode_h(20,3);
+        rect.setFillColor(0x00010001);
+        word(0x40000+320*240*2,0x803b4a00);
+        rect.fillRect(0,152,117,240);
+        CHECK(half(0x40000+(239*320+116)*2)==1);
+        CHECK(*(unsigned *)(ram+0x40000+320*240*2)==0x803b4a00);
+        // Oversized rectangles clip on the right as well as the bottom.
+        rect.setCImg(0,2,8,ram+0x28000);
+        rect.setScissor(0,0,4,2,0);
+        rect.fillRect(0,0,8,8);
+        CHECK(half(0x28000+3*2)==1 && half(0x28000+4*2)==0);
+        CHECK(half(0x28000+(8+3)*2)==1 && half(0x28000+16*2)==0);
+    }
+
     // Execute an actual F3DEX2 display list: 4x4 red fill and FullSync.
     const char *uc="RSP Gfx ucode F3DEX fifo 2.08";
     for(unsigned i=0;i<std::strlen(uc);i++) byte(0x2000+i,uc[i]);
@@ -267,6 +324,15 @@ int main() {
     CHECK(intr==0x20 && interrupts==1);
     for(unsigned i=0;i<16;i++) CHECK(half(0x10000+i*2)==0xf801);
     CHECK(half(0xfffe)==0 && half(0x10020)==0);
+    // The E5 decoder consumes both following half-command payloads.
+    word(0x3000,0xe5000000); word(0x3004,0);
+    word(0x3008,0xe1000000); word(0x300c,0);
+    word(0x3010,0xf1000000); word(0x3014,0x04000400);
+    word(0x3018,0xdf000000); word(0x301c,0);
+    { RSP flipped(info); CHECK(flipped.succeeded()); }
+    task[12]=0x3ffff0; word(0x3ffff0,0xe5000000); word(0x3ffff4,0);
+    { RSP truncated(info); CHECK(!truncated.succeeded()); }
+    task[12]=0x3000;
     // CULLDL returns from a child list, rather than ending its parent.
     word(0x3000,0xde000000); word(0x3004,0x3100);
     word(0x3008,0xe9000000); word(0x300c,0);

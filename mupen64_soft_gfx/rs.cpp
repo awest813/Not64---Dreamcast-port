@@ -58,8 +58,10 @@ void RS::fillRect(float ux, float uy, float lx, float ly, RDP *rdp)
    lry = slry > ly ? (int)ly : (int)slry;
    if (rdp->cycleType == 3) 
      {
-	lrx++;
-	lry++;
+        // Fill endpoints are inclusive, but the scissor's lower/right bounds
+        // are exclusive. Clip after expanding the primitive, not before.
+        lrx = slrx < lx+1 ? (int)slrx : (int)(lx+1);
+        lry = slry < ly+1 ? (int)slry : (int)(ly+1);
 	
 	for (int i=uly; i<lry; i++)
 	  for (int j=ulx; j<lrx; j+=2)
@@ -82,8 +84,30 @@ void RS::fillRect(float ux, float uy, float lx, float ly, RDP *rdp)
    else printf("rs:fillRect not fill mode ? %d\n", rdp->cycleType);
 }
 
-void RS::texRect(int tile, float ux, float uy, float lx, float ly, float s, float t, float dsdx, float dtdy, RDP *rdp)
+void RS::texRect(int tile, float ux, float uy, float lx, float ly, float s, float t, float dsdx, float dtdy, RDP *rdp, bool flip)
 {
+   if (flip && (rdp->cycleType==0 || rdp->cycleType==1)) {
+       int x0=(int)(sulx>ux?sulx:ux), y0=(int)(suly>uy?suly:uy);
+       int x1=(int)(slrx<lx?slrx:lx), y1=(int)(slry<ly?slry:ly);
+       // Flipped rectangles advance S down the screen and T across it.
+       float ps=s+(y0-uy)*dsdx;
+       for(int y=y0;y<y1;y++,ps+=dsdx) {
+           float pt=t+(x0-ux)*dtdy;
+           for(int x=x0;x<x1;x++,pt+=dtdy) {
+               Color32 texel=rdp->tx->getTexel(ps,pt,tile,rdp->tf);
+               if(rdp->cycleType==1) {
+                   Color32 next=rdp->tx->getTexel(ps,pt,(tile+1)&7,rdp->tf);
+                   rdp->bl->cycle2ModeDraw(x,y,rdp->cc->combine2(texel,next));
+               } else rdp->bl->cycle1ModeDraw(x,y,rdp->cc->combine1(texel));
+           }
+       }
+       return;
+   }
+   if (flip) {
+       // TextureRectangleFlip is not defined in copy/fill cycle modes.
+       printf("RS: invalid cycle type in flipped texRect:%d\n",rdp->cycleType);
+       return;
+   }
    if (rdp->cycleType == 0 || rdp->cycleType == 1) // one/two cycle modes
      {
 	int ulx, uly, lrx, lry;
@@ -632,7 +656,7 @@ void RS::tri_shade_txtr_zbuff(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<f
 void RS::tri_shade_zbuff(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,4>& v2, 
 			 Color32& c0, Color32& c1, Color32& c2, float z0, float z1, float z2, RDP *rdp)
 {
-   if (rdp->cycleType == 0)
+   if (rdp->cycleType == 0 || rdp->cycleType == 1)
      {
 	// sorting vertex by y values
 	Vektor<float,4>* v[3] = { &v0, &v1, &v2 };
@@ -725,8 +749,9 @@ void RS::tri_shade_zbuff(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,
 			    Color32 shade((int)(r+0.5f), (int)(g+0.5f), (int)(b+0.5f), (int)(a+0.5f));
 			    rdp->cc->setShade(shade);
 			    Color32 t = 0;
-			    Color32 c = rdp->cc->combine1(t);
-			    rdp->bl->cycle1ModeDraw(x,y,c,z,shade);
+			    Color32 c = rdp->cycleType == 0 ? rdp->cc->combine1(t) : rdp->cc->combine2(t,t);
+			    if (rdp->cycleType == 0) rdp->bl->cycle1ModeDraw(x,y,c,z,shade);
+                            else rdp->bl->cycle2ModeDraw(x,y,c,z,shade);
 			 }
 		    }
 	       }
@@ -795,8 +820,9 @@ void RS::tri_shade_zbuff(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,
 			    Color32 shade((int)(r+0.5f), (int)(g+0.5f), (int)(b+0.5f), (int)(a+0.5f));
 			    rdp->cc->setShade(shade);
 			    Color32 t = 0;
-			    Color32 c = rdp->cc->combine1(t);
-			    rdp->bl->cycle1ModeDraw(x,y,c,z,shade);
+			    Color32 c = rdp->cycleType == 0 ? rdp->cc->combine1(t) : rdp->cc->combine2(t,t);
+			    if (rdp->cycleType == 0) rdp->bl->cycle1ModeDraw(x,y,c,z,shade);
+                            else rdp->bl->cycle2ModeDraw(x,y,c,z,shade);
 			 }
 		    }
 	       }

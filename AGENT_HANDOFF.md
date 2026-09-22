@@ -6,6 +6,23 @@ Native `make -f Makefile.dc HOST=1` is rejected at Makefile parse time on LP64
 adds `test-soft` to `test`. `GAME_DISC=1` requires `GFX=soft`. `VIDEO=` / `DEMO=`
 are KallistiOS-only.
 
+## Latest: Stadium 2 gameplay — 2026-09-21
+
+Fast SH4/Flycast reaches the battle command menu via genuine checkpoints
+and executes Arcanine's Flame Wheel after its own recorded C-up input.
+See [Stadium 2 notes](tools/dc/STADIUM2.md) for build flags, validation logs,
+controls and limitations. Host traversed the menus and executes an attack.
+New optional `VIDEO_HIRES=1` supports its interlaced menus; E5 rectangles and
+two-cycle untextured depth triangles are implemented. The battle transition
+fault was a fill/scissor off-by-one overwriting the next framebuffer descriptor,
+not a CPU/TLB failure. Temporary guest-address tracing was removed.
+
+Use isolated `build/dc/validation/flycast-2.6/flycast.exe` and private images in
+`build/dc/`; do not touch the user's other emulator/project instances. The fast
+menu milestone is not strict accuracy, 5 FPS, physical hardware validation or
+an uninterrupted cold-boot-to-battle run. Default + high-resolution full ARM32
+regression suites pass. Downloads Zelda launcher remains unchanged.
+
 ## Integration checkpoint — 2026-09-20
 
 2026-09-21 controlled replay follow-up: `SOFTWARE_ONLY=1 REFERENCE=1` now

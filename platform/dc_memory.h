@@ -38,7 +38,11 @@
 #endif
 
 /* Fixed 512x256 RGB565 scanout staging; texture memory is a separate budget. */
+#ifdef DC_VI_HIGHRES
+#define DC_VIDEO_STAGING_SIZE   (1024 * DC_KB)
+#else
 #define DC_VIDEO_STAGING_SIZE   (256 * DC_KB)
+#endif
 
 /* Optional legacy software rasterizer: depth LUT and bounded working state. */
 #ifdef DC_SOFT_GFX

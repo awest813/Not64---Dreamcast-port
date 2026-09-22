@@ -75,7 +75,7 @@ class RDP
 		int cmt, int maskt, int shiftt, int cms, int masks, int shifts);
    void loadBlock(float uls, float ult, int tile, float lrs, int dxt);
    void setTileSize(float uls, float ult, float lrs, float lrt, int tile);
-   void texRect(int tile, float ulx, float uly, float lrx, float lry, float s, float t, float dsdx, float dtdy);
+   void texRect(int tile, float ulx, float uly, float lrx, float lry, float s, float t, float dsdx, float dtdy, bool flip=false);
    void loadTLUT(int tile, int count);
    void loadTile(int tile, float uls, float ult, float lrs, float lrt);
    void debug_tri(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,4>& v2);   
@@ -93,7 +93,7 @@ class RDP
    
    // friend rasterizer functions
    friend void RS::fillRect(float ulx, float uly, float lrx, float lry, RDP* rdp);
-   friend void RS::texRect(int tile, float ulx, float uly, float lrx, float lry, float s, float t, float dsdx, float dtdy, RDP* rdp);
+   friend void RS::texRect(int tile, float ulx, float uly, float lrx, float lry, float s, float t, float dsdx, float dtdy, RDP* rdp, bool flip);
    friend void RS::debug_tri(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,4>& v2, RDP* rdp);
    friend void RS::tri_shade_zbuff(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,4>& v2,
 				   Color32& c0, Color32& c1, Color32& c2, float z0, float z1, float z2, RDP* rdp);

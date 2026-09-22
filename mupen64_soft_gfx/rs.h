@@ -48,7 +48,7 @@ class RS
    
    void setScissor(float ulx, float uly, float lrx, float lry, int mode);
    void fillRect(float ulx, float uly, float lrx, float lry, RDP *rdp);
-   void texRect(int tile, float ulx, float uly, float lrx, float lry, float s, float t, float dsdx, float dtdy, RDP *rdp);
+   void texRect(int tile, float ulx, float uly, float lrx, float lry, float s, float t, float dsdx, float dtdy, RDP *rdp, bool flip=false);
    void debug_tri(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,4>& v2, RDP *rdp);
    void tri_shade_zbuff(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<float,4>& v2, 
 			Color32& c0, Color32& c1, Color32& c2, float z0, float z1, float z2, RDP *rdp);

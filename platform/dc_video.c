@@ -15,6 +15,16 @@ int dc_video_expand_2x(const dc_vi_frame *frame, uint16_t *out, size_t count)
     if (!frame || !out || count < 640u * 480u ||
         frame->width > DC_VI_MAX_WIDTH || frame->height > DC_VI_MAX_HEIGHT) return 0;
     memset(out, 0, 640u * 480u * sizeof(*out));
+    if (frame->width > 320 || frame->height > 240) {
+        unsigned sx = frame->width <= 320 ? 2 : 1;
+        unsigned sy = frame->height <= 240 ? 2 : 1;
+        left = (640 - frame->width * sx) / 2;
+        top = (480 - frame->height * sy) / 2;
+        for (y = 0; y < frame->height * sy; ++y)
+            for (x = 0; x < frame->width * sx; ++x)
+                out[(top+y)*640+left+x] = frame->pixels[(y/sy)*DC_VI_TEXTURE_WIDTH+x/sx];
+        return 1;
+    }
     left = (640u - frame->width * 2u) / 2u;
     top = (480u - frame->height * 2u) / 2u;
     if (((uintptr_t)out & 3u) == 0u) {

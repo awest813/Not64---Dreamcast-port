@@ -127,6 +127,7 @@ int controller_DC_rumble_state(int Control);
 unsigned int controller_DC_lastButtons(int Control);
 int controller_DC_lastStick(int Control, int *jx, int *jy);
 void controller_DC_set_start_pulse(unsigned vi);
+int controller_DC_load_input_replay(const char *path);
 /* Unshifted Maple word. The menu uses this so holding both triggers cannot
  * steal the D-pad (that shift is an in-game mapping). */
 int controller_DC_poll_raw(int Control, unsigned int *buttons, int *jx, int *jy,

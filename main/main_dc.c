@@ -1566,6 +1566,9 @@ int main(int argc, char **argv)
         if (!strcmp(argv[arg], "--frames") && arg + 1 < argc) {
             if (!positive_number(argv[arg + 1], &frames)) goto usage;
             arg += 2;
+        } else if (!strcmp(argv[arg], "--input-replay") && arg + 1 < argc) {
+            if (!controller_DC_load_input_replay(argv[arg+1])) goto usage;
+            arg += 2;
         } else if (!strcmp(argv[arg], "--start-at") && arg + 1 < argc) {
             unsigned long start_vi;
             if (!positive_number(argv[arg + 1], &start_vi)) goto usage;
@@ -1585,6 +1588,9 @@ int main(int argc, char **argv)
         } else goto usage;
     }
     dc_gfx_set_frame_limit(frames);
+#ifdef DC_GAME_INPUT_REPLAY
+    if (!controller_DC_load_input_replay("/cd/input.txt")) goto usage;
+#endif
 #ifndef DC_HOST_STUB
     /* A disc has no resident loader to return to after main exits. */
     arch_set_exit_path(ARCH_EXIT_MENU);
@@ -1658,7 +1664,7 @@ int main(int argc, char **argv)
 #endif
     return fail;
 usage:
-    fprintf(stderr, "Usage: %s [--menu] [rom.z64 [positive-step-budget]] [--frames positive-count] [--capture output.ppm] [--start-at VI]\n", argv[0]);
+    fprintf(stderr, "Usage: %s [--menu] [rom.z64 [positive-step-budget]] [--frames positive-count] [--capture output.ppm] [--start-at VI] [--input-replay file]\n", argv[0]);
 #ifdef DC_HOST_STUB
     fprintf(stderr, "Host checkpoints: --load-slot 1..9 --save-slot 1..9; repeat --start-at for separate presses (up to 16).\n");
 #endif

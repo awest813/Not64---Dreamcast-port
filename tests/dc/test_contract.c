@@ -157,7 +157,7 @@ int main(void)
     updateScreen(); updateScreen();
     CHECK(dc_gfx_get_frame()->width == 0 && !stop);
     CHECK(!dc_gfx_capture_ppm("build/dc/should-not-exist.ppm"));
-    vi_register.vi_status = 2 | 0x40;
+    vi_register.vi_status = 1; /* Reserved pixel type, unsupported in both modes. */
     updateScreen();
     CHECK(dc_gfx_get_stats().unsupported_vi == 1 && !stop);
     vi_register.vi_status = 2;

@@ -7,6 +7,28 @@
 #include "controller.h"
 #include "../main/timers.h"
 extern timers Timers;
+/* Optional deterministic diagnostic input. All inputs still pass through the
+ * normal Maple mapping and PIF polling; no game memory is patched. */
+static struct { unsigned vi, duration, buttons; int x, y, reported; } replay[128];
+static unsigned replay_count;
+int controller_DC_load_input_replay(const char *path) {
+    FILE *file=fopen(path,"r"); char line[160]; unsigned count=0;
+    replay_count=0;
+    if (!file) return 0;
+    while (fgets(line,sizeof(line),file)) {
+        unsigned vi,duration,buttons; int x,y; char extra;
+        if (line[0]=='#' || line[0]=='\n' || line[0]=='\r') continue;
+        if (count==128 || sscanf(line,"%u %u %x %d %d %c",&vi,&duration,&buttons,&x,&y,&extra)!=5 ||
+            !duration || duration>600 || vi>0xffffffffu-duration || (buttons&~0xffffu) ||
+            x < -128 || x > 127 || y < -128 || y > 127) { fclose(file); return 0; }
+        replay[count].vi=vi; replay[count].duration=duration; replay[count].buttons=buttons;
+        replay[count].x=x; replay[count].y=y; replay[count].reported=0; ++count;
+    }
+    if (ferror(file)) { fclose(file); return 0; }
+    fclose(file); replay_count=count;
+    printf("Input replay loaded: %u events\n",count);
+    return 1;
+}
 static unsigned start_pulses[16], start_pulse_count, start_pulse_reported;
 int controller_DC_add_start_pulse(unsigned vi) {
     if (!vi || vi > 0xffffffffu - 20u || start_pulse_count == 16) return 0;
@@ -278,6 +300,15 @@ static int _GetKeys(int Control, BUTTONS *Keys, controller_config_t *config)
 		return 0;
 	}
 	/* Optional deterministic input for startup/title-screen regression runs. */
+	if (Control == 0) for (unsigned i=0; i<replay_count; ++i) {
+		if (Timers.vis >= replay[i].vi && Timers.vis < replay[i].vi+replay[i].duration) {
+			b |= replay[i].buttons; jx=replay[i].x; jy=replay[i].y;
+			if (!replay[i].reported) {
+				printf("Input replay: VI=%.0f buttons=%04x stick=%d,%d\n",Timers.vis,replay[i].buttons,jx,jy);
+				replay[i].reported=1;
+			}
+		}
+	}
 	if (Control == 0) for (unsigned i=0; i<start_pulse_count; ++i) {
 		if (Timers.vis >= start_pulses[i] && Timers.vis < start_pulses[i] + 20u)
 			b |= CONT_START;

@@ -55,6 +55,7 @@ RSP::RSP(GFX_INFO info, RDP *shared) : gfxInfo(info), ownsRdp(!shared), error(fa
    commands[0xbf]=&RSP::TRI1;
    commands[0xc0]=&RSP::SPNOOP;
    commands[0xe4]=&RSP::TEXRECT;
+   commands[0xe5]=&RSP::TEXRECT;
    commands[0xe6]=&RSP::RDPLOADSYNC;
    commands[0xe7]=&RSP::RDPPIPESYNC;
    commands[0xe8]=&RSP::RDPTILESYNC;
@@ -182,7 +183,7 @@ void RSP::executeDList()
            }
            pc = seg2phys(currentCommand[1]); continue;
        }
-       if (op == 0xe4 && pc > SOFT_RDRAM_BYTES-24) { error=true; break; }
+       if ((op == 0xe4 || op == 0xe5) && pc > SOFT_RDRAM_BYTES-24) { error=true; break; }
        COMMANDS handler=commands[op];
        (this->*handler)();
        pc = (unsigned char *)(currentCommand+2)-gfxInfo.RDRAM;
@@ -1079,7 +1080,7 @@ void RSP::TEXRECT()
    t = (int)((short)(*(currentCommand+3) & 0xFFFF)) / 32.0f;
    dsdx = (int)((short)((*(currentCommand+5) >> 16) & 0xFFFF)) / 1024.0f;
    dtdy = (int)((short)(*(currentCommand+5) & 0xFFFF)) / 1024.0f;
-   rdp->texRect(tile, ulx, uly, lrx, lry, s, t, dsdx, dtdy);
+   rdp->texRect(tile, ulx, uly, lrx, lry, s, t, dsdx, dtdy, (*currentCommand>>24)==0xe5);
    currentCommand += 4;
 }
 

@@ -31,6 +31,9 @@ static dc_vi_frame frame;
 static int last_blank = -1;
 static uint32_t frame_limit;
 extern int stop;
+#ifdef DC_VI_HIGHRES
+extern int vi_field;
+#endif
 
 void dc_gfx_set_frame_limit(uint32_t limit) { frame_limit = limit; }
 const dc_vi_frame *dc_gfx_get_frame(void) { return opened ? &frame : NULL; }
@@ -159,6 +162,9 @@ void updateScreen(void)
         *info.VI_H_START_REG, *info.VI_V_START_REG,
         *info.VI_X_SCALE_REG, *info.VI_Y_SCALE_REG
     };
+#ifdef DC_VI_HIGHRES
+    state.field = vi_field & 1;
+#endif
 #ifdef DC_PERF
     perf_touch();
     uint64_t begin = perf_now();
@@ -171,7 +177,12 @@ void updateScreen(void)
     if (result == DC_VI_READY) ++stats.converted;
     else if (result == DC_VI_BLANK) ++stats.blanked;
     else if (result == DC_VI_INVALID) {
-        if (++stats.invalid_vi == 1) fprintf(stderr, "DC VI: invalid framebuffer range/stride\n");
+        if (++stats.invalid_vi == 1)
+            fprintf(stderr, "DC VI: invalid framebuffer range/stride status=%08lx origin=%08lx stride=%lu h=%08lx v=%08lx x=%08lx y=%08lx\n",
+                    (unsigned long)state.status, (unsigned long)state.origin,
+                    (unsigned long)state.stride, (unsigned long)state.h_start,
+                    (unsigned long)state.v_start, (unsigned long)state.x_scale,
+                    (unsigned long)state.y_scale);
     } else {
         if (++stats.unsupported_vi == 1)
             fprintf(stderr, "DC VI: unsupported scanout mode status=%08lx origin=%08lx stride=%lu h=%08lx v=%08lx x=%08lx y=%08lx\n",

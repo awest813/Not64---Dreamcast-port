@@ -233,14 +233,14 @@ void RDP::setTileSize(float uls, float ult, float lrs, float lrt, int tile)
    tx->setTileSize(uls, ult, lrs, lrt, tile);
 }
 
-void RDP::texRect(int tile, float ulx, float uly, float lrx, float lry, float s, float t, float dsdx, float dtdy)
+void RDP::texRect(int tile, float ulx, float uly, float lrx, float lry, float s, float t, float dsdx, float dtdy, bool flip)
 {
    SOFT_SCOPE(1);
 #ifdef DC_RASTER_PVR
-   if(PVRRaster::rectangle(this,tile,ulx,uly,lrx,lry,s,t,dsdx,dtdy)) return;
+   if(!flip && PVRRaster::rectangle(this,tile,ulx,uly,lrx,lry,s,t,dsdx,dtdy)) return;
    PVRRaster::flush();
 #endif
-   rs->texRect(tile, ulx, uly, lrx, lry, s, t, dsdx, dtdy, this);
+   rs->texRect(tile, ulx, uly, lrx, lry, s, t, dsdx, dtdy, this, flip);
 }
 
 void RDP::loadTLUT(int tile, int count)

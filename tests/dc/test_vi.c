@@ -67,7 +67,7 @@ int main(void)
     pixel16(16 + (1 * 6 + 1) * 2, 0xf801);
     pixel16(16 + (2 * 6 + 4) * 2, 0x003f);
     CHECK(dc_vi_convert(&bad, memory, sizeof(memory), &frame) == DC_VI_READY);
-    CHECK(frame.pixels[0] == 0xf800 && frame.pixels[512 + 3] == 0x001f);
+    CHECK(frame.pixels[0] == 0xf800 && frame.pixels[DC_VI_TEXTURE_WIDTH + 3] == 0x001f);
 
     /* RGBA8888 has a different byte layout; alpha is not part of scanout. */
     bad = state; bad.status = 3; bad.stride = 4;
@@ -88,8 +88,8 @@ int main(void)
     for (x = 0; x < 640 * 480; ++x) CHECK(output[x] == 0);
     CHECK(dc_video_pvr_upload_bytes(0, 240) == 0);
     CHECK(dc_video_pvr_upload_bytes(320, 0) == 0);
-    CHECK(dc_video_pvr_upload_bytes(321, 240) == 0);
-    CHECK(dc_video_pvr_upload_bytes(320, 241) == 0);
+    CHECK(dc_video_pvr_upload_bytes(DC_VI_MAX_WIDTH+1, 240) == 0);
+    CHECK(dc_video_pvr_upload_bytes(320, DC_VI_MAX_HEIGHT+1) == 0);
     CHECK(dc_video_pvr_upload_bytes(320, 240) == 240u * DC_VI_TEXTURE_WIDTH * 2u);
     CHECK(dc_video_pvr_upload_bytes(4, 2) == 2u * DC_VI_TEXTURE_WIDTH * 2u);
     CHECK(dc_video_pvr_upload_bytes(320, 240) < DC_VI_TEXTURE_BYTES);
@@ -103,7 +103,9 @@ int main(void)
     CHECK(!frame.width && !frame.height); } while (0)
     RESULT(status, 0, DC_VI_BLANK);
     RESULT(status, 1, DC_VI_UNSUPPORTED);
+#ifndef DC_VI_HIGHRES
     RESULT(status, 2 | 0x40, DC_VI_UNSUPPORTED);
+#endif
     RESULT(stride, 0, DC_VI_BLANK);
     RESULT(stride, 3, DC_VI_INVALID);
     RESULT(x_scale, 0, DC_VI_BLANK);
@@ -113,7 +115,11 @@ int main(void)
     RESULT(x_scale, 512 | (1u << 16), DC_VI_UNSUPPORTED);
     RESULT(y_scale, 1024 | (1u << 16), DC_VI_UNSUPPORTED);
     RESULT(h_start, 1023, DC_VI_UNSUPPORTED);
+#ifdef DC_VI_HIGHRES
+    RESULT(h_start, 800, DC_VI_INVALID);
+#else
     RESULT(h_start, 800, DC_VI_UNSUPPORTED);
+#endif
     RESULT(origin, 17, DC_VI_INVALID);
     RESULT(origin, 0xfffffc, DC_VI_INVALID);
     CHECK(dc_vi_convert(&state, NULL, sizeof(memory), &frame) == DC_VI_INVALID);

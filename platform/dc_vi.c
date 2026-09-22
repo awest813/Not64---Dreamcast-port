@@ -9,6 +9,68 @@ static uint16_t vi_rgba16_to_rgb565(uint32_t n64)
                       ((n64 >> 1) & 31u));
 }
 
+#ifdef DC_VI_HIGHRES
+static uint16_t vi_read(const uint8_t *mem, uint32_t address, unsigned bytes)
+{
+    if (bytes == 2) {
+        uint16_t v; memcpy(&v, mem + (address ^ 2u), 2);
+        return vi_rgba16_to_rgb565(v);
+    }
+    uint32_t v; memcpy(&v, mem + address, 4);
+    return ((v >> 16) & 0xf800u) | ((v >> 13) & 0x7e0u) | ((v >> 11) & 31u);
+}
+
+/* Experimental field-weave preview. Each VI updates only its own field;
+ * fractional vertical offsets interpolate adjacent source rows. This is not
+ * the N64 coverage/divot/dither filter pipeline. */
+static dc_vi_result vi_interlaced(const dc_vi_state *s, const uint8_t *mem,
+                                size_t size, dc_vi_frame *frame)
+{
+    unsigned hx0=(s->h_start>>16)&1023, hx1=s->h_start&1023;
+    unsigned vy0=(s->v_start>>16)&1023, vy1=s->v_start&1023;
+    unsigned xs=s->x_scale&4095, ys=s->y_scale&4095;
+    unsigned xo=(s->x_scale>>16)&4095, yo=(s->y_scale>>16)&4095;
+    unsigned stride=s->stride&4095, origin=s->origin&0xffffff;
+    unsigned bytes=(s->status&3)==2?2:4, width, lines, height;
+    dc_vi_result error=DC_VI_UNSUPPORTED;
+    if (!stride || !xs || !ys || hx1<=hx0 || vy1<=vy0) { error=DC_VI_BLANK; goto fail; }
+    if ((xo&1023) || (((hx1-hx0)*xs)&1023) || ((vy1-vy0)&1)) goto fail;
+    width=((hx1-hx0)*xs)>>10; lines=(vy1-vy0)/2; height=lines*2;
+    if (!width || width>DC_VI_MAX_WIDTH || height>DC_VI_MAX_HEIGHT) goto fail;
+    xo>>=10;
+    if (origin&(bytes-1) || xo+width>stride) { error=DC_VI_INVALID; goto fail; }
+    {
+        unsigned last=yo+(lines-1)*ys;
+        unsigned row=(last>>10)+((last&1023)!=0);
+        uint64_t end=(uint64_t)origin+((uint64_t)row*stride+xo+width)*bytes;
+        if (end>size) { error=DC_VI_INVALID; goto fail; }
+    }
+    if (!frame->interlaced || frame->width!=width || frame->height!=height)
+        memset(frame->pixels,0,sizeof(frame->pixels));
+    for (unsigned y=0; y<lines; ++y) {
+        unsigned source=yo+y*ys, fraction=source&1023;
+        unsigned address=origin+((source>>10)*stride+xo)*bytes;
+        uint16_t *dst=frame->pixels+(y*2+(s->field&1))*DC_VI_TEXTURE_WIDTH;
+        for (unsigned x=0; x<width; ++x) {
+            unsigned a=vi_read(mem,address+x*bytes,bytes);
+            if (fraction) {
+                unsigned b=vi_read(mem,address+(stride+x)*bytes,bytes);
+                unsigned r=(((a>>11)*(1024-fraction)+(b>>11)*fraction)+512)>>10;
+                unsigned g=((((a>>5)&63)*(1024-fraction)+((b>>5)&63)*fraction)+512)>>10;
+                unsigned blue=(((a&31)*(1024-fraction)+(b&31)*fraction)+512)>>10;
+                a=(r<<11)|(g<<5)|blue;
+            }
+            dst[x]=a;
+        }
+    }
+    frame->width=width; frame->height=height; frame->interlaced=1;
+    return DC_VI_READY;
+fail:
+    frame->width=frame->height=frame->interlaced=0;
+    return error;
+}
+#endif
+
 dc_vi_result dc_vi_convert(const dc_vi_state *s, const uint8_t *mem,
                           size_t size, dc_vi_frame *frame)
 {
@@ -16,7 +78,13 @@ dc_vi_result dc_vi_convert(const dc_vi_state *s, const uint8_t *mem,
     uint32_t width, height, bytes, x, y;
     uint64_t end;
     if (!frame) return DC_VI_INVALID;
+#ifdef DC_VI_HIGHRES
+    if (s && mem && !(size&3u) && (s->status&0x40) &&
+        ((s->status&3)==2 || (s->status&3)==3))
+        return vi_interlaced(s,mem,size,frame);
+#endif
     frame->width = frame->height = 0;
+    frame->interlaced = 0;
     if (!s || !mem || (size & 3u)) return DC_VI_INVALID;
     type = s->status & 3u;
     if (!type) return DC_VI_BLANK;
