@@ -8,6 +8,13 @@ are KallistiOS-only.
 
 ## Latest: Stadium 2 gameplay — 2026-09-21
 
+2026-09-22: binary-alpha fast textures now use ARGB1555; fractional combined
+alpha stays ARGB4444, opaque stays RGB565. Expanded synthetic replay measures
+channel error 124 -> 74, maximum 2 -> 1; transparent/partial-alpha probes pass.
+Exact fast texture mismatches remain 30/66 (was 42), so keep its negative-control
+status and strict software fallback. See `tools/dc/STADIUM2.md` for evidence and
+next rounding investigation. Both local fast images were refreshed.
+
 Fast SH4/Flycast reaches the battle command menu via genuine checkpoints
 and executes Arcanine's Flame Wheel after its own recorded C-up input.
 See [Stadium 2 notes](tools/dc/STADIUM2.md) for build flags, validation logs,

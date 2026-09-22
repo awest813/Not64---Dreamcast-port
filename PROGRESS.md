@@ -1,6 +1,15 @@
-# Progress checkpoint — 2026-09-21
+# Progress checkpoint — 2026-09-22
 
 ## Current milestone: Stadium 2 gameplay
+
+Latest graphics pass: the fast renderer now stores binary-alpha cutouts in
+ARGB1555 instead of ARGB4444, retaining five RGB bits at the same VRAM cost.
+Classification uses the final combined alpha; partially transparent textures
+keep ARGB4444. A ROM-free SH4/Flycast comparison reduces total channel error
+from 124 to 74 and worst channel error from two five-bit levels to one.
+Transparent and partial-alpha probes pass. Exact framebuffer mismatches remain
+(42 -> 30 of 66 draws), so this is a measured fast-mode improvement, not strict
+texture qualification. See the Stadium 2 notes for the remaining work.
 
 The fast Dreamcast build reaches the live battle command menu in Flycast 2.6:
 Arcanine versus Nelson's Caterpie, Poké Cup / Poké Ball / Battle 1. The fast

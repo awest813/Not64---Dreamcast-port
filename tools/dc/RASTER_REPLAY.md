@@ -67,6 +67,7 @@ the checker must return nonzero. A successful build is not a successful replay.
 | Two-cycle producer, one-cycle consumer | Matches the software combiner's defined prior-state behavior on cold and hot cache candidates |
 | Opaque software texture rectangles | Analytic RGB/alpha ramp plus 96 reference comparisons of framebuffer, depth, boundary words and exact floating-point combiner/blender state |
 | Decoded sample cache | 64 before/after mutation cases across RGBA, CI, IA and I formats, palette/TMEM/tile changes, collisions, epoch wrap and a partially valid upload; fractional and large coordinate boundaries |
+| Cutout color precision | All 32 grayscale levels, cold/hot cache draws, transparent pixels and post-combiner fractional alpha; fast mode must complete 66 GPU scenes, exact framebuffer expectations remain mandatory |
 
 The first three have analytic expected framebuffer values. The last establishes
 software parity; it does not independently establish the architectural meaning

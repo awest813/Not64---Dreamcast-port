@@ -190,6 +190,63 @@ static void mixed_transition(GFX_INFO info) {
     failures+=(errors!=0);
     require_gpu("mixed-transition",2);
 }
+static void texture_precision(GFX_INFO info) {
+    RDP r(info);
+    r.setCImg(0,2,320,ram+target);
+    r.setScissor(0,0,320,240,0);
+    r.setOtherMode_h(20,0);
+    // Standard source-alpha blending over black, with point sampling.
+    r.setOtherMode_l(3,((1u<<22)|(1u<<14))>>3);
+    r.setTImg(0,2,8,ram+0x100);
+    r.setTile(0,2,2,0,0,0,2,0,0,2,0,0);
+    r.setTileSize(0,0,7,7,0);
+#ifdef DC_REPLAY_KOS
+    vid_set_dithering(false);
+#endif
+    unsigned errors=0,channelError=0,maxChannelError=0,transparentErrors=0,fractionalErrors=0;
+    // All 32 channel values must survive a cutout's opaque region. Check cold
+    // and hot cache draws, and a transparent region against the black backdrop.
+    // A final RGBA16 source with primitive alpha checks post-combiner format
+    // selection: alpha 136 must remain translucent rather than become binary.
+    for(unsigned n=0;n<33;n++) {
+        unsigned value=n<32?n:31;
+        unsigned texel=(value<<11)|(value<<6)|(value<<1)|1;
+        for(unsigned i=0;i<64;i++)put16(0x100+i*2,(n<32 && i<16)?texel&~1u:texel);
+        r.loadTile(0,0,0,7,7);
+        r.setPrimColor(136,0,0);
+        r.setCombineMode((15u<<5)|31u,
+            (15u<<24)|(7u<<21)|(7u<<18)|(1u<<6)|(7u<<3)|(n<32?1u:3u));
+        for(unsigned pass=0;pass<2;pass++) {
+            for(unsigned i=0;i<320*240;i++)put16(target+i*2,1);
+            r.texRect(0,0,0,8,8,0,0,1,1);
+            flush();
+            unsigned channel=n<32?value:17;
+            unsigned expected=(channel<<11)|(channel<<6)|(channel<<1)|1;
+            unsigned actual=get16(target+2*(4*320+4));
+            unsigned transparent=get16(target+2*4);
+            if(n<32) {
+                transparentErrors+=(transparent!=1);
+                for(unsigned shift=1;shift<=11;shift+=5) {
+                    unsigned got=(actual>>shift)&31;
+                    unsigned delta=got>channel?got-channel:channel-got;
+                    channelError+=delta;
+                    if(delta>maxChannelError)maxChannelError=delta;
+                }
+            } else fractionalErrors+=(actual!=expected);
+            bool bad=actual!=expected || (n<32 && transparent!=1);
+            if(bad && errors<4)std::printf("REPLAY texture-precision n=%u pass=%u expected=%04x actual=%04x transparent=%04x\n",n,pass,expected,actual,transparent);
+            errors+=bad;
+        }
+    }
+#if defined(DC_RASTER_PVR) && !defined(DC_RASTER_STRICT)
+    require_gpu("texture-precision",66);
+    vid_set_dithering(true);
+#endif
+    std::printf("REPLAY texture-precision mismatches=%u %s\n",errors,errors?"FAIL":"PASS");
+    std::printf("REPLAY texture-quality channel-error=%u max-channel-error=%u transparent-errors=%u fractional-errors=%u\n",
+        channelError,maxChannelError,transparentErrors,fractionalErrors);
+    failures+=(errors!=0);
+}
 static unsigned checksum(unsigned address,unsigned words) {
     unsigned hash=2166136261u;
     for(unsigned i=0;i<words;i++)hash=(hash^get16(address+i*2))*16777619u;
@@ -355,6 +412,7 @@ int main() {
     opaque_ramp(info);
     mixed_transition(info);
     combined_transition(info);
+    texture_precision(info);
     texture_spans(info);
     texture_cache(info);
     std::printf("REPLAY RESULT failures=%u stop=%d %s\n",failures,stop,

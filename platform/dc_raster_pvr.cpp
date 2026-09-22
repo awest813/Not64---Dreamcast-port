@@ -299,7 +299,7 @@ int PVRRaster::texture(RDP *r,int tile,Color32 shade,int alphaThreshold) {
     auto memory=pvr_mem_malloc(bytes);if(!memory){++rejected[7];return -1;}
     CC savedCombiner=cc;
     cc.setShade(shade);
-    bool opaque=true;
+    bool opaque=true,binaryAlpha=true;
     float xs=shiftScale(d.shifts),ys=shiftScale(d.shiftt);
     for(unsigned y=0;y<height;y++)for(unsigned x=0;x<width;x++) {
         float s=(x+d.uls)/xs,t=(y+d.ult)/ys;
@@ -308,19 +308,26 @@ int PVRRaster::texture(RDP *r,int tile,Color32 shade,int alphaThreshold) {
         else c=cc.combine1(a);
         c.clamp();if(r->bl->alpha_cvg_sel && !r->bl->cvg_x_alpha)c.setAlpha(255);
         if(alphaThreshold>=0 && c.getAlpha()<alphaThreshold)c.setAlpha(0);
-        uint32_t v=(uint32_t)(int)c;colors[y*width+x]=v;if((v&255)!=255)opaque=false;
+        uint32_t v=(uint32_t)(int)c;colors[y*width+x]=v;
+        unsigned alpha=v&255;
+        if(alpha!=255)opaque=false;
+        if(alpha!=0 && alpha!=255)binaryAlpha=false;
     }
     // Cache misses must not leave the combiner at the last baked texel.
     cc=savedCombiner;
     for(unsigned i=0;i<width*height;i++) {
         uint32_t c=colors[i];
+        // Cutouts retain all five N64 RGB bits without increasing VRAM use.
+        // Classify the baked alpha, since the combiner can make even RGBA16
+        // sources translucent. Fractional alpha still needs ARGB4444.
         pixels[i]=opaque ? ((c>>16)&0xf800)|((c>>13)&0x7e0)|((c>>11)&31) :
+            binaryAlpha ? ((c<<8)&0x8000)|((c>>17)&0x7c00)|((c>>14)&0x3e0)|((c>>11)&31) :
             ((c<<8)&0xf000)|((c>>20)&0xf00)|((c>>16)&0xf0)|((c>>12)&15);
     }
     pvr_txr_load(pixels,memory,bytes);
     Texture &entry=cache[slot];entry.key=key;entry.hash=hash;entry.age=++clockAge;
     entry.memory=memory;entry.width=width;entry.height=height;entry.bytes=bytes;
-    entry.format=opaque?PVR_TXRFMT_RGB565:PVR_TXRFMT_ARGB4444;
+    entry.format=opaque?PVR_TXRFMT_RGB565:binaryAlpha?PVR_TXRFMT_ARGB1555:PVR_TXRFMT_ARGB4444;
     usedBytes+=bytes;++misses;lastSlot=slot;return slot;
 }
 

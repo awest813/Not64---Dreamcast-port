@@ -111,6 +111,42 @@ input continues through the same mapping.
 
 ## Validation commands
 
+### Cutout color precision — 2026-09-22
+
+Fast PVR textures with only zero/full alpha now use ARGB1555, preserving five
+bits per RGB channel instead of four. Fully opaque textures still use RGB565;
+textures with any fractional **post-combiner** alpha retain ARGB4444. The cache
+key and two-byte-per-texel allocation are unchanged. Strict texture fallback is
+unchanged.
+
+The ROM-free `texture-precision` replay exercises all 32 grayscale levels,
+transparent regions, cold/hot cache draws, and a white RGBA16 texture made
+partially transparent by primitive alpha. Dithering is disabled for this
+precision fixture. In the same Flycast 2.6 configuration, each fast run completes
+66 GPU scenes:
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Exact draw mismatches (66 draws) | 42 | 30 |
+| Total absolute five-bit RGB channel error | 124 | 74 |
+| Largest channel error | 2 | 1 |
+| Transparent-region errors | 0 | 0 |
+| Partial-alpha errors | 0 | 0 |
+
+The exact fast replay still fails: residual texture/readback rounding and the
+previous fill/state discrepancies remain. Its checker deliberately retains
+exact expectations. This is not a claim of corrected arena geometry, filtering
+accuracy, physical hardware behavior, or higher FPS. Next: isolate the remaining
+rounding error with an opaque texture ramp and imported-background probes before
+changing readback or sampling rules.
+
+Private evidence: `stadium-precision-baseline.log`, `stadium-precision-gpu.log`,
+`stadium-precision-host.log` and `stadium-precision-regression.log` under
+`build/dc/validation/`. The full high-resolution ARM32 suite and updated host
+replay pass. `stadium-precision-strict.log` passes the exact replay checker with
+GPU fill execution established; its textures use software fallback. The checker
+still rejects the fast log. Both local fast images are rebuilt with this change.
+
 Run the normal ARM32 `test` and `test-soft` targets, and repeat with
 `VIDEO_HIRES=1`. `test-hires` independently builds the high-resolution VI
 fixtures, including field preservation, fractional row access bounds,
