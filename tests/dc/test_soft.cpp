@@ -73,6 +73,29 @@ int main() {
         }
     }
 
+    // DXT=0 blocks are already arranged for TMEM's odd-row word swap.
+    // Normal block/tile uploads must sample identically to that layout.
+    for(unsigned width=8;width<=16;width*=2) {
+        TX pre(info), block(info), tiled(info);
+        for(unsigned i=0;i<width*4;i++) {
+            byte(0x900+i,i*3);
+            byte(0x940+(i^(((i/width)&1)?4:0)),i*3);
+        }
+        TX *textures[]={&pre,&block,&tiled};
+        for(unsigned i=0;i<3;i++) {
+            textures[i]->setTImg(4,1,width,ram+(i==0?0x940:0x900));
+            textures[i]->setTile(4,1,width/8,0,0,0,2,0,0,2,0,0);
+            textures[i]->setTileSize(0,0,width-1,3,0);
+        }
+        pre.loadBlock(0,0,0,width*4-1,0);
+        block.loadBlock(0,0,0,width*4-1,2048/(width/8));
+        tiled.loadTile(0,0,0,width-1,3);
+        for(auto txp:textures) for(int y=0;y<4;y++) for(int x=0;x<(int)width;x++) {
+            unsigned v=(y*width+x)*3;
+            CHECK((unsigned)(int)txp->getTexel(x,y,0,NULL)==v*0x01010101u);
+        }
+    }
+
     // One-cycle rendering uses the second mux cycle: texture times shade.
     CC combiner;
     combiner.setShade(Color32(128,255,0,255));
@@ -304,6 +327,24 @@ int main() {
         rect.fillRect(0,0,8,8);
         CHECK(half(0x28000+3*2)==1 && half(0x28000+4*2)==0);
         CHECK(half(0x28000+(8+3)*2)==1 && half(0x28000+16*2)==0);
+    }
+
+    // Copy-mode cutouts use source RGBA16 alpha even with blend alpha zero.
+    // Preserve the copied alpha bit for later framebuffer-as-texture reads.
+    {
+        BL copy(info);
+        copy.setCImg(0,2,4,ram+0x29000);
+        word(0x29000,0x07c107c1);
+        copy.setBlendColor(0);
+        copy.setAlphaCompare(1);
+        copy.copyModeDraw(0,0,Color32(255,0,0,0));
+        CHECK(half(0x29000)==0x07c1);
+        copy.copyModeDraw(1,0,Color32(255,0,0,255));
+        CHECK(half(0x29002)==0xf801);
+        copy.setAlphaCompare(2); // compare disabled, dither bit alone
+        copy.setBlendColor(0xffffffff);
+        copy.copyModeDraw(0,0,Color32(0,0,255,0));
+        CHECK(half(0x29000)==0x003e);
     }
 
     // Execute an actual F3DEX2 display list: 4x4 red fill and FullSync.

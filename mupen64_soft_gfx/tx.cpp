@@ -129,7 +129,13 @@ void TX::loadBlock(float uls, float ult, int tile, float lrs, int dxt)
 #ifdef DC_RASTER_PVR
    PVRRaster::readMemory(gfxInfo.RDRAM+src,bytes);
 #endif
-   for(unsigned i=0;i<bytes;i++) tmem[dst+i]=gfxInfo.RDRAM[(src+i)^S8];
+   // TMEM swaps the two 32-bit halves of each odd-row 64-bit word.
+   // DXT advances the row accumulator once per word. With DXT=0 the
+   // game supplies pre-swapped data (notably Stadium 2's HUD font).
+   for(unsigned i=0;i<bytes;i++) {
+       unsigned swap=bits<=16 && (((i/8)*(unsigned)dxt>>11)&1) ? 4 : 0;
+       tmem[(dst+i)^swap]=gfxInfo.RDRAM[(src+i)^S8];
+   }
 }
 void TX::loadTile(int tile, float uls, float ult, float lrs, float lrt)
 {
@@ -146,7 +152,8 @@ void TX::loadTile(int tile, float uls, float ult, float lrs, float lrt)
 #ifdef DC_RASTER_PVR
        PVRRaster::readMemory(gfxInfo.RDRAM+src,bytes);
 #endif
-       for(unsigned x=0;x<bytes;x++) tmem[dst+x]=gfxInfo.RDRAM[(src+x)^S8];
+       for(unsigned x=0;x<bytes;x++)
+           tmem[(dst+x)^((bits<=16 && (y&1))?4:0)]=gfxInfo.RDRAM[(src+x)^S8];
    }
 }
 void TX::loadTLUT(int tile, int count)
@@ -277,6 +284,7 @@ Color32 TX::sampleUncached(int tile, int s, int t)
    unsigned addr=d.tmem*8+t*d.line*8+(s*(4u<<d.size))/8;
    unsigned bytes=d.size==3?4:d.size==2?2:1;
    if(addr>4096-bytes) return Color32(0,0,0,0);
+   if(d.size<=2 && (t&1)) addr^=4;
    unsigned v=tmem[addr];
    if(d.size==0) v=(s&1)?v&15:v>>4;
    if(d.size==2) v=(v<<8)|tmem[addr+1];

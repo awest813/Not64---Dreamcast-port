@@ -28,6 +28,27 @@ checkpoints, captures and disc images remain under ignored `build/dc/`.
 - Optional controller replay feeds normal Maple mapping/PIF input. It changes
   controller input only; it does not patch game memory or skip game scenes.
 
+## Quick visual polish follow-up
+
+TMEM odd-row word swapping now honors LoadBlock's DXT accumulator and tile
+uploads for 4/8/16-bit textures. Stadium 2's DXT=0 HUD fonts are pre-swapped;
+reading those as linear rows scrambled alternate glyph rows. The same-frame
+host comparison now clearly reads level 50, Arcanine 164/164, Caterpie 116/116,
+and the L/R button prompts. GPU texture baking uses the corrected sampler too.
+
+RGBA16 copy mode also preserves the source alpha bit and uses it for enabled
+alpha comparison, independent of blend-alpha threshold. Dither selection alone
+does not enable comparison. This passes a targeted cutout/alpha test, but does
+not change the measured Stadium battle frame; do not claim it fixed this HUD.
+The behavior follows the [Angrylion copy rasterizer](https://github.com/ata4/angrylion-rdp-plus/blob/master/src/core/n64video/rdp/rasterizer.c).
+
+Multi-row fixtures compare pre-swapped DXT=0 blocks, normal DXT blocks and tile
+uploads for both one and two 64-bit words per row. Full high-resolution ARM32
+regressions pass (`stadium-polish-regression.log`); the fast KOS build passes
+(`stadium-polish-kos.log`). Private same-frame before/after images are
+`stadium2-host/polish-before.png` and `polish-after.png`. Missing move labels
+and broader effects/geometry accuracy remain outside this quick pass.
+
 ## Build and input replay
 
 ```sh

@@ -269,12 +269,15 @@ void BL::copyModeDraw(int x, int y, Color32 c)
 {
    if(!validPixel(cImg,x,y,2)) return;
    short *p = (short*)cImg;
-   if (alphaCompare && c.getAlpha() < blendColor.getAlpha()) return;
+   // RGBA16 copy uses the source alpha bit, not the blend-alpha threshold.
+   // Dither selection alone does not enable comparison.
+   unsigned alpha = c.getAlpha() >= 128 ? 1 : 0;
+   if ((alphaCompare & 1) && !alpha) return;
    int colorValue = (int)c;
    colorValue = 
      ((((colorValue >> 24)&0xFF)>>3)<<11) |
      ((((colorValue >> 16)&0xFF)>>3)<< 6) |
-     ((((colorValue >>  8)&0xFF)>>3)<< 1);
+     ((((colorValue >>  8)&0xFF)>>3)<< 1) | alpha;
    p[y*width+x^S16] = colorValue;
    //vi->debug_plot(x,y,colorValue);
 }

@@ -20,6 +20,12 @@ Private launcher: `build/dc/Play-Stadium2-Fast.cmd`; private cold-boot image:
 `build/dc/not64-stadium-fast.cdi`. No game assets are tracked. The earlier Zelda
 Downloads launcher remains unchanged. **Compatible 5 FPS is still unfinished.**
 
+Visual polish follow-up: fixed odd-row texture memory layout for pre-swapped
+HUD fonts. Level/HP digits and L/R prompts are now legible in a same-frame
+comparison. Also corrected RGBA16 copy alpha; no visible Stadium change is
+claimed for that separate fix. Full high-resolution regressions pass. See the
+Stadium 2 notes for evidence; missing move labels remain.
+
 ## Previous OOT performance checkpoint
 
 The exact software sampler improvements are implemented and validated. The measurements below are retained from the previous checkpoint.
