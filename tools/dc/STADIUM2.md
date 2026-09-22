@@ -46,8 +46,35 @@ Multi-row fixtures compare pre-swapped DXT=0 blocks, normal DXT blocks and tile
 uploads for both one and two 64-bit words per row. Full high-resolution ARM32
 regressions pass (`stadium-polish-regression.log`); the fast KOS build passes
 (`stadium-polish-kos.log`). Private same-frame before/after images are
-`stadium2-host/polish-before.png` and `polish-after.png`. Missing move labels
-and broader effects/geometry accuracy remain outside this quick pass.
+`stadium2-host/polish-before.png` and `polish-after.png`. The move-label concern was subsequently resolved by checking the held-R
+controls below; broader effects/geometry accuracy still needs work.
+
+## Text-panel and rectangle follow-up — 2026-09-22
+
+Holding R reveals Flame Wheel, Extremespeed, Roar and Leer, with readable types
+and PP in the ARM32 software run. The [Stadium 2 manual](https://pkproject.net/juegos/manual/manual-N64-Pokemon-Stadium-2-EN.pdf)
+describes this held-R check view. The 120-frame run has zero invalid/unsupported
+VI frames and zero decoder failures (`stadium2-host/check-moves.log/.png`).
+
+Added optional recorded trigger pressures so the same UI state can be checked
+on the fast target without game-memory changes. Parser/mapping tests cover the
+legacy format, held R, dual-trigger C-up, exact event boundaries and malformed
+or out-of-range optional fields.
+
+Two-cycle fill rectangles now run both color-combiner/blender cycles instead
+of being dropped. The per-pixel second-cycle path preserves combined feedback;
+one-cycle fills keep their existing optimization. Tests check primitive-to-
+combined color, transparent rejection and all scissor edges. This is a renderer
+compatibility fix, not the cause of the move-panel behavior.
+
+Fast SH4/Flycast also confirms all four names, types and PP:
+`build/dc/validation/stadium-fast-move-text.png`. Two-cycle destination blending
+passes the additional known-pixel check in `stadium-text-blend-test.log`.
+
+Full high-resolution ARM32 regression: `stadium-text-regression.log`.
+Fast target build: `stadium-text-kos.log`. Private held-R target image:
+`not64-stadium-moves.cdi` (diagnostic, R released after 180 VI updates).
+The normal gameplay launcher retains an empty replay and player control.
 
 ## Build and input replay
 
@@ -75,7 +102,10 @@ These examples press A, then right. Button masks: A=4, B=2, Start=8,
 up=10, down=20, left=40, right=80; C-up=1000, C-down=2000,
 C-left=4000, C-right=8000 (hex). Axes are -128..127; positive Y
 is down. Durations are 1..600 VI updates, with at most 128 events. An empty
-file provides no synthetic input. Inputs are relative to the diagnostic
+file provides no synthetic input. Optional sixth/seventh fields are left/right trigger pressure (0..255). For
+example, `20 180 0 0 0 0 255` holds R through VI 199. Five-field files remain
+valid. Trigger inputs pass through normal R/Z and dual-trigger C-shift mapping.
+Inputs are relative to the diagnostic
 run's VI counter, including when a checkpoint is loaded. Real controller
 input continues through the same mapping.
 
@@ -124,9 +154,11 @@ in that directory launches it in the isolated Flycast installation. The
 separate battle/attack diagnostic images contain their recorded inputs.
 
 Dreamcast A/B/Start map to N64 A/B/Start. Both triggers plus the D-pad select
-N64 C-buttons; the analog stick navigates. Move labels and some text/effects
-remain visually incorrect, so this is a gameplay compatibility milestone,
-not a polished playable release. The first move can be selected with C-up.
+N64 C-buttons; the analog stick navigates. Press A for Battle, then hold the
+right trigger (N64 R) to show all four move names, types and PP. Release it to
+return to the arena view. The earlier claim that move labels were missing was
+incorrect: this is the game's intended held-R interface. The first move can be
+selected with C-up. Other effects/geometry still need accuracy work.
 
 AICA initializes (28805/32006 Hz observed across checkpoints), but sustained
 audio quality remains unqualified. No 5 FPS claim is made. Fast rendering still

@@ -24,7 +24,10 @@ Visual polish follow-up: fixed odd-row texture memory layout for pre-swapped
 HUD fonts. Level/HP digits and L/R prompts are now legible in a same-frame
 comparison. Also corrected RGBA16 copy alpha; no visible Stadium change is
 claimed for that separate fix. Full high-resolution regressions pass. See the
-Stadium 2 notes for evidence; missing move labels remain.
+Stadium 2 notes for evidence. The move labels are present: hold the right
+trigger (N64 R) after choosing Battle to display names, types and PP. The
+earlier missing-label diagnosis was incorrect. Added trigger replay coverage
+and two-cycle fill rectangle rendering; full high-resolution regressions pass.
 
 ## Previous OOT performance checkpoint
 

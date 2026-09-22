@@ -67,17 +67,18 @@ void RS::fillRect(float ux, float uy, float lx, float ly, RDP *rdp)
 	  for (int j=ulx; j<lrx; j+=2)
 	    rdp->bl->fillModeDraw(j,i);
      }
-   else if (rdp->cycleType == 0)
+   else if (rdp->cycleType == 0 || rdp->cycleType == 1)
      {
 	if(ulx>=lrx || uly>=lry) return;
 	// A fill has no varying texture or shade inputs. The one-cycle combiner
 	// leaves combined state unchanged, so its result is constant for the rect.
-	Color32 c = rdp->cc->combine1(0);
+	Color32 c = rdp->cycleType==0 ? rdp->cc->combine1(0) : Color32(0);
 	for (int i=uly; i<lry; i++)
 	  {
 	     for (int j=ulx; j<lrx; j++)
 	       {
-		  rdp->bl->cycle1ModeDraw(j,i,c);
+                  if (rdp->cycleType == 0) rdp->bl->cycle1ModeDraw(j,i,c);
+                  else rdp->bl->cycle2ModeDraw(j,i,rdp->cc->combine2(0,0));
 	       }
 	  }
      }

@@ -308,6 +308,33 @@ int main() {
         CHECK(half(0x23000)!=half(0x23002));
     }
 
+    // Two-cycle fills use both combiner cycles and respect alpha/scissor.
+    {
+        RDP rect(info);
+        rect.setCImg(0,2,4,ram+0x2a000);
+        rect.setScissor(1,1,3,3,0);
+        rect.setOtherMode_h(20,1);
+        rect.setOtherMode_l(0,1);
+        rect.setBlendColor(0x00000080);
+        rect.setCombineMode((31u<<15)|(7u<<12)|(7u<<9)|31u,
+            (15u<<28)|(15u<<24)|(7u<<21)|(7u<<18)|(3u<<15)|
+            (7u<<12)|(3u<<9)|(7u<<3)); // primitive -> combined
+        rect.setPrimColor(0xff000040,0,0);
+        rect.fillRect(0,0,4,4);
+        CHECK(half(0x2a000+10)==0);
+        rect.setPrimColor(0xff0000ff,0,0);
+        rect.fillRect(0,0,4,4);
+        for(unsigned y=0;y<4;y++) for(unsigned x=0;x<4;x++)
+            CHECK(half(0x2a000+(y*4+x)*2)==((x>=1 && x<3 && y>=1 && y<3)?0xf801:0));
+        rect.setOtherMode_l(0,0);
+        rect.setOtherMode_l(3,0x00104000>>3); // cycle 2: pixel alpha over memory
+        rect.setPrimColor(0xff000080,0,0);
+        for(unsigned i=0;i<8;i++) word(0x2a000+i*4,0x003f003f);
+        rect.fillRect(0,0,4,4);
+        CHECK(half(0x2a000+10)==0x801f); // half red over blue
+        CHECK(half(0x2a000)==0x003f);
+    }
+
     // Inclusive fill endpoints must not extend an exclusive scissor by a row.
     // Stadium 2 fills through y=240 with a y<240 scissor; the following
     // allocation contains its framebuffer descriptor, not drawable pixels.

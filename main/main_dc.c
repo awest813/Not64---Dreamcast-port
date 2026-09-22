@@ -22,6 +22,8 @@
 #include "../gc_input/controller.h"
 #include "../main/wii64config.h"
 #include "../main/rom.h"
+#include "timers.h"
+extern timers Timers;
 #include "../main/ROM-Cache.h"
 #include "../r4300/r4300.h"
 #include "../r4300/interupt.h"
@@ -374,6 +376,31 @@ static int smoke_map(void)
 			fail = 1;
 		}
 	}
+
+    /* Recorded triggers must use the same R and C-shift mapping as a pad. */
+    {
+        const char *path="build/dc/input-replay-test.txt";
+        const char *cases[]={"10 4 4 0 0\n", "10 4 0 0 0 0 255\n",
+            "10 4 10 0 0 255 255\n", "10 4 0 0 0 0\n",
+            "10 4 0 0 0 0 256\n", "10 4 0 0 0 garbage\n",
+            "10 4 0 0 0 0 255 extra\n"};
+        float savedVI=Timers.vis;
+        controller_DC_host_set(0,0,0,0);
+        controller_DC_host_set_triggers(0,0,0);
+        for(unsigned n=0;n<sizeof(cases)/sizeof(*cases);n++) {
+            FILE *fp=fopen(path,"w");
+            if(!fp) { fail=1; break; }
+            fputs(cases[n],fp); fclose(fp);
+            if(controller_DC_load_input_replay(path)!=(n<3)) fail=1;
+            for(unsigned vi=9;vi<=14;vi++) {
+                BUTTONS k; Timers.vis=vi; getKeys(0,&k);
+                int active=n<3 && vi>=10 && vi<14;
+                if(k.A_BUTTON!=(active && n==0) || k.R_TRIG!=(active && n==1) ||
+                   k.U_CBUTTON!=(active && n==2) || k.Z_TRIG || k.U_DPAD) fail=1;
+            }
+        }
+        remove(path); controller_DC_load_input_replay(path); Timers.vis=savedVI;
+    }
 
 	/* Leave pad 0 as the other smokes expect to find it. */
 	controller_DC_host_set_triggers(0, 0, 0);

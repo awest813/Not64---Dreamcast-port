@@ -9,19 +9,22 @@
 extern timers Timers;
 /* Optional deterministic diagnostic input. All inputs still pass through the
  * normal Maple mapping and PIF polling; no game memory is patched. */
-static struct { unsigned vi, duration, buttons; int x, y, reported; } replay[128];
+static struct { unsigned vi, duration, buttons; int x, y, lt, rt, reported; } replay[128];
 static unsigned replay_count;
 int controller_DC_load_input_replay(const char *path) {
     FILE *file=fopen(path,"r"); char line[160]; unsigned count=0;
     replay_count=0;
     if (!file) return 0;
     while (fgets(line,sizeof(line),file)) {
-        unsigned vi,duration,buttons; int x,y; char extra;
+        unsigned vi,duration,buttons; int x,y,lt=0,rt=0,used=0; char extra;
         if (line[0]=='#' || line[0]=='\n' || line[0]=='\r') continue;
-        if (count==128 || sscanf(line,"%u %u %x %d %d %c",&vi,&duration,&buttons,&x,&y,&extra)!=5 ||
+        int fields=sscanf(line,"%u %u %x %d %d %n",&vi,&duration,&buttons,&x,&y,&used);
+        if (count==128 || fields!=5 ||
+            (line[used] && sscanf(line+used,"%d %d %c",&lt,&rt,&extra)!=2) ||
             !duration || duration>600 || vi>0xffffffffu-duration || (buttons&~0xffffu) ||
-            x < -128 || x > 127 || y < -128 || y > 127) { fclose(file); return 0; }
+            x < -128 || x > 127 || y < -128 || y > 127 || lt<0 || lt>255 || rt<0 || rt>255) { fclose(file); return 0; }
         replay[count].vi=vi; replay[count].duration=duration; replay[count].buttons=buttons;
+        replay[count].lt=lt; replay[count].rt=rt;
         replay[count].x=x; replay[count].y=y; replay[count].reported=0; ++count;
     }
     if (ferror(file)) { fclose(file); return 0; }
@@ -303,6 +306,8 @@ static int _GetKeys(int Control, BUTTONS *Keys, controller_config_t *config)
 	if (Control == 0) for (unsigned i=0; i<replay_count; ++i) {
 		if (Timers.vis >= replay[i].vi && Timers.vis < replay[i].vi+replay[i].duration) {
 			b |= replay[i].buttons; jx=replay[i].x; jy=replay[i].y;
+            if(replay[i].lt>ltrig) ltrig=replay[i].lt;
+            if(replay[i].rt>rtrig) rtrig=replay[i].rt;
 			if (!replay[i].reported) {
 				printf("Input replay: VI=%.0f buttons=%04x stick=%d,%d\n",Timers.vis,replay[i].buttons,jx,jy);
 				replay[i].reported=1;
