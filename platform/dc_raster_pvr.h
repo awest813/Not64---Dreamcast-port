@@ -8,7 +8,7 @@ class RDP;
 class PVRRaster {
     static bool eligible(RDP *rdp, bool &blend, bool alphaTestBaked=false);
     static int texture(RDP *rdp, int tile, Color32 shade, int alphaThreshold=-1);
-    static bool begin(RDP *rdp, bool preserve=true);
+    static bool begin(RDP *rdp, bool preserve=true, bool exactFill=false);
 public:
     // Completed RTT scenes, useful for verifying that a replay exercised GPU
     // work rather than passing entirely through the software fallback.

@@ -1,6 +1,15 @@
-# Progress checkpoint — 2026-09-22
+# Progress checkpoint — 2026-09-24
 
 ## Current milestone: Stadium 2 gameplay
+
+Video follow-up: ordinary opaque one-cycle fills in fast mode now share the
+strict renderer's exact color and written-pixel handling. Three previously
+failing fast compatibility fixtures now pass. Sparse fills avoid full-frame
+imports and read back only touched pixels; mode transitions explicitly complete
+the previous batch. See [video compatibility and frame costs](tools/dc/VIDEO_COMPAT_FRAMES.md).
+Paired 60-frame battle runs both measure about 1.09 FPS; no speed gain is claimed
+for this scene. Software rasterization still accounts for roughly 73% of its
+measured frame time. Both local fast images are rebuilt.
 
 Latest graphics pass: the fast renderer now stores binary-alpha cutouts in
 ARGB1555 instead of ARGB4444, retaining five RGB bits at the same VRAM cost.

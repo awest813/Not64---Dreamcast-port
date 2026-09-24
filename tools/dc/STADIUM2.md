@@ -111,6 +111,11 @@ input continues through the same mapping.
 
 ## Validation commands
 
+2026-09-24: fast one-cycle opaque fills now use exact color/masked readback and
+avoid framebuffer imports. Three formerly failing fill fixtures pass; strict
+and host suites pass. The paired battle checkpoint remains about 1.09 FPS.
+See [video compatibility and frame costs](VIDEO_COMPAT_FRAMES.md).
+
 ### Cutout color precision — 2026-09-22
 
 Fast PVR textures with only zero/full alpha now use ARGB1555, preserving five

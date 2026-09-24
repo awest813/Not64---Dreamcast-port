@@ -79,14 +79,15 @@ static void partial_fill(GFX_INFO info) {
     prim(r);
     for(unsigned y=0;y<240;y++)for(unsigned x=0;x<320;x++)
         put16(target+2*(y*320+x),initial(x,y));
-    // Two disjoint GPU candidates: preserve the gap, not just the outer bounds.
+    // Disjoint GPU candidates: preserve gaps and cover the final mask/row.
     r.fillRect(4,5,12,9);
     r.fillRect(20,12,24,15);
+    r.fillRect(318,238,320,240);
     flush();
     unsigned rgb=0,alpha=0,first=~0u;
     for(unsigned y=0;y<240;y++)for(unsigned x=0;x<320;x++) {
         bool covered=(x>=4 && x<12 && y>=5 && y<9) ||
-                     (x>=20 && x<24 && y>=12 && y<15);
+                     (x>=20 && x<24 && y>=12 && y<15) || (x>=318 && y>=238);
         unsigned expected=covered?0xf801:initial(x,y);
         unsigned actual=get16(target+2*(y*320+x));
         if((actual^expected)&0xfffe)++rgb;
@@ -189,6 +190,49 @@ static void mixed_transition(GFX_INFO info) {
     std::printf("REPLAY mixed-transition mismatches=%u %s\n",errors,errors?"FAIL":"PASS");
     failures+=(errors!=0);
     require_gpu("mixed-transition",2);
+}
+static void fill_texture_transition(GFX_INFO info) {
+    RDP r(info);
+    r.setCImg(0,2,320,ram+target);
+    r.setScissor(0,0,320,240,0);
+    for(unsigned i=0;i<320*240;i++)put16(target+i*2,1);
+    prim(r);
+    r.fillRect(0,0,4,4);
+    for(unsigned i=0;i<64;i++)put16(0x100+i*2,0xffff);
+    r.setTImg(0,2,8,ram+0x100);
+    r.setTile(0,2,2,0,0,0,2,0,0,2,0,0);
+    r.setTileSize(0,0,7,7,0);
+    r.loadTile(0,0,0,7,7);
+    r.setCombineMode((15u<<5)|31u,
+        (15u<<24)|(7u<<21)|(7u<<18)|(1u<<6)|(7u<<3)|1u);
+    r.texRect(0,8,0,16,8,0,0,1,1);
+    prim(r);
+    r.fillRect(20,0,24,4);
+    flush();
+    unsigned errors=0;
+    for(unsigned y=0;y<240;y++)for(unsigned x=0;x<320;x++) {
+        unsigned expected=1;
+        if(y<4 && (x<4 || (x>=20 && x<24)))expected=0xf801;
+        if(y<8 && x>=8 && x<16)expected=0xffff;
+        errors+=(get16(target+2*(y*320+x))!=expected);
+    }
+    // A pending sparse batch cannot imply alpha=1 in an untouched region.
+    // Zero-alpha blending must still apply the software destination-alpha rule.
+    for(unsigned i=0;i<320*240;i++)put16(target+i*2,0);
+    prim(r);
+    r.fillRect(0,0,4,4);
+    r.setOtherMode_l(3,((1u<<22)|(1u<<14))>>3);
+    r.setPrimColor(0,0,0);
+    r.fillRect(20,0,24,4);
+    flush();
+    errors+=(get16(target)!=0xf801 || get16(target+2*20)!=1);
+    std::printf("REPLAY fill-texture-transition mismatches=%u %s\n",errors,errors?"FAIL":"PASS");
+    failures+=(errors!=0);
+#if defined(DC_RASTER_PVR) && !defined(DC_RASTER_STRICT)
+    require_gpu("fill-texture-transition",5);
+#else
+    require_gpu("fill-texture-transition",3);
+#endif
 }
 static void texture_precision(GFX_INFO info) {
     RDP r(info);
@@ -411,6 +455,7 @@ int main() {
     partial_fill(info);
     opaque_ramp(info);
     mixed_transition(info);
+    fill_texture_transition(info);
     combined_transition(info);
     texture_precision(info);
     texture_spans(info);

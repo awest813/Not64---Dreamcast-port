@@ -6,7 +6,15 @@ Native `make -f Makefile.dc HOST=1` is rejected at Makefile parse time on LP64
 adds `test-soft` to `test`. `GAME_DISC=1` requires `GFX=soft`. `VIDEO=` / `DEMO=`
 are KallistiOS-only.
 
-## Latest: Stadium 2 gameplay — 2026-09-21
+## Latest: Stadium 2 gameplay — 2026-09-24
+
+Fast mode now shares strict's qualified opaque one-cycle fills. Exact batches
+skip framebuffer import and use sparse masked readback; transitions to/from
+general texture batches flush explicitly. Fast passes the previously failing
+fill-preservation, color-ramp and software/GPU transition fixtures. New
+fill/texture/transparent-fill coverage passes too. Strict and the full highres
+host suite pass. General fast texture/state tests still fail intentionally.
+See `tools/dc/VIDEO_COMPAT_FRAMES.md` for evidence and frame-cost measurements.
 
 2026-09-22: binary-alpha fast textures now use ARGB1555; fractional combined
 alpha stays ARGB4444, opaque stays RGB565. Expanded synthetic replay measures

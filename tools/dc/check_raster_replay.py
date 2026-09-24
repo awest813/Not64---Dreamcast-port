@@ -11,7 +11,7 @@ parser.add_argument("--software-only", action="store_true", help="require the ge
 parser.add_argument("--reference", type=Path, help="compare texture cases with the unoptimized software replay")
 args = parser.parse_args()
 lines = args.log.read_text(encoding="utf-8-sig").splitlines()
-required = ["partial-fill", "opaque-ramp", "mixed-transition", "combined-cold", "combined-hot", "texture-precision", "texture-spans", "texture-cache"]
+required = ["partial-fill", "opaque-ramp", "mixed-transition", "fill-texture-transition", "combined-cold", "combined-hot", "texture-precision", "texture-spans", "texture-cache"]
 errors = []
 backends = [line for line in lines if line.startswith("REPLAY backend=")]
 if len(backends)!=1 or backends[0] not in ["REPLAY backend="+name for name in
@@ -53,6 +53,9 @@ if args.gpu:
     gpu_fixtures = [("partial-fill", 1), ("opaque-ramp", 2), ("mixed-transition", 2)]
     if backends == ["REPLAY backend=kos-pvr-fast"]:
         gpu_fixtures.append(("texture-precision", 66))
+        gpu_fixtures.append(("fill-texture-transition", 5))
+    else:
+        gpu_fixtures.append(("fill-texture-transition", 3))
     for name, minimum in gpu_fixtures:
         scenes = [re.fullmatch(rf"REPLAY {name} completed-scenes=(\d+)", line) for line in lines]
         scenes = [int(match[1]) for match in scenes if match]
