@@ -16,8 +16,10 @@ static const char *const labels[] = {"Continue game","Restart game","Return to g
 static int cursor, top, action, pending, sub_screen, connected;
 static dc_ui_input input;
 static char status[128];
+static char detail[192];
 static void refresh_status(void) {
-    snprintf(status,sizeof(status),"Slot %u: %s",savestates_get_slot(),savestates_exists(SAVESTATE)?"saved state available":"empty");
+    detail[0]=0;
+    snprintf(status,sizeof(status),"Slot %u: %s",savestates_get_slot(),savestates_exists(SAVESTATE)?"saved file present":"no saved file");
 }
 void dc_overlay_enter(void) {
     cursor=top=0; pending=-1; sub_screen=0; connected=1;
@@ -26,25 +28,32 @@ void dc_overlay_enter(void) {
 }
 static void state_operation(int operation) {
     int save=operation==OV_SAVE;
-    if (!save && !savestates_exists(LOADSTATE)) {
-        snprintf(status,sizeof(status),"Slot %u is empty. Choose another slot.",savestates_get_slot());
-        return;
-    }
+    detail[0]=0;
+    /* Let the reader report missing, damaged and incompatible files distinctly. */
     dc_ui_begin(save?"Saving state":"Loading state","Please wait for the storage operation to finish.");
     dc_ui_text(7,DC_UI_TEXT,save?"Writing to SD...":"Reading and checking the saved state...");
     dc_ui_finish("Keep the SD device connected.","");
     savestates_job=save?SAVESTATE:LOADSTATE;
     if(save)savestates_save(); else savestates_load();
     if(savestates_ok())snprintf(status,sizeof(status),"Slot %u %s.",savestates_get_slot(),save?"saved":"restored");
-    else snprintf(status,sizeof(status),"%s failed: %s",save?"Save":"Load",savestates_error());
-    dc_log(DC_LOG_INFO,"%s",status);
+    else {
+        const char *reason=savestates_error();
+        snprintf(status,sizeof(status),"Slot %u: %s failed.",savestates_get_slot(),save?"save":"load");
+        if(!strcmp(reason,"bad dump"))reason="Unrecognized or incompatible saved state.";
+        else if(!strcmp(reason,"wrong ROM"))reason="This state belongs to a different game.";
+        else if(!strcmp(reason,"truncated"))reason="The saved state is incomplete or damaged.";
+        else if(!strcmp(reason,"missing"))reason="The state could not be opened. Check the SD card.";
+        snprintf(detail,sizeof(detail),"%s %s",*reason?reason:"The storage operation did not finish.",
+            save?"Check SD space and try again.":"Check SD or choose another slot.");
+    }
+    dc_log(DC_LOG_INFO,"%s %s",status,detail);
     dc_ui_input_init(&input,1);
 }
 int dc_overlay_step(const BUTTONS *keys) {
     unsigned pressed;
     if(sub_screen) {
         int running=sub_screen==1?dc_settings_step(keys):dc_controls_step(keys);
-        if(!running) { dc_settings_save(NULL); sub_screen=0; dc_ui_input_init(&input,1); snprintf(status,sizeof(status),"%s",dc_settings_status()); }
+        if(!running) { dc_settings_save(NULL); sub_screen=0; detail[0]=0; dc_ui_input_init(&input,1); snprintf(status,sizeof(status),"%s",dc_settings_status()); }
         return 1;
     }
     pressed=dc_ui_input_step(&input,keys);
@@ -58,7 +67,8 @@ int dc_overlay_step(const BUTTONS *keys) {
                 dc_ui_begin("Saving game progress","Please keep the SD device connected.");
                 dc_ui_finish("Writing cartridge and Controller Pak saves...","");
                 if (dc_nativesave_save()) {
-                    snprintf(status,sizeof(status),"SD save failed. Check SD, or turn auto-save off to leave.");
+                    snprintf(status,sizeof(status),"Game progress could not be saved to SD.");
+                    snprintf(detail,sizeof(detail),"Check SD and retry. To leave without saving, turn Auto-save progress off in Settings.");
                     dc_ui_input_init(&input,1);
                 } else {
                     action=selection==OV_RESET?DC_OVERLAY_RESET:DC_OVERLAY_MENU; stop=1; return 0;
@@ -99,7 +109,7 @@ void dc_overlay_draw(void) {
     snprintf(subtitle,sizeof(subtitle),"%s   /   Slot %u",ROM_SETTINGS.goodname,savestates_get_slot());
     dc_ui_begin("Paused",subtitle);
     for(i=0;i<OV_COUNT;i++)dc_ui_row(DC_UI_FIRST_ROW+i,labels[i],i==OV_SAVE||i==OV_LOAD?"SD":"",cursor==i);
-    dc_ui_paragraph(14,2,DC_UI_MUTED,"State slots keep a snapshot of this game. Cartridge and Controller Pak saves are separate.");
+    dc_ui_paragraph(14,2,*detail?DC_UI_WARN:DC_UI_MUTED,*detail?detail:"State slots keep a snapshot of this game. Cartridge and Controller Pak saves are separate.");
     dc_ui_finish(connected?status:"Reconnect a controller to continue.","A select   Left/Right or triggers: slot   B continue");
 }
 int dc_overlay_run(void) {

@@ -43,6 +43,12 @@ static unsigned int decode_edges(const BUTTONS *k)
 	if (k->R_TRIG)       m |= DC_MENU_EDGE_R;
 	if (k->L_DPAD)       m |= DC_MENU_EDGE_LEFT;
 	if (k->R_DPAD)       m |= DC_MENU_EDGE_RIGHT;
+	if ((m & (DC_MENU_EDGE_LEFT | DC_MENU_EDGE_RIGHT)) ==
+	    (DC_MENU_EDGE_LEFT | DC_MENU_EDGE_RIGHT))
+		m &= ~(DC_MENU_EDGE_LEFT | DC_MENU_EDGE_RIGHT);
+	if ((m & (DC_MENU_EDGE_Z | DC_MENU_EDGE_R)) ==
+	    (DC_MENU_EDGE_Z | DC_MENU_EDGE_R))
+		m &= ~(DC_MENU_EDGE_Z | DC_MENU_EDGE_R);
 	return m;
 }
 
@@ -228,10 +234,14 @@ static int wanted_dir(const dc_menu_state *st, const BUTTONS *k)
 {
 	int y = (int)(signed char)k->Y_AXIS;
 	int on = (st->repeat_dir != 0) ? DC_MENU_STICK_OFF : DC_MENU_STICK_ON;
+	int up = k->U_DPAD || y >= on;
+	int down = k->D_DPAD || y <= -on;
 
-	if (k->U_DPAD || y >= on)
+	if (up == down)
+		return 0;
+	if (up)
 		return -1;
-	if (k->D_DPAD || y <= -on)
+	if (down)
 		return 1;
 	return 0;
 }
@@ -314,7 +324,7 @@ static void size_text(char *buf, size_t n, unsigned bytes) {
     else snprintf(buf,n,"%u B",bytes);
 }
 
-void dc_menu_draw(const dc_menu_state *st,const char *title) {
+static void draw_browser(const dc_menu_state *st,const char *title,const char *status) {
     char heading[96],size[20];
     int i,rows;
     if(!st)return;
@@ -323,7 +333,9 @@ void dc_menu_draw(const dc_menu_state *st,const char *title) {
     dc_ui_begin(heading,st->list?st->list->dir:"");
     if(!st->list || !st->list->count) {
         dc_ui_text(6,DC_UI_TEXT,st->list && st->list->error?"This source is unavailable.":"No games in this folder.");
-        dc_ui_paragraph(8,3,DC_UI_MUTED,"Add .z64, .n64 or .v64 game backups. Use Left/Right to choose another source or Start to scan again.");
+        dc_ui_paragraph(8,3,DC_UI_MUTED,st->list && st->list->error?
+            "Check the disc or SD card. Use Left/Right to choose another source or Start to try again.":
+            "Add .z64, .n64 or .v64 game backups. Use Left/Right to choose another source or Start to scan again.");
     } else {
         rows=st->rows<DC_UI_ROWS?st->rows:DC_UI_ROWS;
         for(i=0;i<rows && st->top+i<st->list->count;i++) {
@@ -333,7 +345,11 @@ void dc_menu_draw(const dc_menu_state *st,const char *title) {
         }
         dc_ui_paragraph(14,2,DC_UI_MUTED,st->list->items[st->cursor].label);
     }
-    dc_ui_finish(dc_settings_status(),"A play/open  B back  X controls  Y settings  Left/Right source  L/R page  Start scan");
+    dc_ui_finish(status,"A play/open  B back  X controls  Y settings  Left/Right source  L/R page  Start scan");
+}
+
+void dc_menu_draw(const dc_menu_state *st,const char *title) {
+    draw_browser(st,title,dc_settings_status());
 }
 
 void dc_menu_message(const char *title,const char *message) {
@@ -427,8 +443,7 @@ int dc_menu_run(fileBrowser_file *dir,dc_menu_entry *out) {
         online=dc_ui_poll(&keys,&raw);
         if(online!=connected){connected=online;dirty=1;}
         if(dirty) {
-            dc_menu_draw(&st,"Games");
-            if(!connected){dc_ui_text(16,DC_UI_WARN,"Reconnect a controller to continue.");dc_draw_end();}
+            draw_browser(&st,"Games",connected?dc_settings_status():"Reconnect a controller to continue.");
             dirty=0;
         } else dc_draw_wait();
         extra=raw&(DC_CONT_X|DC_CONT_Y);
@@ -469,18 +484,37 @@ int dc_menu_run(fileBrowser_file *dir,dc_menu_entry *out) {
             }
         } else if(action==DC_MENU_CANCEL) {
             if(depth) {
-                dc_menu_list next={0};--depth;load_folder(&next,history[depth]);
-                dc_menu_list_free(&list);list=next;dc_menu_state_init(&st,&list,DC_UI_ROWS);
-                st.cursor=cursors[depth];st.top=tops[depth];clamp_view(&st);
+                dc_menu_list next={0};
+                if(load_folder(&next,history[depth-1])<0) {
+                    dc_menu_list_free(&next);
+                    dc_ui_confirm("Folder unavailable","The parent folder could not be read. Check the storage device and try again.","return");
+                } else {
+                    --depth;
+                    dc_menu_list_free(&list);list=next;dc_menu_state_init(&st,&list,DC_UI_ROWS);
+                    st.cursor=cursors[depth];st.top=tops[depth];clamp_view(&st);
+                }
             } else if(dc_ui_confirm("Exit Not64?","Return to the system menu? Your saved settings and game saves will be kept.","exit"))break;
             blocked=dirty=1;
         } else if(action==DC_MENU_REFRESH || action==DC_MENU_SOURCE_PREV || action==DC_MENU_SOURCE_NEXT) {
             char path[FILE_BROWSER_MAX_PATH_LEN];
+            char selected[FILE_BROWSER_MAX_PATH_LEN]={0};
+            dc_menu_list next={0};
+            int old_top=st.top;
+            if(action==DC_MENU_REFRESH && list.count)
+                snprintf(selected,sizeof(selected),"%s",list.items[st.cursor].path);
             if(action!=DC_MENU_REFRESH) {
                 source=(source+(action==DC_MENU_SOURCE_NEXT?1:nroots-1))%nroots;depth=0;
                 snprintf(path,sizeof(path),"%s",roots[source]);
             } else snprintf(path,sizeof(path),"%s",list.dir);
-            dc_menu_list_free(&list);load_folder(&list,path);dc_menu_state_init(&st,&list,DC_UI_ROWS);
+            if(load_folder(&next,path)<0 && action==DC_MENU_REFRESH) {
+                dc_menu_list_free(&next);
+                dc_ui_confirm("Scan failed","The folder could not be read. The previous list is kept. Check the storage device and press Start to try again.","return");
+                blocked=dirty=1;goto next_frame;
+            }
+            dc_menu_list_free(&list);list=next;dc_menu_state_init(&st,&list,DC_UI_ROWS);
+            if(*selected)for(i=0;i<list.count;i++)if(!strcmp(selected,list.items[i].path)) {
+                st.cursor=i;st.top=old_top;clamp_view(&st);break;
+            }
             blocked=dirty=1;
         }
 next_frame:

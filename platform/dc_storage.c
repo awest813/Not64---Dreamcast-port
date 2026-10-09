@@ -11,9 +11,12 @@ int dc_storage_commit(const char *temporary, const char *destination)
     if (!temporary || !destination ||
         snprintf(backup, sizeof(backup), "%s.bak", destination) >= (int)sizeof(backup))
         return -1;
+    /* Never move a directory aside to make room for a save file. */
+    if (stat(temporary, &info) != 0 || !S_ISREG(info.st_mode)) return -1;
+    had_previous = stat(destination, &info) == 0;
+    if (had_previous && !S_ISREG(info.st_mode)) return -1;
     /* POSIX filesystems can replace the destination in one operation. */
     if (rename(temporary, destination) == 0) return 0;
-    had_previous = stat(destination, &info) == 0;
     if (!had_previous) return -1;
     /* FAT may require moving the previous file first. Never overwrite an
        existing recovery copy: it may be the only intact save after a crash. */

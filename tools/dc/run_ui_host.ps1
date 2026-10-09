@@ -1,7 +1,7 @@
 $ErrorActionPreference='Stop'
 $taskRoot=(Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $taskRun=Join-Path $taskRoot 'build/dc/validation/ui-host-run'
-New-Item -ItemType Directory -Force -Path "$taskRun/ui-fixtures/empty","$taskRun/saves" | Out-Null
+New-Item -ItemType Directory -Force -Path "$taskRun/ui-fixtures/empty","$taskRun/saves","$taskRun/settings-unreadable/settings.cfg" | Out-Null
 $taskSources=@('tools/dc/test_ui_host.c','platform/dc_config.c','platform/dc_settings.c','platform/dc_overlay.c','platform/dc_menu/dc_ui.c','platform/dc_menu/dc_menu.c','platform/dc_menu/dc_draw_host.c','platform/dc_storage.c','platform/dc_video.c','fileBrowser/fileBrowser.c','fileBrowser/fileBrowser-kos.c','gc_input/controller-DC.c')
 Push-Location $taskRoot
 try {
@@ -15,5 +15,7 @@ try {
   [IO.File]::WriteAllText("$taskRun/ui-fixtures/bad.z64",'Invalid ROM')
   [IO.File]::WriteAllText("$taskRun/ui-fixtures/ignored.txt",'Ignored text file')
   Push-Location $taskRun
-  try { & ./ui-host-tests.exe; if($LASTEXITCODE){throw 'Frontend contract tests failed'} } finally {Pop-Location}
+  try {
+    & ./ui-host-tests.exe; if($LASTEXITCODE){throw 'Frontend contract tests failed'}
+  } finally {Pop-Location}
 } finally {Pop-Location}

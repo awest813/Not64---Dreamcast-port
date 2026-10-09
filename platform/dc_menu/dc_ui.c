@@ -29,6 +29,7 @@ unsigned dc_ui_input_step(dc_ui_input *input, const BUTTONS *keys) {
     }
     if((now&(DC_UI_UP|DC_UI_DOWN))==(DC_UI_UP|DC_UI_DOWN)) now&=~(DC_UI_UP|DC_UI_DOWN);
     if((now&(DC_UI_LEFT|DC_UI_RIGHT))==(DC_UI_LEFT|DC_UI_RIGHT)) now&=~(DC_UI_LEFT|DC_UI_RIGHT);
+    if((now&(DC_UI_PAGE_UP|DC_UI_PAGE_DOWN))==(DC_UI_PAGE_UP|DC_UI_PAGE_DOWN)) now&=~(DC_UI_PAGE_UP|DC_UI_PAGE_DOWN);
     pressed=now&~input->prev;
     for(i=0;i<4;i++) {
         unsigned bit=directions[i];

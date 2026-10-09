@@ -36,6 +36,7 @@ static unsigned audit_hex, audit_offset;
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #ifdef DC_HOST_STUB
 #include <unistd.h>
 #include "../gc_memory/pif.h"
@@ -893,7 +894,11 @@ int savestates_exists(int mode)
 	FILE *fp;
 	char magic[8];
 
-	(void)mode;
+	/* Even an unreadable or damaged file requires overwrite confirmation. */
+	if (mode == SAVESTATE) {
+		struct stat info;
+		return stat(slot_path(), &info) == 0;
+	}
 	fp = fopen(slot_path(), "rb");
 	if (!fp)
 		return 0;
@@ -1060,7 +1065,7 @@ int savestates_selftest(void)
 			fwrite("NOPEFILE", 8, 1, bogus);
 			fclose(bogus);
 		}
-		if (savestates_exists(SAVESTATE)) {
+		if (!savestates_exists(SAVESTATE) || savestates_exists(LOADSTATE)) {
 			printf("savestate FAIL: garbage file counted as a dump\n");
 			fails++;
 		}

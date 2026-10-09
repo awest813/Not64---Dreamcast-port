@@ -52,14 +52,14 @@ static const struct dc_setting table[DC_SET_COUNT] = {
 	{ "audio",    "Audio",           "Play game sound.", onoff, 2 },
 	{ "fps",      "Show FPS",        "Overlay once a renderer exists.", onoff, 2 },
 	{ "debug",    "Debug overlay",   "Show diagnostic messages on the console.", onoff, 2 },
-	{ "autosave", "Auto-save SRAM",  "Keep cartridge and Controller Pak saves on SD.", onoff, 2 },
-	{ "autoload", "Auto-load SRAM",  "Restore cartridge and Controller Pak saves at launch.", onoff, 2 },
+	{ "autosave", "Auto-save progress", "Keep cartridge and Controller Pak saves on SD.", onoff, 2 },
+	{ "autoload", "Auto-load progress", "Restore cartridge and Controller Pak saves at launch.", onoff, 2 },
 	{ "aspect",   "Aspect",          "Original proportions, fill the screen, or correct a wide TV.", aspect, 3 },
 	{ "video",    "Video out",       "VGA box vs RGB/composite. Auto-detect is a human call.", video, 2 },
 	{ "saves",    "Save device",     "VMU layout for FlashRAM is a human call.", saves, 2 },
 	{ "vilimit",  "VI limiter",      "Same three modes as Wii64.", vilimit, 3 },
 	{ "logfile",  "Log file",        "Write diagnostic messages to SD.", onoff, 2 },
-	{ "frameskip", "Frameskip",       "Higher values draw less often. The last option keeps the Stadium 2 speed improvements.", skipframes, 8 },
+	{ "frameskip", "Frameskip",       "Higher values draw less often. The last option uses a repeating skip pattern for Stadium 2.", skipframes, 8 },
 	{ "skipMenu", "Skip menu",       "Bring-up / argv path. Keep Off on hardware.", onoff, 2 },
 };
 
@@ -67,6 +67,7 @@ static const struct dc_setting table[DC_SET_COUNT] = {
 static int set_cursor, set_top, ctl_cursor, ctl_top, ctl_port;
 static dc_ui_input set_input, ctl_input;
 static char settings_status[96] = "Settings apply immediately.";
+static int settings_missing;
 static controller_config_t mappings[4];
 static int mappings_ready;
 static const int visible[] = { DC_SET_AUDIO, DC_SET_AUTOSAVE, DC_SET_AUTOLOAD,
@@ -237,6 +238,7 @@ void dc_settings_cycle(int i, int dir)
 	if (v >= n)
 		v = 0;
 	set_int(i, v);
+    snprintf(settings_status,sizeof(settings_status),"Unsaved changes. B saves and returns.");
 }
 
 const char *dc_settings_path(void)
@@ -300,7 +302,7 @@ int dc_settings_save(const char *path)
     snprintf(settings_status,sizeof(settings_status),"Settings saved to SD.");
     return 0;
 failure:
-    snprintf(settings_status,sizeof(settings_status),"Settings apply this session; SD save unavailable.");
+    snprintf(settings_status,sizeof(settings_status),"SD save failed. Changes apply this session.");
     return -1;
 }
 
@@ -309,9 +311,15 @@ int dc_settings_load(const char *path)
     FILE *fp;
     char line[192];
     int failed;
+    settings_missing=0;
     if (!path) path=dc_settings_path();
     fp=fopen(path,"r");
-    if (!fp) return -1;
+    if (!fp) {
+        settings_missing=errno==ENOENT;
+        snprintf(settings_status,sizeof(settings_status),"%s",settings_missing?
+            "No saved settings. Using current settings.":"Settings unreadable. Check SD; file kept.");
+        return -1;
+    }
     dc_controls_apply();
     while (fgets(line,sizeof(line),fp)) {
         char *eq,*key,*val,*nl;
@@ -343,13 +351,14 @@ int dc_settings_load(const char *path)
     }
     failed=ferror(fp); if(fclose(fp))failed=1;
     dc_controls_apply(); apply_pak_modes();
-    snprintf(settings_status,sizeof(settings_status),"%s",failed?"Settings read failed; check SD.":"Settings loaded.");
+    snprintf(settings_status,sizeof(settings_status),"%s",failed?"Settings unreadable. Check SD; file kept.":"Settings loaded.");
     return failed?-1:0;
 }
 
 void dc_settings_boot(void) {
     dc_settings_defaults();
-    if (dc_settings_load(NULL)) (void)dc_settings_save(NULL);
+    /* Only a missing file warrants creating defaults. Keep unreadable files. */
+    if (dc_settings_load(NULL) && settings_missing) (void)dc_settings_save(NULL);
 }
 void dc_settings_enter(void) {
     set_cursor=set_top=0;
@@ -399,7 +408,8 @@ int dc_controls_step(const BUTTONS *keys) {
         ctl_cursor=ctl_port; ctl_port=-1; ctl_top=0;
         dc_ui_input_init(&ctl_input,1); return 1;
     }
-    dc_ui_scroll(&ctl_cursor,&ctl_top,dc_controls_row_count(),DC_UI_ROWS,pressed);
+    /* The overview's last four rows explain controls; only ports can be edited. */
+    dc_ui_scroll(&ctl_cursor,&ctl_top,ctl_port<0?4:dc_controls_row_count(),DC_UI_ROWS,pressed);
     if (ctl_port<0) {
         if (ctl_cursor<4 && (pressed&(DC_UI_A|DC_UI_START))) {
             ctl_port=ctl_cursor; ctl_cursor=ctl_top=0; dc_ui_input_init(&ctl_input,1);
@@ -411,6 +421,7 @@ int dc_controls_step(const BUTTONS *keys) {
         else if (ctl_cursor==BIND_COUNT+1) mappings[ctl_port].inverted^=1;
         else if (pressed&DC_UI_A) mappings[ctl_port]=controller_DC.config_default;
         dc_controls_apply();
+        snprintf(settings_status,sizeof(settings_status),"Unsaved changes. B saves and returns.");
     }
     return 1;
 }
@@ -418,7 +429,7 @@ void dc_controls_draw(void) {
     char title[64],label[64];
     int i;
     snprintf(title,sizeof(title),"Controls%s",ctl_port<0?"":" / Edit mapping");
-    snprintf(label,sizeof(label),ctl_port<0?"Select a controller port to edit its mapping.":"Port %d   Menu navigation always uses the default controls.",ctl_port+1);
+    snprintf(label,sizeof(label),ctl_port<0?"Select a controller port to edit its mapping.":"Port %d   Menu controls stay unchanged.",ctl_port+1);
     dc_ui_begin(title,label);
     for (i=0;i<DC_UI_ROWS && ctl_top+i<dc_controls_row_count();i++) {
         int row=ctl_top+i;
@@ -466,8 +477,14 @@ int dc_settings_selftest(void) {
     if(!strstr(dc_draw_host_row(1),"Settings") || !strstr(dc_draw_host_row(4),"Audio"))fails++;
     dc_controls_enter(); dc_controls_draw();
     if(!strstr(dc_draw_host_row(4),"Port 1"))fails++;
+    memset(&k,0,sizeof(k));dc_controls_step(&k);k.U_DPAD=1;dc_controls_step(&k);
+    dc_controls_draw();
+    if(ctl_cursor!=3 || !strstr(dc_draw_host_row(7),"> Port 4"))fails++;
+    dc_controls_enter();
     memset(&k,0,sizeof(k)); dc_controls_step(&k); k.A_BUTTON=1; dc_controls_step(&k);
     if(ctl_port!=0)fails++;
+    dc_controls_draw();
+    if(!strstr(dc_draw_host_row(2),"Menu controls stay unchanged.") || strstr(dc_draw_host_row(2),"..."))fails++;
     memset(&k,0,sizeof(k)); dc_controls_step(&k); k.R_DPAD=1; dc_controls_step(&k);
     if(controller_DC.config[0].A->index!=8)fails++;
     dc_draw_shutdown(); remove(path); dc_settings_defaults();
