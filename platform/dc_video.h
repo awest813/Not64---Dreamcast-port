@@ -6,8 +6,13 @@ int dc_video_init(void);
 int dc_video_present(const dc_vi_frame *frame);
 void dc_video_shutdown(void);
 const char *dc_video_name(void);
+/* 0: no game display; 1: renderer drained for temporary UI; -1: failure. */
+int dc_video_prepare_ui(void);
 /* CPU output kernel shared by software KOS output and host verification. */
 int dc_video_expand_2x(const dc_vi_frame *frame, uint16_t *out, size_t count);
+/* TV aspect correction is applied only at presentation, never to N64 pixels. */
+void dc_video_viewport(unsigned width, unsigned height, int aspect,
+                       int *left, int *top, int *right, int *bottom);
 /* Linear RGB565 PVR upload: used rows only. Zero if blank/invalid. */
 size_t dc_video_pvr_upload_bytes(unsigned width, unsigned height);
 /* Hash exactly the uploaded rows; callers must compare dimensions as well. */

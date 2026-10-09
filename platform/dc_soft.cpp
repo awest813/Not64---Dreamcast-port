@@ -13,8 +13,11 @@ extern "C" void dc_soft_reset(void) {
     dc_soft_profile_reset();
 #endif
 }
-extern "C" int dc_soft_dlist(const GFX_INFO *info) {
+extern "C" int dc_soft_dlist(const GFX_INFO *info, int draw) {
     if (!renderer) renderer = new RDP(*info);
+    // Decode every task, including skipped frames: tile/matrix/combiner state
+    // and FullSync interrupts must still advance. Only raster writes skip.
+    renderer->setRasterEnabled(draw!=0);
     RSP rsp(*info, renderer);
 #ifdef DC_RASTER_PVR
     PVRRaster::flush();

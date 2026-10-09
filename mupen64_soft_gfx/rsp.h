@@ -142,6 +142,12 @@ class RSP
    Matrix<float, 4> MP;
    Vertex vtx[32];
    unsigned int validVertices = 0;
+#ifdef DC_RSP_LAZY_CLIP
+   unsigned int deferredVertices = 0;
+   unsigned char deferredSlots[32], deferredRefs[32] = {};
+   Matrix<float,4> deferredMatrices[32];
+   void materializeVertex(unsigned slot);
+#endif
    int fm;
    int fo;
    

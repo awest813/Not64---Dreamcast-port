@@ -33,6 +33,26 @@
 #include "RSPPlugin.h"
 #include "Rsp_#1.1.h"
 #include "Audio_#1.1.h"
+#ifdef DC_CPU_PROFILE
+#include "memory.h"
+#ifdef DC_HOST_STUB
+#include <time.h>
+static uint64_t rsp_profile_now(void) {
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint64_t)t.tv_sec * 1000000 + t.tv_nsec / 1000;
+}
+#else
+#include <kos.h>
+static uint64_t rsp_profile_now(void) { return timer_us_gettime64(); }
+#endif
+static uint64_t rsp_task_us[4];
+static unsigned rsp_task_count[4];
+void dc_rsp_profile_report(void) {
+    for (unsigned i=0;i<4;i++)
+        printf("RSP profile: type=%u calls=%u us=%llu\n",i,rsp_task_count[i],
+               (unsigned long long)rsp_task_us[i]);
+}
+#endif
 
 /* local variables */
 static struct hle_t g_hle;
@@ -115,12 +135,24 @@ EXPORT void CALL CloseDLL(void)
 
 EXPORT unsigned int CALL DoRspCycles(unsigned int Cycles)
 {
+#ifdef DC_CPU_PROFILE
+    unsigned type=*dmem_u32(&g_hle,TASK_TYPE);
+    if(type>2)type=3;
+    uint64_t start=rsp_profile_now();
+#endif
     hle_execute(&g_hle);
+#ifdef DC_CPU_PROFILE
+    rsp_task_us[type]+=rsp_profile_now()-start;
+    ++rsp_task_count[type];
+#endif
     return Cycles;
 }
 
 EXPORT void CALL InitiateRSP(RSP_INFO Rsp_Info, unsigned int* UNUSED(CycleCount))
 {
+#ifdef DC_CPU_PROFILE
+    for(unsigned i=0;i<4;i++){rsp_task_us[i]=0;rsp_task_count[i]=0;}
+#endif
     hle_init(&g_hle,
              Rsp_Info.RDRAM,
              Rsp_Info.DMEM,

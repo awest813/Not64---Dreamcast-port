@@ -174,12 +174,20 @@ static int host_joyx[4];
 static int host_joyy[4];
 static int host_ltrig[4];
 static int host_rtrig[4];
+static unsigned host_queue[128],host_queue_count,host_queue_index;
+void controller_DC_host_queue(const unsigned *buttons,unsigned count)
+{
+	if(count>128)count=128;
+	if(count && buttons)memcpy(host_queue,buttons,count*sizeof(*buttons));
+	host_queue_count=buttons?count:0;host_queue_index=0;
+}
 
 void controller_DC_host_set(int Control, unsigned int buttons, int jx, int jy)
 {
 	if (Control < 0 || Control > 3)
 		return;
 	host_buttons[Control] = buttons;
+	if(Control==0)host_queue_count=host_queue_index=0;
 	host_joyx[Control] = jx;
 	host_joyy[Control] = jy;
 }
@@ -202,6 +210,7 @@ static int poll_pad(int Control, unsigned int *buttons_out, int *jx, int *jy,
 	/* Only port 0 is injected; keep this in line with refreshAvailable(). */
 	if (Control != 0)
 		return 0;
+	if(host_queue_index<host_queue_count)host_buttons[0]=host_queue[host_queue_index++];
 	*buttons_out = host_buttons[Control];
 	*jx = host_joyx[Control];
 	*jy = host_joyy[Control];
@@ -231,7 +240,7 @@ int controller_DC_poll_raw(int Control, unsigned int *buttons, int *jx, int *jy,
 			   int *ltrig, int *rtrig)
 {
 	unsigned int b = 0;
-	int x = 128, y = 128, lt = 0, rt = 0;
+	int x = 0, y = 0, lt = 0, rt = 0;
 	int ok = poll_pad(Control, &b, &x, &y, &lt, &rt);
 
 	if (buttons)

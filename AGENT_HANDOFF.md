@@ -1,4 +1,356 @@
+## Latest work: frontend checkpoint, user requested stopping (2026-10-04)
+
+User expanded scope to fully functional, polished Dreamcast UI/UX and menus,
+then explicitly asked to reach a stopping point. Work stops at a built/tested
+frontend checkpoint; complete game/SD/PVR qualification is still pending.
+Read `tools/dc/UI_UX.md` for implemented behavior and the remaining checks.
+
+- New menu-first player: `build/dc/not64-ui.cdi`,
+  `build/dc/Play-Not64-UI.cmd`; distinct from all qualified Stadium 2 players.
+- Shared TV-safe UI, folders/source switching/rescan, launch validation,
+  settings with honest capabilities/storage feedback, persisted controller
+  mappings, pause settings/controls/slot UI and confirmations.
+- Interactive sessions are unlimited by default. Reset reloads the current
+  ROM; Return to games works for disc and argv launches. Runtime errors recover
+  to browser. Menu input is raw and held input cannot select the next screen.
+- Temporary-file replacement protects previous settings, cartridge saves and
+  v3 states from normal write/close failures. Failed native save keeps pause
+  active; disable auto-save to explicitly leave without saving.
+- Pause borrows/restores the displayed framebuffer after draining PVR, preserving
+  display mode and caches. Original aspect follows the prior fast path; full
+  screen/wide TV affect presentation only. These need actual game QA.
+- Standalone frontend contracts pass via `tools/dc/run_ui_host.ps1`. This
+  harness uses real menu/controller/settings/file code and stub core services.
+  The Docker core suite remains unavailable (Docker Desktop engine error).
+- Native GCC 15.1/KOS 2.3/LTO builds/package pass. Flycast boot/browser layout
+  and folder opening observed. Full screen navigation, actual SD save/load,
+  pause/resume/framebuffer/cache safety and fresh Stadium 2 speed/graphics
+  measurements remain pending. Do not claim full polish or transfer old speed
+  results to the UI build. Final idle redraw adjustment is not game-qualified.
+- Source backups: `build/dc/validation/ui-before-source/`; logs/provenance:
+  `build/dc/validation/ui-*`. No commit/push. Existing dirty work retained.
+- The dedicated Flycast test process has been closed. No emulator remains
+  running from this UI pass.
+
+## Previous follow-up: filtered texture accuracy with preserved speed (2026-09-30)
+
+Continued the user's graphics-accuracy request for Pokémon Stadium 2, retaining
+the clarified 3.8 game-progress updates/s objective and steady mode7. No
+increase in frameskip. Historical higher FPS objectives remain unachieved.
+
+- Opt-in `RASTER_FILTER_GRID=1` / replay `FILTER_GRID=1` requires triangle
+  origin and shade scale. Three supported shade equations with three-point
+  filtering and native padded textures <=64x64 bake quarter-texel samples.
+  Logical UV dimensions stay unchanged; physical center follows the grid.
+  Rectangles, point/average filters, large textures and binary cutout shade
+  retain native grids. No additional GPU eligibility. Factor joins cache key.
+- Four complete optimized LTO native suites pass (`accuracy-grid7`,
+  `grid7-base`, `grid7-strict`, `grid7-reference`). Twelve-case filter probe:
+  8 cold/hot texture cases, all three equations, fractional/perspective UVs;
+  4 complete cold/hot framebuffer guards. Error 7453->754 (89.8833%), peak
+  16->4 five-bit steps under unchanged bound5; 8 grids, 48 completed scenes,
+  hot reuse. Current checker requires unique identity and all cases/fixture;
+  nine negative controls reject incomplete/disabled/repeated/failing evidence.
+  Older native logs cannot qualify this current checker.
+- Battle VI120 mean RGB-byte error 20.697736->20.644967 (0.25495%), changed
+  pixels 65289->65100/75840, peak26 remains at5 pixels. CPU/event bytes and
+  MMIO/SP/PIF hashes match prior qualified player and software reference.
+  Rental every pixel and entire audited state match prior Accurate-Origin.
+  Final optimized grid7 images match grid6 exactly. Battle at120: 8 bakes,
+  VRAM126080->329600 (+198.75KiB), same65 misses, no extra evictions/flushes;
+  rental0 bakes and403968bytes. Existing2MiB cache/scratch budgets unchanged.
+- Rejected half-texel grid reached9 steps and battle error26.217506. Preserved
+  grid1–grid4 diagnostics; first probe had two wrong shader selectors, fixed
+  before qualification. Grid5/6 images exact. Initial full candidate rental
+  average slowed0.3508% with no grids; rejected under0.2% preservation bound.
+  Removed factor divisions from native texel/triangle paths; only active grid
+  uses exact power-of-two scaling. Divisions source snapshot and timing logs
+  remain diagnostic; original failed performance ELFs/CDIs were rebuilt.
+- Final isolated VI60–600, 9 windows, freshly remeasured rebuilt baselines:
+  battle baseline 4.825041/min4.523280, actual unlimited player
+  4.823754/min4.520649; rental baseline 6.803749/min6.679308,
+  corrected 6.796910/min6.680265. Avg/min within0.2%, all windows>=3.8;
+  fresh draws 0.643167/s battle, 0.906255/s rental. Same72 drawn/198 skipped,
+  mode7 skips2,3,3,3 max3/avg2.75. First60 cold progress 4.019075/6.268425, also>=3.8.
+  Still checkpoint-only Flycast coverage, no completed attack/all-scenes/real DC.
+- Qualified separate player `build/dc/Play-Stadium2-Accurate-Filter.cmd` ->
+  `not64-stadium-accurate-filter-gameplay.cdi`, live controls, battle checkpoint,
+  no scripted input/automatic Start/frame-step limits. All three previous
+  players and their original recorded artifacts/evidence hashes preserved.
+  `accuracy-filter-manifest.json` stores artifact/flags/log/source provenance;
+  `accuracy-filter-source` is the optimized snapshot. All validation Flycast
+  processes closed with verified native paths and WaitForExit.
+- Updated main/replay build options, raster cache/bake/UV code, focused native
+  fixture, fail-closed checker and graphics/replay docs. No commit or push.
+
+---
+
+## Latest follow-up: continue graphics accuracy while retaining speed (2026-09-30)
+
+Completed the user's "Keep going" follow-up with an opt-in triangle attribute
+sampling correction and a separate qualified live-control player. The prior
+Steady and Accurate player artifacts remain byte-for-byte preserved. The
+historical 8 FPS objective remains unachieved; keep the clarified progress
+metric and steady mode7, without increasing frameskip.
+
+- `RASTER_TRI_ORIGIN=1` requires `RASTER_TEXEL_SCALE=1`. New helper
+  `platform/dc_raster_origin.h` shifts U/W, V/W and reciprocal-W together, then
+  recovers perspective UVs; supported RGB shade planes shift likewise. Vertex
+  x/y and shade alpha stay unchanged. Degenerate/nonfinite geometry or
+  attributes, nonpositive shifted reciprocal-W and unrepresentable RGB retain
+  the previous GPU attributes. Rectangles explicitly bypass this correction.
+  No additional texture allocation, scene flush or software fallback.
+- Four complete LTO native suites pass: corrected/baseline fast, strict and
+  independent same-SH4 software, plus corrected non-LTO. New fixture: 40
+  independent barycentric projection/rejection cases, four complete framebuffer
+  footprint comparisons, four exact interior texture-ramp cases. Enabled GPU
+  build executes seven corrections and 12 completed scenes. Existing varying/
+  perspective shade error improves 55->34, maximum two->one five-bit steps.
+  All replay logs now require the triangle-origin fixture and build identity;
+  checker `--tri-origin` requires the enabled fast GPU path. Six negative
+  controls reject disabled, absent, truncated, repeated or deliberately failing
+  evidence. Replay Makefile adds `LTO=1`. Software-only prints no GPU counters;
+  the initial zero-counter diagnostic is retained as `*-diagnostic0.log`.
+- Battle VI120 versus the same software image: mean RGB-byte error
+  23.013783->20.697736 (10.0637%), changed pixels 65803->65289 of 75840,
+  maximum remains 26 steps. 21133 pixels improve, 15437 worsen and 39270
+  have equal error; every horizontal band improves in aggregate. CPU/event
+  bytes and MMIO/SP/PIF hashes match the prior fast/reference. Counters at
+  120 submissions: 2455 corrected / 910 guarded. Rental VI120 image and
+  entire audited state remain exact to the earlier Accurate build; zero
+  triangle corrections, mean reference error 2.075474 and maximum 8 steps.
+- Initial shared array/index submission passed older native fixtures but
+  corrupted rectangle UVs in game captures (battle mean 40.5359, rental
+  17.9249; maxima 31). Rejected. Restoring the original floating-argument
+  submission for rectangles/guarded triangles resolves this; no compiler
+  cause established. `accuracy-origin1-*` keeps rejected exports;
+  `accuracy-origin2-*` keeps qualified images/native evidence/source snapshots.
+  The older geometry-shift experiment remains rejected independently.
+- Matched isolated VI60–600, nine 60-update windows: baseline battle
+  4.828063/min4.528632; actual new unlimited player 4.825477/min4.523288.
+  Rental baseline 6.799471/min6.679311; corrected 6.800327/min6.679304.
+  Average/minimum retain baseline within 0.2%; every window exceeds 3.8.
+  Same 72 drawn / 198 skipped lists, mode7 skips 2,3,3,3, max3/average2.75.
+  Fresh draws 0.643397/s battle and 0.906710/s rental. Not all-scenes,
+  completed-attack or physical Dreamcast qualification.
+- Cleanup initially compared mixed slash/backslash paths, leaving two idle
+  emulators beside the first player timing run and the running player beside
+  a partial rental baseline. Excluded/retained `*-overlapped-*` and
+  `*-rental-aborted-target.log`. Fixed cleanup uses the resolved native path,
+  waits for termination and verifies no emulator before each subsequent run.
+  Fresh isolated player reproduces the earlier timing exactly; only isolated
+  captures qualify. All validation emulator processes are now closed.
+- New player `build/dc/Play-Stadium2-Accurate-Origin.cmd` ->
+  `not64-stadium-accurate-origin-gameplay.cdi`: battle checkpoint, live controls,
+  no scripted input, automatic Start, frame/step limit. Old player hashes
+  verified against both original manifests. Ignored qualification/build scripts,
+  full serial/state/frame logs, PNG/JSON comparisons, source snapshot and
+  `accuracy-origin-manifest.json` preserve flags and SHA256 provenance.
+  The new player build initially overwrote the prior `accuracy-player-build.log`
+  and package log; its output is copied to `accuracy-origin-player-*`, and the
+  build script now uses those filenames. Prior compiler flags/hashes preserved.
+- Updated `tools/dc/STADIUM2_GRAPHICS_ACCURACY.md`, `RASTER_REPLAY.md` and
+  Makefile help. No commit/push; earlier unrelated dirty files preserved.
+
+The previous graphics correction and earlier work history follow.
+
+## Prior request: graphics accuracy while retaining speed (2026-09-30)
+
+The latest user request focuses on graphics accuracy while keeping the speed
+improvements. Completed a bounded shaded packed-color correction, with native
+and game-image evidence, and a separate qualified live-control player. The
+historical8 FPS objective below remains unachieved; this turn did not increase
+frameskip or claim overall game fidelity/performance.
+
+- New opt-in `RASTER_SHADE_SCALE=1` requires TEXEL_SCALE/SHADE. Corrects the
+  multiplicative RGB of four separable shade equations; bias/alpha, texture
+  memory/cache/batches unchanged. Fractional ARGB4444 unchanged.
+- Four full current native suites pass: baseline/corrected fast, strict and
+  independent SH4 software. New128-case cold/hot nonuniform RGB ramp: total
+  channel error1104->460 (58.3%), max1step. Existing affine/perspective probe
+  75->55, max2steps. Exact checks stay exact. All replays now require shade-scale
+  build identity and shaded-precision fixture; checker `--shade-scale` asserts
+  enabled GPU capability. Four missing/disabled/truncated/repeated controls reject.
+- Initial128-case hot-blend oracle compared first draw to the second reference;
+  final separate cold/hot reference storage fixes this. `*-oracle1.log` retained.
+- Matched isolated VI60-600: baseline battle4.828490/min4.528653; actual corrected
+  unlimited player4.828486/min4.528641. Rental baseline6.799481/min6.679331,
+  corrected6.799471/min6.679328. Same72drawn/198skipped lists, steady mode7,
+  average2.75/max3skips. Rates retain baseline within0.001%. Fresh drawings
+  0.643798/s battle,0.906596/s rental. Not all-scenes/attack/physical-DC coverage.
+- Battle VI120 versus independent SH4 software: mean RGB-byte error
+  23.42851->23.01378 (1.77%); corrected65803/75840 changed pixels, max26steps.
+  Exact CPU/event bytes and MMIO/SP/PIF hashes match across all three captures.
+  Rental VI120 entire state and image match prior fast exactly; still mean2.07547
+  versus software, max8 at x84/y72-79. Remaining image differences are material.
+- Half-pixel triangle-origin experiment passed current native suite and reduced
+  battle mean to20.30005, but max26->28 at two pixels due coverage shifts. Rejected
+  and removed from production source. Ignored `accuracy-triangle-*` source/ELF/CDI/
+  serial/frame evidence retained. Next sampling work should preserve geometry and
+  correct interpolated attributes; do not revive the geometry shift blindly.
+- New separate player `build/dc/Play-Stadium2-Accurate.cmd` ->
+  `not64-stadium-accurate-gameplay.cdi`: battle checkpoint, live controls, no replay,
+  automatic Start, frame/instruction limits. Old steady ELF/CDI/launcher hashes
+  still match original manifest. No emulator validation processes left running.
+- Report `tools/dc/STADIUM2_GRAPHICS_ACCURACY.md`; updated RASTER_REPLAY docs and
+  Makefile help. Ignored `accuracy-*` logs/JSONs/PNGs/flags/hash manifest preserve
+  evidence. Original8qual5 build log was overwritten during player build-script
+  preparation; baseline compiler-flags/ELF/CDI remain unchanged. Corrected player
+  build output copied to `accuracy-player-build.log`; script now uses that path.
+- No commit/push. Existing unrelated/earlier dirty files preserved.
+
+The earlier8 FPS audit and work history follow unchanged.
+
+## Active request: 8 game-progress updates/s (2026-09-30)
+
+The user asked to keep working until 8 FPS and requested a full emulator audit
+and thorough improvement plan. The metric inherits their explicit earlier
+clarification: VI game-progress updates, with fresh draws reported separately.
+Keep steady mode 7 (maximum three skips, average 2.75); do not raise skipping.
+The old 3.8 player below remains qualified and preserved. **8 is not achieved.**
+
+Full audit and work plan: `tools/dc/STADIUM2_8FPS_PLAN.md`. Best isolated
+600-update combined candidate: rental6.77731/min6.66448,
+battle4.82849/min4.52864 (corrected texel renderer, indexed cache, deferred PC,
+inline Count and software identity span). Logs/JSON `fps8-qual3-{battle,rental}-*`; aborted initial qual1 battle capture is
+explicitly incomplete and excluded. Both use mode7
+and draw72/skip198 lists in warm540 updates; **8 not reached**. All new graphics
+caps are opt-in, and the preserved3.8 player is unchanged. Corrected packed-texel
+fast renderer now passes the full SH4 synthetic suite, including COMBINED,
+precision, spans and deliberate full-hash collisions; strict/software pass.
+Rental VI120 game image remains approximate (mean RGB byte error2.07547,
+max8 five-bit steps/eight pixels at that maximum). State/checksum comparisons
+must use saved matching flags; historical four-failure records below are older.
+
+Native CPU variants and expanded dispatch pass paired game-state checks but
+remain slower in short diagnostics. Longer native blocks with per-store future
+code overlap guards, reuse and boundary-only attempts pass but regress. Local
+and handwritten threaded loops also pass states and regress. Matched short
+VI60-120 baseline other154.043ms battle/82.212ms rental; do not compare these
+to long VI60-600 animation phases (136.7/85.1). Deferred PC publication passes
+ARM32 and both SH4 state comparisons, other151.728/80.800ms. Added64 FP transfer/
+hook, eight CU1 fault and eight Count-wrap controls pass ARM32 and native SH4.
+Dynamic word-RAM proof reuse passes SH4 synthetics and both game states but
+regresses (other176.246/96.563ms); default off. Updated software/GPU path
+profiling passes paired states and ranks remaining fallback costs. Uniform raw
+texture-alpha proof passes all three full SH4 replay suites and paired game
+states, but leaves these checkpoint raster costs unchanged; keep opt-in.
+Inline Count updates pass full ARM32 tests, native1,250 streams and both states.
+Scoped code-page generations pass full ARM32/native boundary checks and both
+120-VI game states, but regress other199.003/110.038ms; reject for player.
+Writer/observer inventory and wrap safeguards are in the plan. Broader delay
+dispatch passes both states and full ARM32/native1,506 streams but regresses
+short other150.425/79.970ms versus145.707/76.538ms; reject for player.
+Test-only oracle routing preserves pure-core exception context, independently
+uses original Count/dispatch, and snapshots/restores the interrupt queue.
+Integer identity coverage masks pass the full fast/strict/software SH4 suites:
+15 exact cases,11 new fast GPU scenes, transparent holes and overlapping masks.
+Initial fractional-alpha failure is retained; both game states match but rental
+raster66.538ms versus59.762ms regresses; reject for player. Exact software
+identity spans pass full ARM32 and native software/fast/reference replays,
+64 framebuffer/temporary-state scalar comparisons and both complete states.
+Short rental6.91117 versus6.49135 improves; battle unchanged. Combined600-VI
+qual3 completes both scenes, improves rental6.77731/min6.66448 and fails8.
+Twelve artifact hashes saved; all old qualified3.8 and qual2 hashes still match.
+Preserved3.8 player remains unchanged. Bounded code arena passes native relocation/
+wrap/writer tests, full ARM32 regressions and both game states, but short other
+169.604/91.683ms still regresses; reject. Branch-pair probe passes full ARM32,
+native1,634 CPU streams and both states but other152.191/80.972ms regresses;
+reject. Tests now include128 additional negative/idle/high-half/final-RAM/IRQ
+branch boundaries. New simple-combiner span passes all320 scalar/framebuffer/
+temporary-state cases and full native software/fast/reference suites. Rental120
+state passes, raster48.906ms versus identity-span50.236ms, progress6.97529;
+battle also passes, unchanged. Final combiner revision retains signed-zero
+additions and passes320 framebuffer/13-color-state cases plus4,096 raw fractional/
+signed-zero values on ARM32 and all three native suites; full ARM32/1,634 CPU
+streams pass. Rental120 state passes, raster49.779ms/progress6.93512; final battle
+and long `8qual5` pending. `8qual4` was built from the initial version but never
+measured. Guarded hot-entry cache passes all native tests and both states but
+other171.424/92.892ms regresses; reject. Its128KiB table shares2MiB, clears on
+metadata/arena/reset reuse, no direct links. Initial eviction test's128-byte
+stride produced zero collisions; corrected4-byte search and15 hot controls pass.
+CPU-only `INTERP_COMPACT=1` compiler-layout probe is built; full ARM32/1,634
+streams pass, native/state/performance pending. No8 player or commit/push.
+Native cost sampling passes both states and identifies64% zero-prefix attempts,
+lookup/validation overhead and fixed-slot waste. New DISPATCH gate moves the
+unsupported-start check to the existing fetch. Full ARM32/native1,506 streams
+and both states pass; other184.318/101.354ms improves epoch cost but remains
+worse than Count-only145.707/76.538ms. Reject for player; broader architecture
+work must reduce cache/ABI overhead and guest-register traffic.
+Exact host PC
+profiling shows no dominant idle loop. ARM block tests do not execute SH4 code.
+Untimed correctness runs may overlap; performance runs use one Flycast process.
+The current replay checker requires all new texture/alpha/scissor fixtures;
+older logs may not satisfy it. No qualified8 player, no commit/push.
+
 # Agent handoff — Not64 Dreamcast port
+
+## Revised performance request qualified — 2026-09-29
+
+User selected Pokémon Stadium 2, revised 20/15 to **steady 3.8 game-progress
+VI updates/s with less frameskip**, explicitly choosing progress over fresh draws.
+The revised request passes the two representative scenes. Old stored goal remains
+paused with obsolete 20 FPS text; do not claim that objective was met. No subagents.
+
+Final mode 7 warm VI 60–600, nine 60-update windows, Flycast 2.6/OpenGL:
+- Battle: actual unlimited live-control player 4.284973 avg / 3.827127 min,
+  fresh 0.571330/s. Raster88.493, convert 8.141, other 136.680 ms/VI.
+- Rental menu:3.959935 avg / 3.919644 min, fresh 0.527991/s.
+  Raster149.742, convert 17.657, other 85.072 ms/VI.
+Logs/JSON: build/dc/validation/fps38-steady-{gameplay,rental}-{target.log,measure.json}.
+All windows pass3.8. The actual player continued beyond600 without diagnostic
+limits; its task-owned qualification Flycast is closed after saving results.
+
+Deliverable: build/dc/Play-Stadium2-Steady.cmd launches the separate
+not64-stadium-steady-gameplay.cdi. Unlimited frames/steps0, Start0, no input replay,
+live controls, resumes battle-commands checkpoint. Compiler flags, boot equality
+and image/ELF/launcher hashes verified; manifest fps38-steady-artifacts.json.
+Existing user images/launchers preserved. No commit/push. Physical Dreamcast
+and whole-game timing unverified; full fast renderer pixel accuracy unqualified.
+
+Mode 7 steady repeats skips 2,3,3,3, avg2.75/max3, four draws per 15 lists. Every
+rolling 30-list interval has8draws. CLI steady / Settings2 /3 /3 /3. Mode 6 balanced
+(draw phase0/3 per7, avg2.5) remains available; old battle4.2842/min3.8336.
+Modes0–5 fixed meaning unchanged; defaultoff. Main/Make clamps now7. Full ARM/
+highres suites PASS, every FullSync, lifecycle, rolling draw count/max skip gap,
+Settings roundtrip7. Perf parser labels steady-2-3-3-3; rejects8/changed policies.
+Rental120 and battle-menu360 CPU/event tails match no-skip. Host PNGs intact;
+not proof of a completed attack/battle or target GPU screenshot.
+
+Retained work: exact qualified RAM8width handlers, ALU/memory computed dispatch,
+fresh main/delay RAM fetch, forced common-memory inlining; packed framebuffer
+import, unused TEXEL1 sampling elision with final state preserved, exact identity
+blender; skipped RSP attributes/triangles while preserving CULL positions, index
+errors, state and interrupts. Branch-inline/O3 experiments removed. Retained CPU
+paths pass no-skip image/full-state parity. Packed integer/half-row RGBA16 VI
+uses channel-exact rounded RGB565 pair averages; byte-safe unaligned/general
+fraction fallback.65536-code partner oracle +96fraction/crop/stride cases PASS,
+rental120 image and entire state equal baseline. Per-field cache tests both fields,
+new render tokens, CPU callbacks, mode/lifecycle; little rental reuse by itself.
+
+RASTER_WIDE requires PVR+HIRES, native640/scissor height, prior-stride flush,
+2304KiB main scratch and two max1MiB RTT buffers. Native640 general batches import/
+upload/readback affected regions; aligned row uploads before scene_finish;
+software/texture barriers flush. Zero-alpha fills flush regional batches before
+checking alpha elsewhere.320 transfer behavior unchanged. Expanded native fast
+fixture8GPU scenes PASS0mismatches: RGB/alpha outside region, blended backdrop,
+odd edges, reset, transparent fills,640x480 edges,320→640→320 transitions.
+Full strict SH4 replay vs genuine SH4 software reference PASS. Full fast STILL
+four known failures: combined cold/hot, precision30, spans255. Never relax checker.
+
+Rental mode 6 history avg/min: baseline1.8210/1.7676; native VI2.2074/2.1294;
+field cache2.2116/2.1333; wide full transfers2.3957/2.2904; packed VI+regional
+3.7974/3.6403. Mode 7 removes8/9-draw window variation. Fill-span experiment showed
+exactly no timing gain and was REMOVED. Short mode 6 profile ELF built, never run.
+Old balanced/limited prototypes are not final deliverable. See performance doc.
+
+No active task-owned Flycast remains. Use isolated validation/flycast-2.6 only;
+verify executable before taskkill. Hidden checkpoint startup can take minutes.
+Scrape console separately from native Python/Docker (detachment invalidates handles).
+SDK bash escalation, DREAMSDK_HOME=C:/DreamSDK, no parallel SDK starts (shared
+config lock). Docker arm32 explicit CC/qemu. PythonC:/Python314, Pillow; PPM→PNG
+before view_image. No AGENTS; computer-use skill read earlier, no UI actions needed.
+Use core.whitespace=cr-at-eol for diff check. Preserve original handoff suffix below.
 
 Native `make -f Makefile.dc HOST=1` is rejected at Makefile parse time on LP64
 (`sizeof(long) != 4`). Use `make -f Makefile.dc host-test` (Docker armhf + QEMU).

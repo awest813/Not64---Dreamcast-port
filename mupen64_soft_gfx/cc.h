@@ -58,6 +58,8 @@ class CC
    
    int oldCycle1, oldCycle2;
    bool directColor0, directColor1;
+   bool directAlpha0, directAlpha1;
+   bool secondTexelUsed;
    Color32* getColorSource(int src, int var);
    float* getAlphaSource(int src, int var);
    
@@ -68,6 +70,10 @@ class CC
    float lLOD;
    
  public:
+#ifdef DC_SOFT_PROFILE
+   unsigned profileMux(unsigned cycle) const { return cycle ? oldCycle2 : oldCycle1; }
+   unsigned profilePrim() { return (unsigned)(int)primColor; }
+#endif
    CC();
    ~CC();
    
@@ -77,6 +83,24 @@ class CC
    void setEnvColor(int color);
    
    void setShade(const Color32& c);
+   bool needsSecondTexel() const { return secondTexelUsed; }
    Color32 combine1(const Color32& texel);
    Color32 combine2(const Color32& texel1, const Color32& texel2);
+#ifdef DC_SOFT_COMBINE_SPAN
+   struct SimpleSpan {
+      Color32 factor;
+      float alphaFactor;
+      bool directAlpha;
+      Color32 combine(const Color32 &texel) const {
+         Color32 color=texel;
+         float alpha=color.getAlpha();
+         // Retain multiply-then-divide order; predividing RGB changes rounding.
+         color=color*factor+Color32(0);
+         color.setAlpha(directAlpha?alpha:alphaFactor*alpha+0.0f);
+         return color;
+      }
+   };
+   bool prepareSimpleSpan(SimpleSpan &span);
+   void finishSimpleSpan(const Color32 &texel);
+#endif
 };

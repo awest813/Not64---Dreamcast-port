@@ -27,6 +27,12 @@
  *
 **/
 
+#ifdef DC_INTERP_COMPACT
+// Keep this isolated from renderer/audio compiler choices. SH4 hot-code size
+// and call layout are measured against O2; correctness and speed are separate.
+#pragma GCC optimize ("Os")
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -39,11 +45,34 @@
 #ifdef DC_INTERP_DIRECT
 #include "../platform/dc_interp_decode.h"
 #endif
+#ifdef DC_INTERP_MEMORY
+#include "../platform/dc_interp_memory.h"
+#endif
+
+#ifdef DC_INTERP_BLOCK
+#include "../platform/dc_interp_block.h"
+#endif
+
+#ifdef DC_INTERP_BLOCK_EPOCH
+#if defined(DBG) || defined(COMPARE_CORE)
+#error "BLOCK_EPOCH is not compatible with per-instruction observers"
+#endif
+static void dc_pure_observed_interrupt(void)
+{
+   dc_interp_block_observer();
+   gen_interupt();
+   dc_interp_block_observer();
+}
+#define gen_interupt() dc_pure_observed_interrupt()
+#endif
 
 #ifdef __PPC__
 #include "../main/ROM-Cache.h"
 #endif
 #include "../gui/DEBUG.h"
+#if defined(DC_INTERP_PC_LAZY) && (defined(DBG) || defined(COMPARE_CORE))
+#error "PC_LAZY is not compatible with per-instruction debugger observers"
+#endif
 
 #ifdef DBG
 extern int debugger_mode;
@@ -63,6 +92,27 @@ extern void update_debugger();
 unsigned long interp_addr;
 unsigned long op;
 static long skip;
+#ifdef DC_INTERP_ORACLE
+// Differential-test routing only; absent from game/performance builds.
+unsigned dc_interp_oracle;
+#endif
+#ifdef DC_INTERP_COUNT_INLINE
+#if defined(DBG) || defined(COMPARE_CORE)
+#error "COUNT_INLINE is not compatible with Count debugger observers"
+#endif
+static inline __attribute__((always_inline)) void dc_pure_update_count(void)
+{
+#ifdef DC_INTERP_ORACLE
+   if(dc_interp_oracle){update_count();return;}
+#endif
+   if(interpcore) {
+      Count += ((interp_addr-last_addr)>>2)*count_per_op;
+      last_addr=interp_addr;
+   } else update_count();
+}
+// Preserve every original update boundary and non-pure-core fallback.
+#define update_count() dc_pure_update_count()
+#endif
 #ifdef __DREAMCAST__
 unsigned long dc_interp_step_limit;
 unsigned long dc_interp_steps;   /* retired this run; read by the bring-up */
@@ -70,7 +120,102 @@ unsigned long dc_interp_steps;   /* retired this run; read by the bring-up */
 
 void prefetch();
 
+#if defined(DC_INTERP_ALU) && defined(DC_INTERP_MEMORY) && defined(DC_INTERP_DIRECT)
+static inline void dc_interp_prefetch(void)
+{
+   /* Delay slots read RAM afresh with the same alias/alignment qualification
+    * as the main loop. Translated code and devices retain prefetch checks. */
+   if ((interp_addr & 0xdfc00000ul) == 0x80000000ul) {
+      op = *(unsigned long *)(rdramb + (interp_addr & 0x3ffffcul));
+      PC->addr = interp_addr;
+   } else prefetch();
+}
+#define DC_INTERP_PREFETCH() dc_interp_prefetch()
+#else
+#define DC_INTERP_PREFETCH() prefetch()
+#endif
+
 /*static*/ void (*interp_ops[64])(void);
+#ifdef DC_INTERP_ALU
+static inline void dc_interp_execute(void);
+#define DC_INTERP_DISPATCH() dc_interp_execute()
+#else
+#define DC_INTERP_DISPATCH() interp_ops[(op >> 26) & 63]()
+#endif
+
+#ifdef DC_CPU_PROFILE
+static unsigned long profile_ops[64], profile_special[64], profile_fp[64];
+static unsigned long profile_total;
+#ifdef DC_CPU_TRACE_HOST
+/* Exact execution counts in host diagnostics only. Four MiB cannot be
+ * reserved casually on the target, and this work must never qualify FPS. */
+static unsigned long profile_exact[0x100000],profile_other;
+#endif
+static struct dc_profile_sample { unsigned long page, samples; } profile_pages[64], profile_pcs[64];
+static void profile_sample(struct dc_profile_sample *samples, unsigned long address)
+{
+   unsigned least = 0;
+   for (unsigned i = 0; i < 64; ++i) {
+      if (samples[i].page == address) { ++samples[i].samples; return; }
+      if (samples[i].samples < samples[least].samples) least = i;
+   }
+   samples[least].page = address;
+   ++samples[least].samples;
+}
+static void profile_instruction(void)
+{
+   unsigned primary = (op >> 26) & 63;
+#ifdef DC_CPU_TRACE_HOST
+   if(!(interp_addr&3) && (interp_addr&0xdfc00000u)==0x80000000u)
+       ++profile_exact[(interp_addr&0x3ffffcu)/4];
+   else ++profile_other;
+#endif
+   ++profile_ops[primary];
+   if (!primary) ++profile_special[op & 63];
+   if (primary == 17) ++profile_fp[(op >> 21) & 31];
+   if ((++profile_total & 1023) == 0) {
+      profile_sample(profile_pages, interp_addr & ~4095ul);
+      profile_sample(profile_pcs, interp_addr);
+   }
+}
+void dc_interp_profile_report(void)
+{
+   printf("CPU profile: instructions=%lu (includes delay slots)\n", profile_total);
+#ifdef DC_CPU_TRACE_HOST
+   unsigned top[64]={0},counts[64]={0};
+   unsigned long total=profile_other;
+   for(unsigned i=0;i<0x100000;i++) {
+       unsigned count=profile_exact[i];total+=count;
+       if(count<=counts[63])continue;
+       unsigned at=63;
+       while(at && count>counts[at-1]){counts[at]=counts[at-1];top[at]=top[at-1];--at;}
+       counts[at]=count;top[at]=i;
+   }
+   printf("CPU exact: total=%lu other=%lu\n",total,profile_other);
+   for(unsigned i=0;i<64 && counts[i];i++) {
+       printf("CPU exact PC %08x count=%u code=",0x80000000u+top[i]*4,counts[i]);
+       for(int j=-4;j<=4;j++) {
+           int at=(int)top[i]+j;
+           printf(" %08lx",at>=0 && at<0x100000?rdram[at]:0ul);
+       }
+       printf("\n");
+   }
+#endif
+   for (unsigned i = 0; i < 64; ++i) if (profile_ops[i])
+      printf("CPU opcode %02x count=%lu\n", i, profile_ops[i]);
+   for (unsigned i = 0; i < 64; ++i) if (profile_special[i])
+      printf("CPU special %02x count=%lu\n", i, profile_special[i]);
+   for (unsigned i = 0; i < 32; ++i) if (profile_fp[i])
+      printf("CPU cop1 %02x count=%lu\n", i, profile_fp[i]);
+   for (unsigned i = 0; i < 64; ++i) if (profile_pages[i].samples)
+      printf("CPU sampled page %08lx weight=%lu\n", profile_pages[i].page, profile_pages[i].samples);
+   for (unsigned i = 0; i < 64; ++i) if (profile_pcs[i].samples)
+      printf("CPU sampled PC %08lx weight=%lu\n", profile_pcs[i].page, profile_pcs[i].samples);
+}
+#define INTERP_EXECUTE() do { profile_instruction(); DC_INTERP_DISPATCH(); } while (0)
+#else
+#define INTERP_EXECUTE() DC_INTERP_DISPATCH()
+#endif
 
 extern unsigned long next_vi;
 
@@ -89,6 +234,16 @@ static void SLL()
    sign_extended(rrd);
    interp_addr+=4;
 }
+
+#if defined(DC_INTERP_ALU) && !defined(DC_INTERP_DELAY_ALU)
+static inline void dc_interp_execute(void)
+{
+   /* Delay slots commonly contain NOP. Preserve SLL's register-zero
+    * assignment and sign extension, avoiding two indirect opcode calls. */
+   if (!op) SLL();
+   else interp_ops[(op >> 26) & 63]();
+}
+#endif
 
 static void SRL()
 {
@@ -130,8 +285,8 @@ static void JR()
    local_rs32 = irs32;
    interp_addr+=4;
    delay_slot=1;
-   prefetch();
-   interp_ops[((op >> 26) & 0x3F)]();
+   DC_INTERP_PREFETCH();
+   INTERP_EXECUTE();
    update_count();
    delay_slot=0;
    interp_addr = local_rs32;
@@ -145,8 +300,8 @@ static void JALR()
    local_rs32 = rrs32;
    interp_addr+=4;
    delay_slot=1;
-   prefetch();
-   interp_ops[((op >> 26) & 0x3F)]();
+   DC_INTERP_PREFETCH();
+   INTERP_EXECUTE();
    update_count();
    delay_slot=0;
    if (!skip_jump)
@@ -551,8 +706,8 @@ static void BLTZ()
        }
    interp_addr+=4;
    delay_slot=1;
-   prefetch();
-   interp_ops[((op >> 26) & 0x3F)]();
+   DC_INTERP_PREFETCH();
+   INTERP_EXECUTE();
    update_count();
    delay_slot=0;
    if (local_rs < 0)
@@ -581,8 +736,8 @@ static void BGEZ()
        }
    interp_addr+=4;
    delay_slot=1;
-   prefetch();
-   interp_ops[((op >> 26) & 0x3F)]();
+   DC_INTERP_PREFETCH();
+   INTERP_EXECUTE();
    update_count();
    delay_slot=0;
    if (local_rs >= 0)
@@ -613,8 +768,8 @@ static void BLTZL()
      {
 	interp_addr+=4;
 	delay_slot=1;
-	prefetch();
-	interp_ops[((op >> 26) & 0x3F)]();
+	DC_INTERP_PREFETCH();
+	INTERP_EXECUTE();
 	update_count();
 	delay_slot=0;
 	interp_addr += (local_immediate-1)*4;
@@ -646,8 +801,8 @@ static void BGEZL()
      {
 	interp_addr+=4;
 	delay_slot=1;
-	prefetch();
-	interp_ops[((op >> 26) & 0x3F)]();
+	DC_INTERP_PREFETCH();
+	INTERP_EXECUTE();
 	update_count();
 	delay_slot=0;
 	interp_addr += (local_immediate-1)*4;
@@ -680,8 +835,8 @@ static void BLTZAL()
 	    }
 	interp_addr+=4;
 	delay_slot=1;
-	prefetch();
-	interp_ops[((op >> 26) & 0x3F)]();
+	DC_INTERP_PREFETCH();
+	INTERP_EXECUTE();
 	update_count();
 	delay_slot=0;
 	if(local_rs < 0)
@@ -715,8 +870,8 @@ static void BGEZAL()
 	    }
 	interp_addr+=4;
 	delay_slot=1;
-	prefetch();
-	interp_ops[((op >> 26) & 0x3F)]();
+	DC_INTERP_PREFETCH();
+	INTERP_EXECUTE();
 	update_count();
 	delay_slot=0;
 	if(local_rs >= 0)
@@ -752,8 +907,8 @@ static void BLTZALL()
 	  {
 	     interp_addr+=4;
 	     delay_slot=1;
-	     prefetch();
-	     interp_ops[((op >> 26) & 0x3F)]();
+	     DC_INTERP_PREFETCH();
+	     INTERP_EXECUTE();
 	     update_count();
 	     delay_slot=0;
 	     interp_addr += (local_immediate-1)*4;
@@ -790,8 +945,8 @@ static void BGEZALL()
 	  {
 	     interp_addr+=4;
 	     delay_slot=1;
-	     prefetch();
-	     interp_ops[((op >> 26) & 0x3F)]();
+	     DC_INTERP_PREFETCH();
+	     INTERP_EXECUTE();
 	     update_count();
 	     delay_slot=0;
 	     interp_addr += (local_immediate-1)*4;
@@ -1188,7 +1343,7 @@ static void MTC0()
       case 13:   // Cause
 	if (rrt!=0)
 	  {
-	     printf("�criture dans Cause\n");
+	     printf("ï¿½criture dans Cause\n");
 	     stop = 1;
 #ifdef DEBUGON
        _break();
@@ -1265,8 +1420,8 @@ static void BC1F()
        }
    interp_addr+=4;
    delay_slot=1;
-   prefetch();
-   interp_ops[((op >> 26) & 0x3F)]();
+   DC_INTERP_PREFETCH();
+   INTERP_EXECUTE();
    update_count();
    delay_slot=0;
    if ((FCR31 & 0x800000)==0)
@@ -1294,8 +1449,8 @@ static void BC1T()
        }
    interp_addr+=4;
    delay_slot=1;
-   prefetch();
-   interp_ops[((op >> 26) & 0x3F)]();
+   DC_INTERP_PREFETCH();
+   INTERP_EXECUTE();
    update_count();
    delay_slot=0;
    if ((FCR31 & 0x800000)!=0)
@@ -1325,8 +1480,8 @@ static void BC1FL()
      {
 	interp_addr+=4;
 	delay_slot=1;
-	prefetch();
-	interp_ops[((op >> 26) & 0x3F)]();
+	DC_INTERP_PREFETCH();
+	INTERP_EXECUTE();
 	update_count();
 	delay_slot=0;
 	interp_addr += (local_immediate-1)*4;
@@ -1358,8 +1513,8 @@ static void BC1TL()
      {
 	interp_addr+=4;
 	delay_slot=1;
-	prefetch();
-	interp_ops[((op >> 26) & 0x3F)]();
+	DC_INTERP_PREFETCH();
+	INTERP_EXECUTE();
 	update_count();
 	delay_slot=0;
 	interp_addr += (local_immediate-1)*4;
@@ -2248,8 +2403,8 @@ static void J()
      }
    interp_addr+=4;
    delay_slot=1;
-   prefetch();
-   interp_ops[((op >> 26) & 0x3F)]();
+   DC_INTERP_PREFETCH();
+   INTERP_EXECUTE();
    update_count();
    delay_slot=0;
    interp_addr = naddr;
@@ -2275,8 +2430,8 @@ static void JAL()
      }
    interp_addr+=4;
    delay_slot=1;
-   prefetch();
-   interp_ops[((op >> 26) & 0x3F)]();
+   DC_INTERP_PREFETCH();
+   INTERP_EXECUTE();
    update_count();
    delay_slot=0;
    if (!skip_jump)
@@ -2311,8 +2466,8 @@ static void BEQ()
        }
    interp_addr+=4;
    delay_slot=1;
-   prefetch();
-   interp_ops[((op >> 26) & 0x3F)]();
+   DC_INTERP_PREFETCH();
+   INTERP_EXECUTE();
    update_count();
    delay_slot=0;
    if (local_rs == local_rt)
@@ -2342,8 +2497,8 @@ static void BNE()
        }
    interp_addr+=4;
    delay_slot=1;
-   prefetch();
-   interp_ops[((op >> 26) & 0x3F)]();
+   DC_INTERP_PREFETCH();
+   INTERP_EXECUTE();
    update_count();
    delay_slot=0;
    if (local_rs != local_rt)
@@ -2372,8 +2527,8 @@ static void BLEZ()
        }
    interp_addr+=4;
    delay_slot=1;
-   prefetch();
-   interp_ops[((op >> 26) & 0x3F)]();
+   DC_INTERP_PREFETCH();
+   INTERP_EXECUTE();
    update_count();
    delay_slot=0;
    if (local_rs <= 0)
@@ -2402,8 +2557,8 @@ static void BGTZ()
        }
    interp_addr+=4;
    delay_slot=1;
-   prefetch();
-   interp_ops[((op >> 26) & 0x3F)]();
+   DC_INTERP_PREFETCH();
+   INTERP_EXECUTE();
    update_count();
    delay_slot=0;
    if (local_rs > 0)
@@ -2502,8 +2657,8 @@ static void BEQL()
      {
 	interp_addr+=4;
 	delay_slot=1;
-	prefetch();
-	interp_ops[((op >> 26) & 0x3F)]();
+	DC_INTERP_PREFETCH();
+	INTERP_EXECUTE();
 	update_count();
 	delay_slot=0;
 	interp_addr += (local_immediate-1)*4;
@@ -2540,8 +2695,8 @@ static void BNEL()
      {
 	interp_addr+=4;
 	delay_slot=1;
-	prefetch();
-	interp_ops[((op >> 26) & 0x3F)]();
+	DC_INTERP_PREFETCH();
+	INTERP_EXECUTE();
 	update_count();
 	delay_slot=0;
 	interp_addr += (local_immediate-1)*4;
@@ -2577,8 +2732,8 @@ static void BLEZL()
      {
 	interp_addr+=4;
 	delay_slot=1;
-	prefetch();
-	interp_ops[((op >> 26) & 0x3F)]();
+	DC_INTERP_PREFETCH();
+	INTERP_EXECUTE();
 	update_count();
 	delay_slot=0;
 	interp_addr += (local_immediate-1)*4;
@@ -2614,8 +2769,8 @@ static void BGTZL()
      {
 	interp_addr+=4;
 	delay_slot=1;
-	prefetch();
-	interp_ops[((op >> 26) & 0x3F)]();
+	DC_INTERP_PREFETCH();
+	INTERP_EXECUTE();
 	update_count();
 	delay_slot=0;
 	interp_addr += (local_immediate-1)*4;
@@ -2753,7 +2908,16 @@ static void LDR()
      }
 }
 
-static void LB()
+/* Main-loop memory labels need an inline body to avoid the SH4 call and
+ * register/FPSCR setup on ordinary RAM accesses. Addressable opcode-table
+ * copies remain available for delay slots and generic execution. */
+#ifdef DC_INTERP_ALU
+#define DC_INTERP_MEMORY_OP static inline __attribute__((always_inline)) void
+#else
+#define DC_INTERP_MEMORY_OP static void
+#endif
+
+DC_INTERP_MEMORY_OP LB()
 {
    interp_addr+=4;
    address = iimmediate + irs32;
@@ -2763,7 +2927,7 @@ static void LB()
    sign_extendedb(irt);
 }
 
-static void LH()
+DC_INTERP_MEMORY_OP LH()
 {
    interp_addr+=4;
    address = iimmediate + irs32;
@@ -2806,7 +2970,7 @@ static void LWL()
    sign_extended(irt);
 }
 
-static void LW()
+DC_INTERP_MEMORY_OP LW()
 {
    address = iimmediate + irs32;
    interp_addr+=4;
@@ -2816,7 +2980,7 @@ static void LW()
    sign_extended(irt);
 }
 
-static void LBU()
+DC_INTERP_MEMORY_OP LBU()
 {
    interp_addr+=4;
    address = iimmediate + irs32;
@@ -2825,7 +2989,7 @@ static void LBU()
    irt = byte;
 }
 
-static void LHU()
+DC_INTERP_MEMORY_OP LHU()
 {
    interp_addr+=4;
    address = iimmediate + irs32;
@@ -2875,7 +3039,7 @@ static void LWU()
    irt = word;
 }
 
-static void SB()
+DC_INTERP_MEMORY_OP SB()
 {
    interp_addr+=4;
    address = iimmediate + irs32;
@@ -2884,7 +3048,7 @@ static void SB()
    check_memory();
 }
 
-static void SH()
+DC_INTERP_MEMORY_OP SH()
 {
    interp_addr+=4;
    address = iimmediate + irs32;
@@ -2927,7 +3091,7 @@ static void SWL()
      }
 }
 
-static void SW()
+DC_INTERP_MEMORY_OP SW()
 {
    interp_addr+=4;
    address = iimmediate + irs32;
@@ -3246,7 +3410,15 @@ void prefetch()
                                              (unsigned int)(debug_count + Count));*/
    // --- OK ---
 
-   unsigned long *mem = fast_mem_access(interp_addr);
+   unsigned long *mem;
+#ifdef DC_INTERP_MEMORY
+   /* KSEG0/KSEG1 first-RDRAM fetch needs neither translation nor ROM lookup.
+    * Match fast_mem_access's word alignment; other addresses use its checks. */
+   if ((interp_addr & 0xdfc00000ul) == 0x80000000ul)
+      mem = (unsigned long *)(rdramb + (interp_addr & 0x3ffffcul));
+   else
+#endif
+      mem = fast_mem_access(interp_addr);
    if (mem != NULL)
      {
 	op = *mem;
@@ -3266,12 +3438,117 @@ void prefetch()
      }
 }
 
+#ifdef DC_INTERP_DELAY_ALU
+static inline void dc_interp_execute(void)
+{
+   // Publish/fetch still happens at the original delay-slot boundary. These
+   // are the same handlers as the main loop; device/fault paths stay intact.
+   // The non-pure mode provides the original table dispatch for the oracle.
+#ifdef DC_INTERP_ORACLE
+   if(dc_interp_oracle){interp_ops[(op>>26)&63]();return;}
+#endif
+   if(!interpcore){interp_ops[(op>>26)&63]();return;}
+   switch((op>>26)&63) {
+   case 0:
+      switch(op&63) {
+      case 0:SLL();return;case 33:ADDU();return;case 37:OR();return;
+      default:SPECIAL();return;
+      }
+   case 9:ADDIU();return;case 12:ANDI();return;case 13:ORI();return;case 15:LUI();return;
+   case 32:LB();return;case 33:LH();return;case 35:LW();return;
+   case 36:LBU();return;case 37:LHU();return;
+   case 40:SB();return;case 41:SH();return;case 43:SW();return;
+   default:interp_ops[(op>>26)&63]();return;
+   }
+}
+#endif
+
+#ifdef DC_INTERP_BRANCH_PAIR
+#if defined(DBG) || defined(COMPARE_CORE)
+#error "BRANCH_PAIR is not compatible with per-instruction observers"
+#endif
+static inline __attribute__((always_inline)) int dc_interp_branch_pair(unsigned primary)
+{
+#ifdef DC_INTERP_ORACLE
+   if(dc_interp_oracle)return 0;
+#endif
+   unsigned long branch=interp_addr;
+   short displacement=iimmediate;
+   // Self-target branches retain the original idle-loop/count shortcut. No
+   // effects precede qualification, so every other rejected case can fall back.
+   if(delay_slot || displacement==-1 || (branch&3) ||
+      (branch&0xdfc00000ul)!=0x80000000ul)return 0;
+   long long lhs=irs,rhs=irt;
+   int taken=(lhs==rhs) ^ (primary&1);
+   int annul=(primary&16) && !taken;
+   unsigned long slot=0;
+   if(!annul) {
+      unsigned offset=branch&0x3ffffc;
+      if(offset>sizeof(rdram)-8)return 0;
+      slot=rdram[offset/4+1];
+      unsigned kind=slot>>26;
+      if(!((kind==0 && ((slot&63)==0 || (slot&63)==33 || (slot&63)==37)) ||
+           kind==9 || kind==12 || kind==13 || kind==15))return 0;
+   }
+   local_rs=lhs;local_rt=rhs;PC->addr=branch;
+   if(annul) {
+      interp_addr=branch+8;update_count();
+   } else {
+      interp_addr=branch+4;delay_slot=1;op=slot;PC->addr=interp_addr;
+      // These original bodies cannot call out, fault or alter the branch
+      // operands saved above. Loads/stores and other delay slots stay original.
+      switch(slot>>26) {
+      case 0:
+         if((slot&63)==0)SLL();else if((slot&63)==33)ADDU();else OR();
+         break;
+      case 9: ADDIU();break;
+      case 12: ANDI();break;
+      case 13: ORI();break;
+      case 15: LUI();break;
+      }
+      update_count();delay_slot=0;
+      if(taken)interp_addr+=(displacement-1)*4;
+   }
+   last_addr=interp_addr;
+   if(next_interupt<=Count)gen_interupt();
+   return 1;
+}
+#endif
+
+#ifdef DC_INTERP_LOCAL
+#include "../platform/dc_interp_local.h"
+#endif
+#ifdef DC_INTERP_THREAD
+extern void dc_interp_run_thread(void);
+unsigned long dc_interp_thread_fallback(unsigned long current_pc)
+{
+   interp_addr=current_pc;
+   prefetch();
+   if(!stop)INTERP_EXECUTE();
+   return interp_addr;
+}
+#endif
+
 void pure_interpreter()
 {
    //interp_addr = 0xa4000040;
    stop=0;
 #ifdef __DREAMCAST__
    dc_interp_steps = 0;
+#ifdef DC_INTERP_BLOCK
+   dc_interp_block_reset();
+#endif
+#ifdef DC_CPU_PROFILE
+   memset(profile_ops,0,sizeof(profile_ops));
+   memset(profile_special,0,sizeof(profile_special));
+   memset(profile_fp,0,sizeof(profile_fp));
+   memset(profile_pages,0,sizeof(profile_pages));
+   memset(profile_pcs,0,sizeof(profile_pcs));
+   profile_total=0;
+#ifdef DC_CPU_TRACE_HOST
+   memset(profile_exact,0,sizeof(profile_exact));profile_other=0;
+#endif
+#endif
 #endif
    PC = malloc(sizeof(precomp_instr));
    if (!PC) {
@@ -3279,6 +3556,43 @@ void pure_interpreter()
       return;
    }
    last_addr = interp_addr;
+#ifdef DC_INTERP_BLOCK_EPOCH
+   dc_interp_block_enter();
+#endif
+#ifdef DC_INTERP_BLOCK_FRONTIER
+   int native_frontier=1;
+#endif
+#ifdef DC_INTERP_LOCAL
+   dc_interp_run_local();
+#elif defined(DC_INTERP_THREAD)
+   dc_interp_run_thread();
+#else
+#ifdef DC_INTERP_ALU
+   /* Keep common ALU and memory operations in the loop; branches and devices
+    * retain their original handlers and delay-slot/interrupt boundaries. */
+#ifdef DC_INTERP_EXPAND
+#define DC_ALU_COP1 &&dc_alu_cop1
+#define DC_ALU_XORI &&dc_alu_xori
+#else
+#define DC_ALU_COP1 &&dc_alu_generic
+#define DC_ALU_XORI &&dc_alu_generic
+#endif
+#ifdef DC_INTERP_BRANCH_PAIR
+#define DC_ALU_BRANCH &&dc_alu_branch
+#else
+#define DC_ALU_BRANCH &&dc_alu_generic
+#endif
+   static const void *alu_dispatch[64] = {
+      &&dc_alu_special,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,DC_ALU_BRANCH,DC_ALU_BRANCH,&&dc_alu_generic,&&dc_alu_generic,
+      &&dc_alu_generic,&&dc_alu_addiu,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_andi,&&dc_alu_ori,DC_ALU_XORI,&&dc_alu_lui,
+      &&dc_alu_generic,DC_ALU_COP1,&&dc_alu_generic,&&dc_alu_generic,DC_ALU_BRANCH,DC_ALU_BRANCH,&&dc_alu_generic,&&dc_alu_generic,
+      &&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,
+      &&dc_alu_lb,&&dc_alu_lh,&&dc_alu_generic,&&dc_alu_lw,&&dc_alu_lbu,&&dc_alu_lhu,&&dc_alu_generic,&&dc_alu_generic,
+      &&dc_alu_sb,&&dc_alu_sh,&&dc_alu_generic,&&dc_alu_sw,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,
+      &&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,
+      &&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,&&dc_alu_generic,
+   };
+#endif
    while (!stop)
      {
 #ifdef __DREAMCAST__
@@ -3288,16 +3602,170 @@ void pure_interpreter()
 	     break;
 	  }
 #endif
-	prefetch();
+#if defined(DC_INTERP_BLOCK) && !defined(DC_INTERP_BLOCK_DISPATCH)
+#ifdef DC_INTERP_BLOCK_FRONTIER
+        // Attempt once at an original-handler boundary. Unsupported starts
+        // and short suffixes must not pay native cache lookup on every ALU.
+        if(native_frontier) {
+            native_frontier=0;
+#endif
+        unsigned block_limit=16;
+        if(dc_interp_step_limit && dc_interp_step_limit-dc_interp_steps<block_limit)
+            block_limit=dc_interp_step_limit-dc_interp_steps;
+        unsigned block_done=dc_interp_block_execute(interp_addr,block_limit);
+        if(block_done) {
+#ifndef DC_INTERP_PC_LAZY
+            PC->addr=interp_addr+(block_done-1)*4;
+#endif
+            interp_addr+=block_done*4;
+            if(dc_interp_step_limit)dc_interp_steps+=block_done-1;
+            continue;
+        }
+#ifdef DC_INTERP_BLOCK_FRONTIER
+        }
+#endif
+#endif
+#if defined(DC_INTERP_ALU) && defined(DC_INTERP_MEMORY) && defined(DC_INTERP_DIRECT)
+        /* Keep the ordinary RAM fetch in this loop, avoiding a call and an
+         * opcode reload. Read each instruction afresh, including modified code. */
+        if ((interp_addr & 0xdfc00000ul) == 0x80000000ul) {
+           op=*(unsigned long *)(rdramb+(interp_addr & 0x3ffffcul));
+#ifndef DC_INTERP_PC_LAZY
+           PC->addr=interp_addr;
+#endif
+        } else prefetch();
+#else
+        prefetch();
+#endif
 	if (stop)
 	  break;
+#ifdef DC_INTERP_BLOCK_DISPATCH
+        if(native_frontier) {
+            native_frontier=0;
+            unsigned offset=interp_addr&0x3ffffc;
+            unsigned block_limit=16;
+            if(dc_interp_step_limit && dc_interp_step_limit-dc_interp_steps<block_limit)
+                block_limit=dc_interp_step_limit-dc_interp_steps;
+            unsigned block_done=~0u;
+#ifdef DC_INTERP_BLOCK_HOT_ENTRY
+            block_done=dc_interp_block_hot_execute(interp_addr,block_limit,(unsigned*)reg,&op);
+#endif
+            if(block_done==~0u) {
+                if(!(interp_addr&3) && (interp_addr&0xdfc00000u)==0x80000000u &&
+                   offset<=sizeof(rdram)-8 && dc_interp_block_candidate(op) &&
+                   dc_interp_block_candidate(rdram[offset/4+1]))
+                    block_done=dc_interp_block_execute(interp_addr,block_limit);
+            }
+            if(block_done!=~0u && block_done) {
+#ifndef DC_INTERP_PC_LAZY
+                PC->addr=interp_addr+(block_done-1)*4;
+#endif
+                interp_addr+=block_done*4;
+                if(dc_interp_step_limit)dc_interp_steps+=block_done-1;
+                continue;
+            }
+        }
+#endif
 #ifdef COMPARE_CORE
 	compare_core();
 #endif
 	//if(interp_addr == 0x80000194) _break();
 	//if (Count > 0x2000000) printf("inter:%x,%x\n", interp_addr,op);
 	//if ((Count+debug_count) > 0xabaa2c) stop=1;
-	interp_ops[((op >> 26) & 0x3F)]();
+#ifdef DC_INTERP_ALU
+#ifdef DC_CPU_PROFILE
+        profile_instruction();
+#endif
+        goto *alu_dispatch[(op >> 26) & 63];
+      dc_alu_special:
+        switch(op & 63) {
+          case 0: SLL(); break;
+          case 33: ADDU(); break;
+          case 37: OR(); break;
+#ifdef DC_INTERP_EXPAND
+          case 2: SRL(); break;
+          case 3: SRA(); break;
+          case 4: SLLV(); break;
+          case 6: SRLV(); break;
+          case 7: SRAV(); break;
+          case 16: MFHI(); break;
+          case 18: MFLO(); break;
+          case 35: SUBU(); break;
+          case 36: AND(); break;
+          case 38: XOR(); break;
+          case 39: NOR(); break;
+          case 42: SLT(); break;
+          case 43: SLTU(); break;
+#endif
+          default:
+#ifdef DC_INTERP_PC_LAZY
+            PC->addr=interp_addr;
+#endif
+            SPECIAL();
+#ifdef DC_INTERP_BLOCK_FRONTIER
+            native_frontier=1;goto dc_alu_after;
+#else
+            break;
+#endif
+        }
+        goto dc_alu_done;
+      dc_alu_addiu: ADDIU(); goto dc_alu_done;
+      dc_alu_andi: ANDI(); goto dc_alu_done;
+      dc_alu_ori: ORI(); goto dc_alu_done;
+      dc_alu_lui: LUI(); goto dc_alu_done;
+      dc_alu_lb: LB(); goto dc_alu_done;
+      dc_alu_lh: LH(); goto dc_alu_done;
+      dc_alu_lw: LW(); goto dc_alu_done;
+      dc_alu_lbu: LBU(); goto dc_alu_done;
+      dc_alu_lhu: LHU(); goto dc_alu_done;
+      dc_alu_sb: SB(); goto dc_alu_done;
+      dc_alu_sh: SH(); goto dc_alu_done;
+      dc_alu_sw: SW(); goto dc_alu_done;
+#ifdef DC_INTERP_EXPAND
+      dc_alu_xori: XORI(); goto dc_alu_done;
+      dc_alu_cop1:
+#ifdef DC_INTERP_PC_LAZY
+        PC->addr=interp_addr;
+#endif
+        // Preserve the CU1 exception and FP profiling boundary, but dispatch
+        // straight to the original format handler rather than COP1->S/D/etc.
+        if(check_cop1_unusable())goto dc_alu_done;
+        start_section(FP_SECTION);
+        switch((op>>21)&31) {
+          case 0: MFC1(); break;
+          case 2: CFC1(); break;
+          case 4: MTC1(); break;
+          case 6: CTC1(); break;
+          case 8: interp_cop1_bc[(op>>16)&3](); break;
+          case 16: interp_cop1_s[op&63](); break;
+          case 17: interp_cop1_d[op&63](); break;
+          case 20: interp_cop1_w[op&63](); break;
+          case 21: interp_cop1_l[op&63](); break;
+          default: interp_cop1[(op>>21)&31](); break;
+        }
+        end_section(FP_SECTION);
+        goto dc_alu_done;
+#endif
+#ifdef DC_INTERP_BRANCH_PAIR
+      dc_alu_branch:
+        if(dc_interp_branch_pair(op>>26))goto dc_alu_done;
+#endif
+      dc_alu_generic:
+#ifdef DC_INTERP_PC_LAZY
+        PC->addr=interp_addr;
+#endif
+        interp_ops[(op >> 26) & 63]();
+#ifdef DC_INTERP_BLOCK_FRONTIER
+        native_frontier=1;goto dc_alu_after;
+#endif
+      dc_alu_done: ;
+#ifdef DC_INTERP_BLOCK_FRONTIER
+        native_frontier=0;
+      dc_alu_after: ;
+#endif
+#else
+        INTERP_EXECUTE();
+#endif
 
 	//Count = (unsigned long)Count + 2;
 	//if (interp_addr == 0x80000180) last_addr = interp_addr;
@@ -3306,7 +3774,11 @@ void pure_interpreter()
 	if (debugger_mode) update_debugger();
 #endif
      }
+#endif /* DC_INTERP_LOCAL / DC_INTERP_THREAD */
    PC->addr = interp_addr;
+#ifdef DC_INTERP_BLOCK_EPOCH
+   dc_interp_block_leave();
+#endif
 #ifdef __DREAMCAST__
    /* go() can be re-entered per ROM; do not leak a precomp_instr each time. */
    free(PC);
@@ -3326,7 +3798,7 @@ void interprete_section(unsigned long addr)
 	compare_core();
 #endif
 	PC->addr = interp_addr;
-	interp_ops[((op >> 26) & 0x3F)]();
+	INTERP_EXECUTE();
 #ifdef DBG
 	PC->addr = interp_addr;
 	if (debugger_mode) update_debugger();

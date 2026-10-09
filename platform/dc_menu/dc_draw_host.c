@@ -36,6 +36,8 @@ void dc_draw_shutdown(void)
 	started = 0;
 }
 
+void dc_draw_shutdown_keep(void) { dc_draw_shutdown(); }
+
 void dc_draw_begin(uint16_t clear_rgb565)
 {
 	int r;

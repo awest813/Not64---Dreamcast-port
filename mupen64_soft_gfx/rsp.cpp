@@ -142,6 +142,16 @@ unsigned long RSP::seg2phys(unsigned long seg)
    return segments[(seg>>24)&0xF] + (seg & 0x7FFFFF);
 }
 
+#ifdef DC_RSP_LAZY_CLIP
+void RSP::materializeVertex(unsigned slot)
+{
+    unsigned bit=1u<<slot;
+    if(!(deferredVertices&bit))return;
+    unsigned matrix=deferredSlots[slot];
+    vtx[slot].v=vtx[slot].v*deferredMatrices[matrix];
+    --deferredRefs[matrix];deferredVertices&=~bit;
+}
+#endif
 void RSP::executeDList()
 {
    OSTask_t *task = (OSTask_t*)(gfxInfo.DMEM+0xFC0);
@@ -159,6 +169,9 @@ void RSP::executeDList()
            unsigned outside = 63;
            for (unsigned i=first; i<=last; ++i) {
                if (!(validVertices & (1u << i))) { error=true; break; }
+#ifdef DC_RSP_LAZY_CLIP
+               materializeVertex(i);
+#endif
                Vektor<float,4>& v = vtx[i].v;
                unsigned clip = (v[0] < -v[3] ? 1 : 0) | (v[0] > v[3] ? 2 : 0) |
                                (v[1] < -v[3] ? 4 : 0) | (v[1] > v[3] ? 8 : 0) |
@@ -370,6 +383,20 @@ void RSP::VTX()
    int n = ((*currentCommand >> 20) & 0xF)+1;
    if (f3dex2) { n=(*currentCommand>>12)&255; v0=((*currentCommand>>1)&127)-n; }
    if (v0<0 || n<0 || v0+n>32 || addr>SOFT_RDRAM_BYTES-(unsigned)n*16) { error=true; return; }
+#ifdef DC_RSP_LAZY_CLIP
+   unsigned deferredMatrix=0;
+   bool defer=!rdp->isRasterEnabled() && n;
+   // Release overwritten vertices first. At least one of 32 snapshots is then
+   // unused even when every live vertex was loaded under a distinct matrix.
+   for(int i=v0;i<v0+n;i++)if(deferredVertices&(1u<<i)) {
+       --deferredRefs[deferredSlots[i]];deferredVertices&=~(1u<<i);
+   }
+   if(defer) {
+       while(deferredMatrix<32 && deferredRefs[deferredMatrix])++deferredMatrix;
+       if(deferredMatrix==32){error=true;return;}
+       deferredMatrices[deferredMatrix]=MP;
+   }
+#endif
    //int length = *currentCommand & 0xFFFF;
    
    for (int i=0; i<n; i++)
@@ -378,8 +405,17 @@ void RSP::VTX()
 	vtx[v0+i].v[1] = (int)(*((short*)(p + i*16 + (2^(S16<<1)))));
 	vtx[v0+i].v[2] = (int)(*((short*)(p + i*16 + (4^(S16<<1)))));
 	vtx[v0+i].v[3] = 1;
-	vtx[v0+i].v = vtx[v0+i].v * MP;
+#ifdef DC_RSP_LAZY_CLIP
+        if(defer) {
+            deferredSlots[v0+i]=deferredMatrix;++deferredRefs[deferredMatrix];
+            deferredVertices|=1u<<(v0+i);
+        } else
+#endif
+        vtx[v0+i].v = vtx[v0+i].v * MP;
 	validVertices |= 1u << (v0+i);
+        // CULLDL still needs clip-space positions on a skipped list. UV,
+        // lighting and shade are local to this RSP task and only used to draw.
+        if(!rdp->isRasterEnabled())continue;
 	
 	vtx[v0+i].s = *((short*)(p + i*16 + (8^(S16<<1)))) / 32.0f;
 	vtx[v0+i].t = *((short*)(p + i*16 + (10^(S16<<1)))) / 32.0f;
@@ -631,6 +667,9 @@ void RSP::TRI1()
    
    if(f3dex2) { v0=(*currentCommand>>17)&127; v1=(*currentCommand>>9)&127; v2=(*currentCommand>>1)&127; }
    if(v0>=32 || v1>=32 || v2>=32) { error=true; return; }
+   // Retain command/index validation, then omit the clipping/projection work
+   // whose only effect would have been the suppressed RDP draw.
+   if(!rdp->isRasterEnabled())return;
    Vertex cache[140];
    int cache_size = 0;
    

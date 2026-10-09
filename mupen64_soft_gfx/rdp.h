@@ -52,10 +52,13 @@ class RDP
    BL *bl;
    
    int cycleType;
+   bool rasterEnabled;
    
  public:
    RDP(GFX_INFO);
    ~RDP();
+   void setRasterEnabled(bool enabled) { rasterEnabled=enabled; }
+   bool isRasterEnabled() const { return rasterEnabled; }
    
    void setOtherMode_h(int mode, int data);
    void setOtherMode_l(int mode, int data);

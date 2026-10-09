@@ -87,6 +87,11 @@ void RS::fillRect(float ux, float uy, float lx, float ly, RDP *rdp)
 
 void RS::texRect(int tile, float ux, float uy, float lx, float ly, float s, float t, float dsdx, float dtdy, RDP *rdp, bool flip)
 {
+#ifdef DC_SOFT_REFERENCE
+   const bool sampleSecond=true;
+#else
+   const bool sampleSecond=rdp->cc->needsSecondTexel();
+#endif
    if (flip && (rdp->cycleType==0 || rdp->cycleType==1)) {
        int x0=(int)(sulx>ux?sulx:ux), y0=(int)(suly>uy?suly:uy);
        int x1=(int)(slrx<lx?slrx:lx), y1=(int)(slry<ly?slry:ly);
@@ -97,7 +102,8 @@ void RS::texRect(int tile, float ux, float uy, float lx, float ly, float s, floa
            for(int x=x0;x<x1;x++,pt+=dtdy) {
                Color32 texel=rdp->tx->getTexel(ps,pt,tile,rdp->tf);
                if(rdp->cycleType==1) {
-                   Color32 next=rdp->tx->getTexel(ps,pt,(tile+1)&7,rdp->tf);
+                   Color32 next=(sampleSecond || x+1==x1) ?
+                       rdp->tx->getTexel(ps,pt,(tile+1)&7,rdp->tf) : Color32(0);
                    rdp->bl->cycle2ModeDraw(x,y,rdp->cc->combine2(texel,next));
                } else rdp->bl->cycle1ModeDraw(x,y,rdp->cc->combine1(texel));
            }
@@ -119,6 +125,46 @@ void RS::texRect(int tile, float ux, float uy, float lx, float ly, float s, floa
 	if (sulx > ux) s += (sulx - ux) * dsdx;
 	if (suly > uy) t += (suly - uy) * dtdy;
 #ifndef DC_SOFT_REFERENCE
+#ifdef DC_SOFT_IDENTITY_SPAN
+        if(rdp->cycleType==0 && rdp->bl->identityRectangle(ulx,uly,lrx,lry)) {
+            BL &bl=*rdp->bl;
+            unsigned short *dst=(unsigned short*)bl.cImg;
+            Color32 last;
+            bool wrote=false;
+#ifdef DC_SOFT_COMBINE_SPAN
+            CC::SimpleSpan span;
+            bool simple=rdp->cc->prepareSimpleSpan(span),sampled=false;
+            Color32 lastTexel;
+#endif
+            float pt=t;
+            for(int y=uly;y<lry;y++,pt+=dtdy) {
+                float ps=s;
+                unsigned row=y*bl.width;
+                for(int x=ulx;x<lrx;x++,ps+=dsdx) {
+#ifdef DC_SOFT_COMBINE_SPAN
+                    lastTexel=rdp->tx->getTexel(ps,pt,tile,rdp->tf);sampled=true;
+                    Color32 color=simple?span.combine(lastTexel):rdp->cc->combine1(lastTexel);
+#else
+                    Color32 color=rdp->cc->combine1(rdp->tx->getTexel(ps,pt,tile,rdp->tf));
+#endif
+                    color.clamp();
+                    if(bl.cvg_x_alpha && color.getAlpha()<32)continue;
+                    if(bl.alpha_cvg_sel && !bl.cvg_x_alpha)color.setAlpha(255);
+                    if((bl.alphaCompare&1) && color.getAlpha()<bl.blendColor.getAlpha())continue;
+                    unsigned out=(unsigned)(int)color;
+                    dst[(row+x)^S16]=((out>>16)&0xf800)|((out>>13)&0x7c0)|((out>>10)&0x3e)|1;
+                    last=color;wrote=true;
+                }
+            }
+            // CC/TX cannot observe blender temporaries between pixels. Retain
+            // the last accepted write; rejected final samples still update CC.
+            if(wrote)bl.finishIdentityRectangle(last);
+#ifdef DC_SOFT_COMBINE_SPAN
+            if(simple && sampled)rdp->cc->finishSimpleSpan(lastTexel);
+#endif
+            return;
+        }
+#endif
         if(rdp->cycleType==0 && rdp->bl->opaqueRectangle(ulx,uly,lrx,lry)) {
             BL &bl=*rdp->bl;
             unsigned short *dst=(unsigned short*)bl.cImg;
@@ -149,7 +195,8 @@ void RS::texRect(int tile, float ux, float uy, float lx, float ly, float s, floa
 	       {
 		  Color32 t = rdp->tx->getTexel(ps, pt, tile, rdp->tf);
 		  if (rdp->cycleType == 1) {
-		      Color32 t1 = rdp->tx->getTexel(ps, pt, (tile + 1) & 7, rdp->tf);
+		      Color32 t1 = (sampleSecond || j+1==lrx) ?
+                          rdp->tx->getTexel(ps, pt, (tile + 1) & 7, rdp->tf) : Color32(0);
 		      Color32 c = rdp->cc->combine2(t, t1);
 		      rdp->bl->cycle2ModeDraw(j,i,c);
 		  } else {
@@ -192,6 +239,14 @@ void RS::tri_shade_txtr_zbuff(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<f
 			      float s0, float t0, float s1, float t1, float s2, float t2, int tile,
 			      float w0, float w1, float w2, float z0, float z1, float z2, RDP *rdp)
 {
+#ifdef DC_SOFT_REFERENCE
+   const bool sampleSecond=true;
+#else
+   const bool sampleSecond=rdp->cc->needsSecondTexel();
+#endif
+   // Restore the unused next-tile input at the last covered pixel of every
+   // row. This also preserves final state after depth/alpha rejection and
+   // when the scissor cuts either half of the triangle short.
    if (rdp->cycleType == 0)
      {
 	// sorting vertex by y values
@@ -549,7 +604,8 @@ void RS::tri_shade_txtr_zbuff(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<f
 			    Color32 shade((int)(r+0.5f), (int)(g+0.5f), (int)(b+0.5f), (int)(a+0.5f));
 			    rdp->cc->setShade(shade);
 			    Color32 txt= rdp->tx->getTexel(s/w, t/w, tile, rdp->tf);
-			    Color32 txt2=rdp->tx->getTexel(s/w, t/w, tile+1,rdp->tf);
+			    Color32 txt2=(sampleSecond || x+1>=max || x+1>=slrx) ?
+                                rdp->tx->getTexel(s/w, t/w, tile+1,rdp->tf) : Color32(0);
 			    Color32 c  = rdp->cc->combine2(txt, txt2);
 			    rdp->bl->cycle2ModeDraw(x,y,c,z,shade);
 			 }
@@ -642,7 +698,8 @@ void RS::tri_shade_txtr_zbuff(Vektor<float,4>& v0, Vektor<float,4>& v1, Vektor<f
 			    Color32 shade((int)(r+0.5f), (int)(g+0.5f), (int)(b+0.5f), (int)(a+0.5f));
 			    rdp->cc->setShade(shade);
 			    Color32 txt= rdp->tx->getTexel(s/w, t/w, tile, rdp->tf);
-			    Color32 txt2=rdp->tx->getTexel(s/w, t/w, tile+1,rdp->tf);
+			    Color32 txt2=(sampleSecond || x+1>=max || x+1>=slrx) ?
+                                rdp->tx->getTexel(s/w, t/w, tile+1,rdp->tf) : Color32(0);
 			    Color32 c  = rdp->cc->combine2(txt, txt2);
 			    rdp->bl->cycle2ModeDraw(x,y,c,z,shade);
 			 }

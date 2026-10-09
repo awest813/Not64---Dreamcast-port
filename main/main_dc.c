@@ -759,15 +759,15 @@ static int smoke_menu(void)
 	dc_draw_init();
 	dc_menu_draw(&st, "Not64 test");
 	{
-		const char *row = dc_draw_host_row(3);	/* title, blank, 0, 1 */
-		if (!row || row[1] != '>' || !strstr(row, "rom01") ||
+		const char *row = dc_draw_host_row(5);
+		if (!row || row[2] != '>' || !strstr(row, "rom01") ||
 		    !strstr(row, "2 MiB")) {
 			printf("menu smoke: selected row drew as '%s'\n",
 			       row ? row : "(null)");
 			fail = 1;
 		}
-		row = dc_draw_host_row(2);
-		if (!row || row[1] == '>') {
+		row = dc_draw_host_row(4);
+		if (!row || row[2] == '>') {
 			printf("menu smoke: marker also on the unselected row\n");
 			fail = 1;
 		}
@@ -781,6 +781,7 @@ static int smoke_menu(void)
 		fail = 1;
 	} else {
 		for (i = 0; i < n; ++i) {
+			if(real.items[i].directory)continue;
 			const char *lbl = real.items[i].label;
 			size_t len = strlen(lbl);
 			if (len < 4 || (strcmp(lbl + len - 4, ".z64") &&
@@ -790,7 +791,7 @@ static int smoke_menu(void)
 				fail = 1;
 				break;
 			}
-			if (i > 0 && strcmp(real.items[i - 1].label, lbl) > 0) {
+			if (i > 0 && !real.items[i-1].directory && strcmp(real.items[i - 1].label, lbl) > 0) {
 				printf("menu smoke: '%s' sorts after '%s'\n",
 				       real.items[i - 1].label, lbl);
 				fail = 1;
@@ -824,6 +825,10 @@ static int smoke_menu(void)
 
 		controller_DC_host_set_triggers(0, 0, 0);
 		controller_DC_host_set(0, DC_CONT_A, 0, 0);
+		{
+			const unsigned input[]={DC_CONT_A,DC_CONT_A,0,DC_CONT_A};
+			controller_DC_host_queue(input,sizeof(input)/sizeof(input[0]));
+		}
 		memset(&choice, 0, sizeof(choice));
 		picked = dc_menu_run(romFile_topLevel, &choice);
 		if (picked != 1) {
@@ -1382,6 +1387,7 @@ static void init_controllers(void *header)
 	int i;
 
 	init_controller_ts();
+	dc_controls_apply();
 	control_info.MemoryBswaped = TRUE;
 	control_info.HEADER = (BYTE *)header;
 	control_info.Controls = Controls;
@@ -1394,6 +1400,7 @@ static void init_controllers(void *header)
 	auto_assign_controllers();
 }
 
+static int ui_session;
 static int load_and_step(const char *path, unsigned long steps)
 {
 	fileBrowser_file romfile;
@@ -1486,6 +1493,9 @@ static int load_and_step(const char *path, unsigned long steps)
 	}
 #endif
 	if (!ret) go();
+#ifdef DC_STATE_AUDIT
+	if (!ret) savestates_audit();
+#endif
 	printf("Interpreter stopped (budget=%lu interp_addr=0x%08lx stop=%d)\n",
 	       steps, interp_addr, stop);
 	ret |= check_cputest(path) | check_vitest();
@@ -1520,9 +1530,9 @@ static int load_and_step(const char *path, unsigned long steps)
     /* Keep the last submitted image visible before restoring console video. */
 #if defined(DC_EMBED_VITEST) || defined(DC_GAME_DISC)
     /* Leave the diagnostic result visible for emulator/hardware inspection. */
-    thd_sleep(60000);
+    if (!ui_session && !dc_overlay_has_action()) thd_sleep(60000);
 #else
-    thd_sleep(1000);
+    if (!ui_session) thd_sleep(1000);
 #endif
 #endif
 	romClosed_audio();
@@ -1561,10 +1571,14 @@ int main(int argc, char **argv)
         skipMenu = 1;
 #endif
     unsigned long steps = 10000, frames = 0;
+    int explicit_budget=0;
 #ifdef DC_GAME_DISC
     rompath = "/cd/game.z64";
     steps = DC_GAME_STEPS;
     controller_DC_set_start_pulse(DC_GAME_START);
+#endif
+#ifdef DC_UI_BOOT
+    skipMenu=0;
 #endif
 #ifdef DC_EMBED_VITEST
     rompath = "/rd/roms/dc_vitest.z64";
@@ -1588,10 +1602,20 @@ int main(int argc, char **argv)
     }
     if (arg < argc && argv[arg][0] != '-') {
         if (!positive_number(argv[arg++], &steps)) goto usage;
+        explicit_budget=1;
     }
     while (arg < argc) {
         if (!strcmp(argv[arg], "--frames") && arg + 1 < argc) {
             if (!positive_number(argv[arg + 1], &frames)) goto usage;
+            explicit_budget=1;
+            arg += 2;
+        } else if (!strcmp(argv[arg], "--frameskip") && arg + 1 < argc) {
+            unsigned long skip;
+            if (!strcmp(argv[arg+1],"balanced")) skip=DC_FRAMESKIP_BALANCED;
+            else if (!strcmp(argv[arg+1],"steady")) skip=DC_FRAMESKIP_STEADY;
+            else if (!strcmp(argv[arg+1],"0")) skip=0;
+            else if (!positive_number(argv[arg+1], &skip) || skip>DC_FRAMESKIP_STEADY) goto usage;
+            dc_gfx_set_frameskip((unsigned)skip);
             arg += 2;
         } else if (!strcmp(argv[arg], "--input-replay") && arg + 1 < argc) {
             if (!controller_DC_load_input_replay(argv[arg+1])) goto usage;
@@ -1614,7 +1638,19 @@ int main(int argc, char **argv)
             arg += 2;
         } else goto usage;
     }
+    ui_session=!skipMenu;
+    if(ui_session && !explicit_budget) { steps=0; frames=0; }
     dc_gfx_set_frame_limit(frames);
+#ifdef DC_GAME_FRAMESKIP
+#ifndef DC_UI_BOOT
+    dc_gfx_set_frameskip(DC_GAME_FRAMESKIP);
+#endif
+#endif
+    if(dc_gfx_get_frameskip()==DC_FRAMESKIP_STEADY)
+        printf("Frameskip: steady (two, three, three, three skipped lists)\n");
+    else if(dc_gfx_get_frameskip()==DC_FRAMESKIP_BALANCED)
+        printf("Frameskip: balanced (alternating two and three skipped lists)\n");
+    else printf("Frameskip: %u skipped lists per rendered list\n",dc_gfx_get_frameskip());
 #ifdef DC_GAME_INPUT_REPLAY
     if (!controller_DC_load_input_replay("/cd/input.txt")) goto usage;
 #endif
@@ -1630,7 +1666,7 @@ int main(int argc, char **argv)
     list_rom_dir();
     probe_controllers();
 #if !defined(DC_EMBED_VITEST) && !defined(DC_GAME_DISC)
-    if (probe_saves()) fail = 1;
+    if (!ui_session && probe_saves()) fail = 1;
 #endif
     for (;;) {
 	int overlay_act;
@@ -1668,14 +1704,26 @@ int main(int argc, char **argv)
 	}
 
 	printf("Dreamcast interpreter: %lu steps using %s\n", steps, rompath);
-	if (load_and_step(rompath, steps)) fail = 1;
+	{
+		int result=load_and_step(rompath, steps);
+		if(result && ui_session) {
+			dc_menu_error("The game could not be started or continued. Check the ROM and storage, then try again.");
+			skipMenu=0; continue;
+		}
+		if(result)fail=1;
+	}
 	overlay_act = dc_overlay_take_action();
 	if (overlay_act == DC_OVERLAY_RESET) {
 		printf("overlay: reset %s\n", rompath);
+		skipMenu=1;
 		continue;
 	}
-	if (overlay_act == DC_OVERLAY_MENU && !skipMenu)
+	if (overlay_act == DC_OVERLAY_MENU) {
+		skipMenu=0; ui_session=1; steps=0;
+		dc_gfx_set_frame_limit(0);
 		continue;
+	}
+	if(ui_session) { skipMenu=0; continue; }
 	break;
     }
 #ifndef DC_HOST_STUB
@@ -1691,7 +1739,7 @@ int main(int argc, char **argv)
 #endif
     return fail;
 usage:
-    fprintf(stderr, "Usage: %s [--menu] [rom.z64 [positive-step-budget]] [--frames positive-count] [--capture output.ppm] [--start-at VI] [--input-replay file]\n", argv[0]);
+    fprintf(stderr, "Usage: %s [--menu] [rom.z64 [positive-step-budget]] [--frames positive-count] [--frameskip 0..5|balanced|steady] [--capture output.ppm] [--start-at VI] [--input-replay file]\n", argv[0]);
 #ifdef DC_HOST_STUB
     fprintf(stderr, "Host checkpoints: --load-slot 1..9 --save-slot 1..9; repeat --start-at for separate presses (up to 16).\n");
 #endif

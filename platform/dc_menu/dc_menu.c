@@ -13,6 +13,7 @@
 
 #include "dc_menu.h"
 #include "dc_draw.h"
+#include "dc_ui.h"
 #include "../dc_settings.h"
 #include "../../gc_input/controller.h"
 
@@ -26,7 +27,9 @@ enum {
 	DC_MENU_EDGE_B     = 1u << 1,
 	DC_MENU_EDGE_START = 1u << 2,
 	DC_MENU_EDGE_Z     = 1u << 3,
-	DC_MENU_EDGE_R     = 1u << 4
+	DC_MENU_EDGE_R     = 1u << 4,
+	DC_MENU_EDGE_LEFT  = 1u << 5,
+	DC_MENU_EDGE_RIGHT = 1u << 6
 };
 
 static unsigned int decode_edges(const BUTTONS *k)
@@ -38,6 +41,8 @@ static unsigned int decode_edges(const BUTTONS *k)
 	if (k->START_BUTTON) m |= DC_MENU_EDGE_START;
 	if (k->Z_TRIG)       m |= DC_MENU_EDGE_Z;
 	if (k->R_TRIG)       m |= DC_MENU_EDGE_R;
+	if (k->L_DPAD)       m |= DC_MENU_EDGE_LEFT;
+	if (k->R_DPAD)       m |= DC_MENU_EDGE_RIGHT;
 	return m;
 }
 
@@ -81,6 +86,7 @@ static int name_cmp(const void *a, const void *b)
 	const dc_menu_entry *ea = (const dc_menu_entry *)a;
 	const dc_menu_entry *eb = (const dc_menu_entry *)b;
 	const char *x = ea->label, *y = eb->label;
+	if (ea->directory != eb->directory) return ea->directory ? -1 : 1;
 
 	for (; *x && *y; ++x, ++y) {
 		char cx = *x, cy = *y;
@@ -105,16 +111,16 @@ int dc_menu_list_load(dc_menu_list *list, fileBrowser_file *dir)
 	list->items = NULL;
 	list->count = 0;
 	list->dir[0] = '\0';
+	list->error = 0;
 	strncpy(list->dir, dir->name, sizeof(list->dir) - 1);
 
-	if (romFile_init)
-		romFile_init(dir);
-	if (!romFile_readDir)
+	if (!romFile_readDir) {
+		list->error=FILE_BROWSER_ERROR;
 		return FILE_BROWSER_ERROR;
+	}
 
 	found = romFile_readDir(dir, &raw);
-	if (found < 0)
-		return found;
+	if (found < 0) { list->error=found; free(raw); return found; }
 	if (found == 0) {
 		free(raw);
 		return 0;
@@ -122,6 +128,7 @@ int dc_menu_list_load(dc_menu_list *list, fileBrowser_file *dir)
 
 	list->items = (dc_menu_entry *)malloc(sizeof(dc_menu_entry) * (size_t)found);
 	if (!list->items) {
+		list->error=FILE_BROWSER_ERROR;
 		free(raw);
 		return FILE_BROWSER_ERROR;
 	}
@@ -129,9 +136,7 @@ int dc_menu_list_load(dc_menu_list *list, fileBrowser_file *dir)
 	for (i = 0; i < found; ++i) {
 		dc_menu_entry *e;
 
-		if (raw[i].attr & FILE_BROWSER_ATTR_DIR)
-			continue;
-		if (!ext_is_rom(raw[i].name))
+		if (!(raw[i].attr & FILE_BROWSER_ATTR_DIR) && !ext_is_rom(raw[i].name))
 			continue;
 
 		e = &list->items[kept];
@@ -139,6 +144,7 @@ int dc_menu_list_load(dc_menu_list *list, fileBrowser_file *dir)
 		strncpy(e->path, raw[i].name, FILE_BROWSER_MAX_PATH_LEN - 1);
 		strncpy(e->label, basename_of(raw[i].name), DC_MENU_MAX_NAME - 1);
 		e->size = raw[i].size;
+		e->directory = !!(raw[i].attr & FILE_BROWSER_ATTR_DIR);
 		kept++;
 	}
 	free(raw);
@@ -177,55 +183,6 @@ static const char *const dc_rom_dirs[] = {
 };
 #define DC_ROM_DIR_COUNT (sizeof(dc_rom_dirs) / sizeof(dc_rom_dirs[0]))
 #endif
-
-/* Try the configured directory, then the usual Dreamcast ones. Returns the
- * entry count, and on 0 leaves list->dir holding what was searched so the
- * empty screen can say where it looked. */
-static int dc_menu_find_roms(dc_menu_list *list, fileBrowser_file *dir)
-{
-	int n = dc_menu_list_load(list, dir);
-	char tried[FILE_BROWSER_MAX_PATH_LEN];
-
-	if (n > 0)
-		return n;
-
-	tried[0] = '\0';
-	strncpy(tried, dir->name, sizeof(tried) - 1);
-
-#ifndef DC_HOST_STUB
-	{
-		unsigned int i;
-
-		for (i = 0; i < DC_ROM_DIR_COUNT; ++i) {
-			fileBrowser_file probe;
-
-			if (strcmp(dir->name, dc_rom_dirs[i]) == 0)
-				continue;
-
-			memset(&probe, 0, sizeof(probe));
-			strncpy(probe.name, dc_rom_dirs[i],
-				FILE_BROWSER_MAX_PATH_LEN - 1);
-			/* No DIR attr on purpose: romFile_init() would try to
-			 * create it, and probing must not mkdir its way around
-			 * the filesystem. */
-			n = dc_menu_list_load(list, &probe);
-			if (n > 0)
-				return n;
-
-			if (strlen(tried) + strlen(dc_rom_dirs[i]) + 3 < sizeof(tried)) {
-				strcat(tried, ", ");
-				strcat(tried, dc_rom_dirs[i]);
-			}
-		}
-	}
-#endif
-
-	list->items = NULL;
-	list->count = 0;
-	strncpy(list->dir, tried, sizeof(list->dir) - 1);
-	list->dir[sizeof(list->dir) - 1] = '\0';
-	return 0;
-}
 
 /* ---- input ------------------------------------------------------------ */
 
@@ -292,12 +249,13 @@ dc_menu_action dc_menu_step(dc_menu_state *st, const BUTTONS *keys)
 	pressed = now & ~st->prev;	/* act on the press, not the hold */
 	st->prev = now;
 
-	/* A picks, B backs out. Start also picks: it is the button a player
-	 * reaches for, and there is nothing else it could mean here. */
-	if (count > 0 && (pressed & (DC_MENU_EDGE_A | DC_MENU_EDGE_START)))
-		return DC_MENU_PICK;
+	/* A opens, B backs out, Start rescans, and Left/Right select storage. */
 	if (pressed & DC_MENU_EDGE_B)
 		return DC_MENU_CANCEL;
+	if (pressed & DC_MENU_EDGE_START) return DC_MENU_REFRESH;
+	if (pressed & DC_MENU_EDGE_LEFT) return DC_MENU_SOURCE_PREV;
+	if (pressed & DC_MENU_EDGE_RIGHT) return DC_MENU_SOURCE_NEXT;
+	if (count > 0 && (pressed & DC_MENU_EDGE_A)) return DC_MENU_PICK;
 
 	if (count == 0) {
 		st->repeat_dir = 0;
@@ -348,274 +306,190 @@ dc_menu_action dc_menu_step(dc_menu_state *st, const BUTTONS *keys)
 	return DC_MENU_NONE;
 }
 
-/* ---- drawing ---------------------------------------------------------- */
+/* ---- browser presentation and navigation ----------------------------- */
 
-#define COL_BG    DC_RGB(0x10, 0x14, 0x20)
-#define COL_BAR   DC_RGB(0x28, 0x50, 0x90)
-#define COL_TITLE DC_RGB(0xFF, 0xFF, 0xFF)
-#define COL_TEXT  DC_RGB(0xC8, 0xC8, 0xC8)
-#define COL_PICK  DC_RGB(0xFF, 0xFF, 0x80)
-#define COL_HINT  DC_RGB(0x80, 0x88, 0x98)
-
-static void size_text(char *buf, size_t n, unsigned int bytes)
-{
-	if (bytes >= 1024u * 1024u)
-		snprintf(buf, n, "%u MiB", bytes / (1024u * 1024u));
-	else if (bytes >= 1024u)
-		snprintf(buf, n, "%u KiB", bytes / 1024u);
-	else
-		snprintf(buf, n, "%u B", bytes);
+static void size_text(char *buf, size_t n, unsigned bytes) {
+    if(bytes>=1024u*1024u)snprintf(buf,n,"%u MiB",bytes/(1024u*1024u));
+    else if(bytes>=1024u)snprintf(buf,n,"%u KiB",bytes/1024u);
+    else snprintf(buf,n,"%u B",bytes);
 }
 
-void dc_menu_draw(const dc_menu_state *st, const char *title)
-{
-	const int cw = dc_draw_char_w();
-	const int ch = dc_draw_char_h();
-	const int cols = dc_draw_width() / cw;
-	char line[128];
-	int i;
-
-	if (!st)
-		return;
-
-	dc_draw_begin(COL_BG);
-	dc_draw_fill_rect(0, 0, dc_draw_width(), ch, COL_BAR);
-	dc_draw_text(cw, 0, COL_TITLE, title ? title : "Not64");
-
-	if (!st->list || st->list->count == 0) {
-		dc_draw_text(cw, ch * 2, COL_TEXT, "No ROMs found.");
-		if (st->list && st->list->dir[0]) {
-			snprintf(line, sizeof(line), "Looked in: %.*s",
-				 (int)sizeof(line) - 12, st->list->dir);
-			dc_draw_text(cw, ch * 3, COL_HINT, line);
-		}
-		dc_draw_text(cw, ch * 4, COL_HINT,
-			     "Put .z64/.n64/.v64 files there, then restart.");
-		/* Still say how to leave: B is the only thing that works here. */
-		dc_draw_text(cw, dc_draw_height() - ch, COL_HINT,
-			     "B exit   Y settings   X controls");
-		dc_draw_end();
-		return;
-	}
-
-	for (i = 0; i < st->rows; ++i) {
-		int idx = st->top + i;
-		int y = ch * (i + 2);
-		char sz[16];
-		int room;
-
-		if (idx >= st->list->count)
-			break;
-
-		size_text(sz, sizeof(sz), st->list->items[idx].size);
-		/* Leave room for the marker, a space, the size and a gap. */
-		room = cols - 2 - (int)strlen(sz) - 2;
-		if (room < 8)
-			room = 8;
-		if (room > (int)sizeof(line) - 1)
-			room = (int)sizeof(line) - 1;
-
-		if (idx == st->cursor)
-			dc_draw_fill_rect(0, y, dc_draw_width(), ch, COL_BAR);
-
-		snprintf(line, sizeof(line), "%c %-*.*s %s",
-			 idx == st->cursor ? '>' : ' ',
-			 room, room, st->list->items[idx].label, sz);
-		dc_draw_text(cw, y, idx == st->cursor ? COL_PICK : COL_TEXT, line);
-	}
-
-	snprintf(line, sizeof(line), "%d/%d  A start  B exit  Y settings  X controls",
-		 st->cursor + 1, st->list->count);
-	dc_draw_text(cw, dc_draw_height() - ch, COL_HINT, line);
-	dc_draw_end();
+void dc_menu_draw(const dc_menu_state *st,const char *title) {
+    char heading[96],size[20];
+    int i,rows;
+    if(!st)return;
+    snprintf(heading,sizeof(heading),"%s   %d / %d",title?title:"Games",
+        st->list && st->list->count?st->cursor+1:0,st->list?st->list->count:0);
+    dc_ui_begin(heading,st->list?st->list->dir:"");
+    if(!st->list || !st->list->count) {
+        dc_ui_text(6,DC_UI_TEXT,st->list && st->list->error?"This source is unavailable.":"No games in this folder.");
+        dc_ui_paragraph(8,3,DC_UI_MUTED,"Add .z64, .n64 or .v64 game backups. Use Left/Right to choose another source or Start to scan again.");
+    } else {
+        rows=st->rows<DC_UI_ROWS?st->rows:DC_UI_ROWS;
+        for(i=0;i<rows && st->top+i<st->list->count;i++) {
+            const dc_menu_entry *entry=&st->list->items[st->top+i];
+            if(entry->directory)strcpy(size,"Folder");else size_text(size,sizeof(size),entry->size);
+            dc_ui_row(DC_UI_FIRST_ROW+i,entry->label,size,st->top+i==st->cursor);
+        }
+        dc_ui_paragraph(14,2,DC_UI_MUTED,st->list->items[st->cursor].label);
+    }
+    dc_ui_finish(dc_settings_status(),"A play/open  B back  X controls  Y settings  Left/Right source  L/R page  Start scan");
 }
 
-void dc_menu_message(const char *title, const char *message)
-{
-	const int cw = dc_draw_char_w();
-	const int ch = dc_draw_char_h();
-
-	dc_draw_begin(COL_BG);
-	dc_draw_fill_rect(0, 0, dc_draw_width(), ch, COL_BAR);
-	dc_draw_text(cw, 0, COL_TITLE, title ? title : "Not64");
-	if (message)
-		dc_draw_text(cw, ch * 2, COL_TEXT, message);
-	dc_draw_end();
+void dc_menu_message(const char *title,const char *message) {
+    if(dc_draw_init()!=0)return;
+    dc_ui_begin(title?title:"Starting game","Please wait");
+    dc_ui_paragraph(5,6,DC_UI_TEXT,message);
+    dc_ui_finish("Reading large games from disc can take time.","");
+    dc_draw_shutdown_keep();
 }
 
-#define DC_MENU_TRIG_ON 48
-
-static int keys_from_raw(BUTTONS *k, unsigned b, int jx, int jy, int lt, int rt)
-{
-	int x, y;
-
-	if (!k)
-		return 0;
-	memset(k, 0, sizeof(*k));
-	k->A_BUTTON = !!(b & DC_CONT_A);
-	k->B_BUTTON = !!(b & DC_CONT_B);
-	k->START_BUTTON = !!(b & DC_CONT_START);
-	k->U_DPAD = !!(b & DC_CONT_DPAD_UP);
-	k->D_DPAD = !!(b & DC_CONT_DPAD_DOWN);
-	k->L_DPAD = !!(b & DC_CONT_DPAD_LEFT);
-	k->R_DPAD = !!(b & DC_CONT_DPAD_RIGHT);
-	k->Z_TRIG = lt >= DC_MENU_TRIG_ON;
-	k->R_TRIG = rt >= DC_MENU_TRIG_ON;
-	x = jx;
-	y = -jy;
-	if (x > 10 || x < -10) {
-		if (x > 80) x = 80;
-		if (x < -80) x = -80;
-		k->X_AXIS = (signed char)x;
-	}
-	if (y > 10 || y < -10) {
-		if (y > 80) y = 80;
-		if (y < -80) y = -80;
-		k->Y_AXIS = (signed char)y;
-	}
-	return 1;
+void dc_menu_error(const char *message) {
+    if(dc_draw_init()!=0)return;
+    dc_ui_confirm("Unable to start game",message,"return to games");
+    dc_draw_shutdown();
 }
 
-static int menu_poll(BUTTONS *keys, unsigned *raw_out)
-{
-	unsigned raw = 0;
-	int jx = 0, jy = 0, lt = 0, rt = 0;
-
-	if (controller_DC_poll_raw(0, &raw, &jx, &jy, &lt, &rt)) {
-		if (raw_out)
-			*raw_out = raw;
-		return keys_from_raw(keys, raw, jx, jy, lt, rt);
-	}
-	if (raw_out)
-		*raw_out = 0;
-	memset(keys, 0, sizeof(*keys));
-	getKeys(0, keys);
-	return 1;
+int dc_menu_validate(const char *path,char *error,size_t size) {
+    unsigned char h[4];
+    FILE *f=fopen(path,"rb");
+    long length;
+    const char *why=NULL;
+    if(!f)why="The game could not be opened. Check the disc or SD card and scan again.";
+    else {
+        if(fseek(f,0,SEEK_END) || (length=ftell(f))<4096 || length>64*1024*1024 || (length&3))
+            why="The game must be a complete, word-aligned N64 image between 4 KiB and 64 MiB.";
+        else if(fseek(f,0,SEEK_SET) || fread(h,1,4,f)!=4 ||
+            !((h[0]==0x80 && h[1]==0x37 && h[2]==0x12 && h[3]==0x40) ||
+              (h[0]==0x37 && h[1]==0x80 && h[2]==0x40 && h[3]==0x12) ||
+              (h[0]==0x40 && h[1]==0x12 && h[2]==0x37 && h[3]==0x80)))
+            why="This file is not a recognized N64 game image. Supported formats are .z64, .n64 and .v64.";
+        fclose(f);
+    }
+    if(error && size)snprintf(error,size,"%s",why?why:"");
+    return !why;
 }
 
-static void run_until_back(void (*enter)(void), int (*step)(const BUTTONS *),
-			   void (*draw)(void))
-{
-	BUTTONS keys;
-	int frames = 0;
-
-	enter();
-	for (;;) {
-		draw();
-		menu_poll(&keys, NULL);
-		if (!step(&keys))
-			break;
+static void run_screen(void (*enter)(void),int (*step)(const BUTTONS *),void (*draw)(void)) {
+    BUTTONS keys;
+    int frames=0;
+    enter();
+    for(;;) {
+        draw();
+        dc_ui_poll(&keys,NULL);
+        if(!step(&keys))break;
 #ifdef DC_HOST_STUB
-		if (++frames > DC_MENU_HOST_FRAME_CAP)
-			break;
+        if(++frames>DC_MENU_HOST_FRAME_CAP)break;
 #else
-		(void)frames;
+        (void)frames;
 #endif
-	}
+    }
+    dc_settings_save(NULL); /* The visible status reports persistence failure. */
 }
 
-/* ---- the browser ------------------------------------------------------ */
+static int load_folder(dc_menu_list *list,const char *path) {
+    fileBrowser_file folder;
+    memset(&folder,0,sizeof(folder));
+    snprintf(folder.name,sizeof(folder.name),"%s",path);
+    /* Read only: never create a missing ROM source while searching. */
+    return dc_menu_list_load(list,&folder);
+}
 
-int dc_menu_run(fileBrowser_file *dir, dc_menu_entry *out)
-{
-	dc_menu_list  list;
-	dc_menu_state st;
-	int found, rows, result = 0;
-	int frames = 0;
-	int dirty = 1;
-	unsigned extra_prev = 0;
-
-	if (!out)
-		return FILE_BROWSER_ERROR;
-
-	/* A directory that will not open is not a failure -- it means no ROMs
-	 * there. The browser still opens and says where it looked; refusing to
-	 * draw left a Dreamcast with no SD adapter staring at a black screen. */
-	found = dc_menu_find_roms(&list, dir);
-	(void)found;
-
-	if (dc_draw_init() != 0) {
-		dc_menu_list_free(&list);
-		return FILE_BROWSER_ERROR;
-	}
-
-	(void)frames;	/* only the host stub counts them */
-
-	/* Two rows of chrome at the top, one hint row at the bottom. */
-	rows = dc_draw_height() / dc_draw_char_h() - 3;
-	dc_menu_state_init(&st, &list, rows);
-
-	/* Repaint only when the selection actually moves. The picture is
-	 * identical otherwise, and on a Dreamcast a repaint is a 600 KiB blit --
-	 * no reason to spend that sixty times a second on a static list. */
-	for (;;) {
-		BUTTONS keys;
-		dc_menu_action act;
-		unsigned raw = 0;
-		int was_cursor = st.cursor, was_top = st.top;
-
-		if (dirty) {
-			dc_menu_draw(&st, "Not64  -  choose a ROM");
-			dirty = 0;
-		} else {
-			dc_draw_wait();
-		}
-
-		menu_poll(&keys, &raw);
-		{
-			unsigned extra = raw & (DC_CONT_X | DC_CONT_Y);
-			unsigned press = extra & ~extra_prev;
-			extra_prev = extra;
-			if (press & DC_CONT_Y) {
-				run_until_back(dc_settings_enter, dc_settings_step,
-					       dc_settings_draw);
-				(void)dc_settings_save(NULL);
-				dirty = 1;
-				continue;
-			}
-			if (press & DC_CONT_X) {
-				run_until_back(dc_controls_enter, dc_controls_step,
-					       dc_controls_draw);
-				(void)dc_settings_save(NULL);
-				dirty = 1;
-				continue;
-			}
-		}
-		act = dc_menu_step(&st, &keys);
-		if (st.cursor != was_cursor || st.top != was_top)
-			dirty = 1;
-
-		if (act == DC_MENU_PICK) {
-			char msg[128];
-
-			*out = list.items[st.cursor];
-			/* Pulling a 32 MiB cart off a CD takes seconds, and the
-			 * bring-up console is not visible behind the menu. Without
-			 * this the screen simply goes dark after the button press,
-			 * which reads as a crash. */
-			snprintf(msg, sizeof(msg), "Loading %s ...", out->label);
-			dc_menu_message("Not64", msg);
-			result = 1;
-			break;
-		}
-		if (act == DC_MENU_CANCEL) {
-			result = 0;
-			break;
-		}
-#ifdef DC_HOST_STUB
-		/* Hardware blocks on vblank and waits for the player, as it
-		 * should; the host stub has nothing to wait for. */
-		if (++frames > DC_MENU_HOST_FRAME_CAP) {
-			printf("menu: no host input after %d frames, cancelling\n",
-			       frames);
-			result = 0;
-			break;
-		}
+int dc_menu_run(fileBrowser_file *dir,dc_menu_entry *out) {
+    dc_menu_list list={0};
+    dc_menu_state st;
+    char roots[5][FILE_BROWSER_MAX_PATH_LEN],history[16][FILE_BROWSER_MAX_PATH_LEN];
+    int cursors[16],tops[16],depth=0,source=0,nroots=0,i,result=0,blocked=1;
+    int dirty=1,frames=0,connected=-1;
+    unsigned extra_prev=~0u;
+    if(!dir || !out)return FILE_BROWSER_ERROR;
+#ifndef DC_HOST_STUB
+    for(i=0;i<(int)DC_ROM_DIR_COUNT;i++)snprintf(roots[nroots++],sizeof(roots[0]),"%s",dc_rom_dirs[i]);
+#else
+    snprintf(roots[nroots++],sizeof(roots[0]),"%s",dir->name);
 #endif
-	}
-
-	/* Phase 8 constraint: the menu frees everything before go() runs. */
-	dc_draw_shutdown();
-	dc_menu_list_free(&list);
-	return result;
+    for(i=0;i<nroots;i++)if(!strcmp(roots[i],dir->name))break;
+    if(i==nroots && nroots<5)snprintf(roots[nroots++],sizeof(roots[0]),"%s",dir->name);
+    source=i;
+    load_folder(&list,roots[source]);
+    if(!list.count)for(i=0;i<nroots;i++)if(i!=source) {
+        dc_menu_list probe={0};load_folder(&probe,roots[i]);
+        if(probe.count){dc_menu_list_free(&list);list=probe;source=i;break;}
+        dc_menu_list_free(&probe);
+    }
+    if(dc_draw_init()!=0){dc_menu_list_free(&list);return FILE_BROWSER_ERROR;}
+    dc_menu_state_init(&st,&list,DC_UI_ROWS);
+    for(;;) {
+        BUTTONS keys;
+        unsigned raw=0,extra,press;
+        int online,old_cursor=st.cursor,old_top=st.top;
+        dc_menu_action action;
+        online=dc_ui_poll(&keys,&raw);
+        if(online!=connected){connected=online;dirty=1;}
+        if(dirty) {
+            dc_menu_draw(&st,"Games");
+            if(!connected){dc_ui_text(16,DC_UI_WARN,"Reconnect a controller to continue.");dc_draw_end();}
+            dirty=0;
+        } else dc_draw_wait();
+        extra=raw&(DC_CONT_X|DC_CONT_Y);
+        if(blocked) {
+            if(!decode_edges(&keys) && !wanted_dir(&st,&keys) && !extra) {
+                blocked=0;st.prev=0;st.repeat_dir=0;st.repeat_in=0;extra_prev=0;
+            }
+            goto next_frame;
+        }
+        press=extra&~extra_prev;extra_prev=extra;
+        if(press&DC_CONT_Y){run_screen(dc_settings_enter,dc_settings_step,dc_settings_draw);blocked=1;dirty=1;goto next_frame;}
+        if(press&DC_CONT_X){run_screen(dc_controls_enter,dc_controls_step,dc_controls_draw);blocked=1;dirty=1;goto next_frame;}
+        action=dc_menu_step(&st,&keys);
+        if(st.cursor!=old_cursor || st.top!=old_top)dirty=1;
+        if(action==DC_MENU_PICK) {
+            dc_menu_entry entry=list.items[st.cursor];
+            if(entry.directory) {
+                dc_menu_list next={0};
+                if(depth==16){dc_ui_confirm("Folder limit","Go back before opening another nested folder.","return");blocked=dirty=1;goto next_frame;}
+                if(load_folder(&next,entry.path)<0) {
+                    dc_menu_list_free(&next);
+                    dc_ui_confirm("Folder unavailable","The folder could not be read. Check the storage device and scan again.","return");
+                } else {
+                    snprintf(history[depth],sizeof(history[0]),"%s",list.dir);
+                    cursors[depth]=st.cursor;tops[depth++]=st.top;
+                    dc_menu_list_free(&list);list=next;dc_menu_state_init(&st,&list,DC_UI_ROWS);
+                }
+                blocked=dirty=1;
+            } else {
+                char error[192],message[192];
+                if(!dc_menu_validate(entry.path,error,sizeof(error))) {
+                    dc_ui_confirm("Unable to start game",error,"return to games");blocked=dirty=1;
+                } else {
+                    *out=entry;
+                    snprintf(message,sizeof(message),"Loading %s",entry.label);
+                    dc_menu_message("Starting game",message);result=1;break;
+                }
+            }
+        } else if(action==DC_MENU_CANCEL) {
+            if(depth) {
+                dc_menu_list next={0};--depth;load_folder(&next,history[depth]);
+                dc_menu_list_free(&list);list=next;dc_menu_state_init(&st,&list,DC_UI_ROWS);
+                st.cursor=cursors[depth];st.top=tops[depth];clamp_view(&st);
+            } else if(dc_ui_confirm("Exit Not64?","Return to the system menu? Your saved settings and game saves will be kept.","exit"))break;
+            blocked=dirty=1;
+        } else if(action==DC_MENU_REFRESH || action==DC_MENU_SOURCE_PREV || action==DC_MENU_SOURCE_NEXT) {
+            char path[FILE_BROWSER_MAX_PATH_LEN];
+            if(action!=DC_MENU_REFRESH) {
+                source=(source+(action==DC_MENU_SOURCE_NEXT?1:nroots-1))%nroots;depth=0;
+                snprintf(path,sizeof(path),"%s",roots[source]);
+            } else snprintf(path,sizeof(path),"%s",list.dir);
+            dc_menu_list_free(&list);load_folder(&list,path);dc_menu_state_init(&st,&list,DC_UI_ROWS);
+            blocked=dirty=1;
+        }
+next_frame:
+#ifdef DC_HOST_STUB
+        if(++frames>DC_MENU_HOST_FRAME_CAP){printf("menu: host input timeout\n");break;}
+#else
+        (void)frames;
+#endif
+    }
+    dc_draw_shutdown();dc_menu_list_free(&list);
+    return result;
 }

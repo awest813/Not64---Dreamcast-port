@@ -22,6 +22,7 @@ int dc_overlay_step(const BUTTONS *keys);
 void dc_overlay_draw(void);
 int dc_overlay_run(void);
 int dc_overlay_take_action(void);
+int dc_overlay_has_action(void);
 
 #ifdef DC_HOST_STUB
 int dc_overlay_selftest(void);

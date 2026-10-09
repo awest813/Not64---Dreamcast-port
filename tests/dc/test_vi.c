@@ -6,6 +6,7 @@
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "VI FAIL line %d: %s\n", __LINE__, #c); return 1; } } while (0)
 static uint8_t memory[256];
 static dc_vi_frame frame;
+static dc_vi_frame cached_frame, reference_frame;
 static uint16_t output[640 * 480 + 2];
 static uint16_t output_aligned[640 * 480] __attribute__((aligned(32)));
 static void pixel16(unsigned addr, uint16_t value) { memcpy(memory + (addr ^ 2u), &value, 2); }
@@ -138,6 +139,33 @@ int main(void)
             CHECK(frame.pixels[x]==expected);
         }
     }
-    puts("VI conversion + software presentation PASS");
+    // Compare the entire staging allocation, including black padding, across
+    // size/format/crop/error transitions and explicit external invalidation.
+    {
+        dc_vi_padding_cache cache={0};
+        memset(&cached_frame,0xa5,sizeof(cached_frame));
+        memset(&reference_frame,0xa5,sizeof(reference_frame));
+        for(unsigned n=0;n<64;n++) {
+            dc_vi_state s={n&4?3:2,16,6,8,4,512,1024};
+            s.h_start=n%5==0?6:8; // Three or four output pixels.
+            if(n&8)s.v_start=2; // One or two rows.
+            if(n%11==0)s.status=0;
+            if(n%13==0)s.origin=255;
+            if(n%17==0)s.x_scale|=1u<<16;
+            for(unsigned i=0;i<sizeof(memory);i++)memory[i]=(i*37+n*19)&255;
+            if(n==31) {
+                memset(cached_frame.pixels,0xff,sizeof(cached_frame.pixels));
+                memset(reference_frame.pixels,0xff,sizeof(reference_frame.pixels));
+                cache.valid=0;
+            }
+            dc_vi_result expected=dc_vi_convert(&s,memory,sizeof(memory),&reference_frame);
+            CHECK(dc_vi_convert_cached(&s,memory,sizeof(memory),&cached_frame,&cache)==expected);
+            CHECK(memcmp(&cached_frame,&reference_frame,sizeof(cached_frame))==0);
+            if(expected!=DC_VI_READY)CHECK(!cache.valid);
+        }
+        CHECK(dc_vi_convert_cached(&state,memory,sizeof(memory),NULL,&cache)==DC_VI_INVALID);
+        CHECK(!cache.valid);
+    }
+    puts("VI conversion + software presentation + padding reuse PASS");
     return 0;
 }

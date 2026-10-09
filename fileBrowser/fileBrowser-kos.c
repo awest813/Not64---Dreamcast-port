@@ -13,6 +13,11 @@
 
 #include "fileBrowser.h"
 #include "fileBrowser-kos.h"
+#include "../platform/dc_storage.h"
+#if defined(DC_HOST_STUB) && defined(_WIN32)
+#include <direct.h>
+#define mkdir(path, mode) _mkdir(path)
+#endif
 
 #ifdef DC_HOST_STUB
 #define KOS_ROM_DIR  "./roms"
@@ -160,6 +165,12 @@ int fileBrowser_kos_readDir(fileBrowser_file *file, fileBrowser_file **dir)
 		if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
 			continue;
 
+		/* A truncated basename would select a different file relative to cwd.
+		 * Skip paths that cannot be represented instead of inventing a path. */
+		if (snprintf(full, sizeof(full), "%s/%s", file->name, de->d_name) >= (int)sizeof(full))
+			continue;
+		if (stat(full, &st) != 0 || (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode)))
+			continue;
 		tmp = realloc(out, sizeof(fileBrowser_file) * (count + 1));
 		if (!tmp) {
 			free(out);
@@ -169,12 +180,7 @@ int fileBrowser_kos_readDir(fileBrowser_file *file, fileBrowser_file **dir)
 		out = tmp;
 		memset(&out[count], 0, sizeof(fileBrowser_file));
 
-		if (snprintf(full, sizeof(full), "%s/%s", file->name, de->d_name) >=
-		    (int)sizeof(full)) {
-			strncpy(out[count].name, de->d_name, FILE_BROWSER_MAX_PATH_LEN - 1);
-		} else {
-			strncpy(out[count].name, full, FILE_BROWSER_MAX_PATH_LEN - 1);
-		}
+		strncpy(out[count].name, full, FILE_BROWSER_MAX_PATH_LEN - 1);
 
 		if (stat(out[count].name, &st) == 0) {
 			out[count].size = (unsigned int)st.st_size;
@@ -231,6 +237,26 @@ int fileBrowser_kos_writeFile(fileBrowser_file *file, void *buffer, unsigned int
 		return FILE_BROWSER_ERROR;
 
 	kos_cache_drop(file->name);
+	/* Cartridge saves are complete files. Stage them so an I/O failure
+	 * cannot damage the previous save. Nonzero-offset diagnostic writes
+	 * retain the existing seek/write contract. */
+	if (!file->offset) {
+		char temporary[256];
+		int failed;
+		if (snprintf(temporary,sizeof(temporary),"%s.tmp",file->name)>=(int)sizeof(temporary))
+			return FILE_BROWSER_ERROR;
+		fp=fopen(temporary,"wb");
+		if (!fp) return FILE_BROWSER_ERROR;
+		n=fwrite(buffer,1,length,fp);
+		failed=n!=length || ferror(fp);
+		if(fflush(fp))failed=1;
+		if(fclose(fp))failed=1;
+		if(failed || dc_storage_commit(temporary,file->name)) {
+			remove(temporary); return FILE_BROWSER_ERROR;
+		}
+		file->offset+=length;
+		return (int)length;
+	}
 
 	fp = fopen(file->name, "r+b");
 	if (!fp)
@@ -244,7 +270,12 @@ int fileBrowser_kos_writeFile(fileBrowser_file *file, void *buffer, unsigned int
 	}
 	n = fwrite(buffer, 1, length, fp);
 	file->offset += (unsigned int)n;
-	fclose(fp);
+	{
+		int failed=ferror(fp);
+		if(fflush(fp))failed=1;
+		if(fclose(fp))failed=1;
+		if(failed)return FILE_BROWSER_ERROR;
+	}
 	return (int)n;
 }
 

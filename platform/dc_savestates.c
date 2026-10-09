@@ -26,6 +26,11 @@
 #include "dc_debug.h"
 #include "dc_memory.h"
 #include "dc_audio.h"
+#include "dc_storage.h"
+#ifdef DC_STATE_AUDIT
+#include "dc_gfx.h"
+static unsigned audit_hex, audit_offset;
+#endif
 #include "../main/plugin.h"
 
 #include <stdint.h>
@@ -149,6 +154,22 @@ static int wr_mem(FILE *f, const void *p, size_t n)
 {
 	if (crc_on)
 		crc_state = crc32_update(crc_state, p, n);
+#ifdef DC_STATE_AUDIT
+	/* A diagnostic sink uses the same explicit-width serializers as v3 states.
+	 * It is called after go(), never inside the measured execution interval. */
+	if (!f) {
+		if (audit_hex) {
+			const unsigned char *bytes = p;
+			for (size_t at = 0; at < n; at += 16) {
+				size_t count = n - at < 16 ? n - at : 16;
+				printf("State bytes %04x:", audit_offset);
+				for (size_t i = 0; i < count; ++i) printf("%02x", bytes[at+i]);
+				printf("\n"); audit_offset += count;
+			}
+		}
+		return 0;
+	}
+#endif
 	return fwrite(p, 1, n, f) == n ? 0 : -1;
 }
 
@@ -567,6 +588,69 @@ static int rd_events(FILE *f)
 	return 0;
 }
 
+#ifdef DC_STATE_AUDIT
+static void audit_memory(const char *name, const void *data, size_t size)
+{
+	printf("State hash %s bytes=%u crc=%08lx\n", name, (unsigned)size,
+	       (unsigned long)(crc32_update(0xffffffffu, data, size) ^ 0xffffffffu));
+}
+void savestates_audit(void)
+{
+	unsigned old_crc_on = crc_on;
+	uint32_t old_crc_state = crc_state;
+	printf("State audit begin\n");
+	crc_on = 1; crc_state = 0xffffffffu;
+	int error = wr_mmio(NULL);
+	printf("State hash mmio crc=%08lx error=%d\n", (unsigned long)(crc_state ^ 0xffffffffu), error);
+	crc_state = 0xffffffffu; audit_hex = 1; audit_offset = 0;
+	error = wr_cpu(NULL) | wr_events(NULL);
+	audit_hex = 0;
+	printf("State hash cpu-events bytes=%u crc=%08lx error=%d\n", audit_offset,
+	       (unsigned long)(crc_state ^ 0xffffffffu), error);
+	audit_memory("rdram", rdramb, DC_N64_RDRAM_SIZE);
+	/* Page hashes locate corruption instead of relying on one aggregate. */
+	for (unsigned page = 0; page < DC_N64_RDRAM_SIZE / 4096; page += 16) {
+		printf("State pages %04x:", page);
+		for (unsigned i = 0; i < 16; ++i)
+			printf(" %08lx", (unsigned long)(crc32_update(0xffffffffu, rdramb + (page+i)*4096, 4096) ^ 0xffffffffu));
+		printf("\n");
+	}
+	audit_memory("sp-dmem", SP_DMEMb, 4096); audit_memory("sp-imem", SP_IMEMb, 4096);
+	audit_memory("pif", PIF_RAMb, 64);
+	char flash[24]; save_flashram_infos(flash); audit_memory("flash-info", flash, sizeof(flash));
+	audit_memory("eeprom", dc_cart_eeprom(), DC_EEPROM_SIZE);
+	audit_memory("sram", dc_cart_sram(), DC_SRAM_SIZE);
+	audit_memory("flashram", dc_cart_flashram(), DC_FLASH_SIZE);
+	audit_memory("mempak", dc_cart_mempak(), DC_MEMPAK_SIZE);
+	const dc_vi_frame *frame = dc_gfx_get_frame();
+	if (frame) {
+		printf("State scanout width=%u height=%u interlaced=%u\n", frame->width, frame->height, frame->interlaced);
+		audit_memory("scanout", frame->pixels, sizeof(frame->pixels));
+#ifdef DC_FRAME_AUDIT
+        // Export only the visible RGB565 scanout, after performance counters.
+        // Run-length serialization makes exact pixels available from serial
+        // without writing ROM/checkpoint data or relying on a UI screenshot.
+        unsigned width=frame->width,height=frame->height,total=width*height;
+        if(width && height && width<=DC_VI_MAX_WIDTH && height<=DC_VI_MAX_HEIGHT) {
+            unsigned pos=0,runs=0;
+            printf("Frame audit begin width=%u height=%u pixels=%u\n",width,height,total);
+            while(pos<total) {
+                unsigned value=frame->pixels[(pos/width)*DC_VI_TEXTURE_WIDTH+pos%width],n=1;
+                while(pos+n<total && frame->pixels[((pos+n)/width)*DC_VI_TEXTURE_WIDTH+(pos+n)%width]==value)++n;
+                if(!(runs%16))printf("Frame runs %06x:",runs);
+                printf(" %06x%04x",n,value);++runs;pos+=n;
+                if(!(runs%16))printf("\n");
+            }
+            if(runs%16)printf("\n");
+            printf("Frame audit end runs=%u pixels=%u\n",runs,pos);
+        }
+#endif
+	}
+	crc_on = old_crc_on; crc_state = old_crc_state;
+	printf("State audit end\n");
+}
+#endif
+
 static int write_state(FILE *f)
 {
 	char flash[24];
@@ -727,6 +811,8 @@ void savestates_save(void)
 {
 	FILE *fp;
 	const char *path = slot_path();
+	char temporary[256];
+	int failed;
 
 	savestates_job &= ~SAVESTATE;
 	last_ok = 0;
@@ -736,25 +822,30 @@ void savestates_save(void)
 		dc_log(DC_LOG_ERROR, "savestate: save slot %u: no RDRAM", slot);
 		return;
 	}
-	fp = fopen(path, "w+b");
+	if (snprintf(temporary,sizeof(temporary),"%s.tmp",path)>=(int)sizeof(temporary)) {
+		snprintf(last_err,sizeof(last_err),"save path too long");
+		return;
+	}
+	fp = fopen(temporary, "w+b");
 	if (!fp) {
-		snprintf(last_err, sizeof(last_err), "cannot open");
+		snprintf(last_err, sizeof(last_err), "SD unavailable or full");
 		dc_log(DC_LOG_ERROR, "savestate: save slot %u: cannot open %s",
 		       slot, path);
 		return;
 	}
-	if (write_state(fp)) {
-		fclose(fp);
-		remove(path);
+	failed=write_state(fp);
+	if (ferror(fp) || fflush(fp)) failed=1;
+	if (fclose(fp)) failed=1;
+	if (failed) {
+		remove(temporary);
 		snprintf(last_err, sizeof(last_err), "write failed");
 		dc_log(DC_LOG_ERROR, "savestate: save slot %u failed (%s)",
 		       slot, path);
 		return;
 	}
-	if (fclose(fp) != 0) {
-		remove(path);
-		snprintf(last_err, sizeof(last_err), "write failed");
-		dc_log(DC_LOG_ERROR, "savestate: save slot %u close failed", slot);
+	if (dc_storage_commit(temporary,path)) {
+		remove(temporary);
+		snprintf(last_err, sizeof(last_err), "replace failed; previous save kept");
 		return;
 	}
 	last_ok = 1;

@@ -3,11 +3,104 @@ HOST ?= 0
 STRICT ?= 0
 REFERENCE ?= 0
 SOFTWARE_ONLY ?= 0
-OUT ?= build/dc/raster-replay-$(HOST)-$(STRICT)$(if $(filter 1,$(REFERENCE)),-reference,)$(if $(filter 1,$(SOFTWARE_ONLY)),-software,)
+IDENTITY_SPAN ?= 0
+COMBINE_SPAN ?= 0
+AFFINE ?= 0
+CUTOUT ?= 0
+IDENTITY ?= 0
+BATCH_CACHE ?= 0
+FULL_ALPHA ?= 0
+TEXTURE_ALPHA ?= 0
+CVG_POINT ?= 0
+RECT_CLIP ?= 0
+RECT_SAMPLE ?= 0
+TEXEL_SCALE ?= 0
+SHADE_SCALE ?= 0
+TRI_ORIGIN ?= 0
+FILTER_GRID ?= 0
+LTO ?= 0
+CACHE_INDEX ?= 0
+WIDE ?= 0
+OUT ?= build/dc/raster-replay-$(HOST)-$(STRICT)$(if $(filter 1,$(REFERENCE)),-reference,)$(if $(filter 1,$(SOFTWARE_ONLY)),-software,)$(if $(filter 1,$(AFFINE)),-affine,)
 SOURCES = tests/dc/test_raster_replay.cpp $(addprefix mupen64_soft_gfx/,rdp.cpp rs.cpp tx.cpp tf.cpp cc.cpp bl.cpp)
 DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DDC_RASTER_REPLAY -DPIXEL_FORMAT=RGB565 -I. -include platform/dc_abi.h
+ifeq ($(WIDE),1)
+DEFS += -DDC_RASTER_WIDE
+endif
+ifeq ($(AFFINE),1)
+DEFS += -DDC_RASTER_SHADE
+endif
+ifeq ($(IDENTITY),1)
+DEFS += -DDC_RASTER_IDENTITY
+endif
+ifeq ($(BATCH_CACHE),1)
+DEFS += -DDC_RASTER_BATCH_CACHE
+endif
+ifeq ($(FULL_ALPHA),1)
+DEFS += -DDC_RASTER_FULL_ALPHA
+endif
+ifeq ($(TEXTURE_ALPHA),1)
+ifneq ($(FULL_ALPHA),1)
+$(error TEXTURE_ALPHA=1 requires FULL_ALPHA=1)
+endif
+DEFS += -DDC_RASTER_TEXTURE_ALPHA
+endif
+ifeq ($(CVG_POINT),1)
+ifneq ($(FULL_ALPHA),1)
+$(error CVG_POINT=1 requires FULL_ALPHA=1)
+endif
+DEFS += -DDC_RASTER_CVG_POINT
+endif
+ifeq ($(RECT_SAMPLE),1)
+DEFS += -DDC_RASTER_RECT_SAMPLE
+endif
+ifeq ($(TEXEL_SCALE),1)
+ifneq ($(RECT_SAMPLE),1)
+$(error TEXEL_SCALE=1 requires RECT_SAMPLE=1)
+endif
+DEFS += -DDC_RASTER_TEXEL_SCALE
+endif
+ifeq ($(CACHE_INDEX),1)
+ifneq ($(BATCH_CACHE),1)
+$(error CACHE_INDEX=1 requires BATCH_CACHE=1)
+endif
+DEFS += -DDC_RASTER_CACHE_INDEX
+endif
+ifeq ($(SHADE_SCALE),1)
+ifneq ($(TEXEL_SCALE)$(AFFINE),11)
+$(error SHADE_SCALE=1 requires TEXEL_SCALE=1 AFFINE=1)
+endif
+DEFS += -DDC_RASTER_SHADE_SCALE
+endif
+ifeq ($(TRI_ORIGIN),1)
+ifneq ($(TEXEL_SCALE),1)
+$(error TRI_ORIGIN=1 requires TEXEL_SCALE=1)
+endif
+DEFS += -DDC_RASTER_TRI_ORIGIN
+endif
+ifeq ($(FILTER_GRID),1)
+ifneq ($(TRI_ORIGIN)$(SHADE_SCALE),11)
+$(error FILTER_GRID=1 requires TRI_ORIGIN=1 SHADE_SCALE=1)
+endif
+DEFS += -DDC_RASTER_FILTER_GRID
+endif
+ifeq ($(RECT_CLIP),1)
+DEFS += -DDC_RASTER_RECT_CLIP
+endif
+ifeq ($(CUTOUT),1)
+DEFS += -DDC_RASTER_CUTOUT
+endif
 ifeq ($(REFERENCE),1)
 DEFS += -DDC_SOFT_REFERENCE
+endif
+ifeq ($(IDENTITY_SPAN),1)
+DEFS += -DDC_SOFT_IDENTITY_SPAN
+endif
+ifeq ($(COMBINE_SPAN),1)
+ifneq ($(IDENTITY_SPAN),1)
+$(error COMBINE_SPAN=1 requires IDENTITY_SPAN=1)
+endif
+DEFS += -DDC_SOFT_COMBINE_SPAN
 endif
 ifeq ($(HOST),1)
 CXX = arm-linux-gnueabihf-g++
@@ -28,6 +121,10 @@ DEFS += -DDC_RASTER_STRICT
 endif
 endif
 EXTRA = $(OUT)/dc_kos_compat.o
+endif
+ifeq ($(LTO),1)
+FLAGS += -flto
+LINK += -flto
 endif
 .PHONY: all
 all: $(OUT)/replay.elf

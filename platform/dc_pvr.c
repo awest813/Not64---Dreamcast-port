@@ -1,4 +1,5 @@
 #include "dc_video.h"
+#include "../main/wii64config.h"
 #include "dc_pvr.h"
 #include "dc_debug.h"
 #include <kos.h>
@@ -29,6 +30,11 @@ static unsigned samples, uploads;
 static int pvr_idle(void)
 {
     return pvr_wait_ready() >= 0 && pvr_wait_render_done() >= 0;
+}
+
+int dc_video_prepare_ui(void) {
+    if (!initialized) return 0;
+    return pvr_idle() ? 1 : -1;
 }
 
 int dc_video_init(void)
@@ -168,6 +174,8 @@ int dc_video_present(const dc_vi_frame *frame)
         int top = (480 - (int)frame->height * sy) / 2;
         int right = left + (int)frame->width * sx;
         int bottom = top + (int)frame->height * sy;
+        if (screenMode!=SCREENMODE_4x3)
+            dc_video_viewport(frame->width,frame->height,screenMode,&left,&top,&right,&bottom);
         float u = (float)frame->width / DC_VI_TEXTURE_WIDTH;
         float v = (float)frame->height / DC_VI_TEXTURE_HEIGHT;
         pvr_vertex_t vertices[4] __attribute__((aligned(32))) = {

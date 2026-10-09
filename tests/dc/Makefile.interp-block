@@ -1,0 +1,27 @@
+# Genuine SH4 generated-code execution; synthetic, no ROM or graphics plugin.
+.DEFAULT_GOAL := all
+include $(KOS_BASE)/Makefile.rules
+OUT ?= build/dc/interp-block-test
+CACHE_KB ?= 512
+STORES ?= 0
+REUSE ?= 0
+RAM_PROOF ?= 0
+EPOCH ?= 0
+SOURCES = tests/dc/test_interp_block.c platform/dc_interp_block.c
+DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DDC_INTERP_BLOCK -DDC_INTERP_BLOCK_KB=$(CACHE_KB) -I. -include platform/dc_abi.h
+ifeq ($(REUSE),1)
+DEFS += -DDC_INTERP_BLOCK_REUSE
+endif
+ifeq ($(RAM_PROOF),1)
+DEFS += -DDC_INTERP_BLOCK_RAM_PROOF
+endif
+ifeq ($(STORES),1)
+DEFS += -DDC_INTERP_BLOCK_STORES
+endif
+ifeq ($(EPOCH),1)
+DEFS += -DDC_INTERP_BLOCK_EPOCH
+endif
+all: $(OUT)/test.elf
+$(OUT)/test.elf: $(SOURCES) platform/dc_interp_block.h tests/dc/Makefile.interp-block
+	@mkdir -p $(OUT)
+	$(KOS_CC) $(KOS_CFLAGS) -O2 -std=gnu11 $(DEFS) $(KOS_LDFLAGS) -o $@ $(SOURCES) $(KOS_LIBS)

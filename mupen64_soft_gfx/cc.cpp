@@ -140,6 +140,20 @@ void CC::setCombineMode(int cycle1, int cycle2)
    // product is zero, avoiding three floating-point divides per pixel.
    directColor0 = pc0 == &zero || pa0 == pb0;
    directColor1 = pc1 == &zero || pa1 == pb1;
+   directAlpha0 = pAc0 == zero.getAlphap() || pAa0 == pAb0;
+   directAlpha1 = pAc1 == zero.getAlphap() || pAa1 == pAb1;
+#ifdef DC_SOFT_REFERENCE
+   directAlpha0 = directAlpha1 = false;
+#endif
+   // The next tile need not be filtered at every pixel when neither cycle
+   // reads TEXEL1. Raster loops still sample it at their final covered pixel
+   // to retain the combiner's observable post-draw texel registers.
+   secondTexelUsed=false;
+   Color32 *rgb[]={pa0,pb0,pc0,pd0,pa1,pb1,pc1,pd1};
+   float *alpha[]={pAa0,pAb0,pAc0,pAd0,pAa1,pAb1,pAc1,pAd1};
+   for(unsigned i=0;i<8;i++)
+       if(rgb[i]==&texel1 || rgb[i]==&texel1Alpha || alpha[i]==texel1.getAlphap())
+           secondTexelUsed=true;
 }
 
 void CC::setPrimColor(int color, float m, float l)
@@ -168,10 +182,41 @@ Color32 CC::combine1(const Color32& texel)
    texel0 = texel;
    texel0Alpha = Color32(texel0.getAlpha(), texel0.getAlpha(), texel0.getAlpha(), texel0.getAlpha());
    Color32 c = directColor1 ? *pd1 : (*pa1 - *pb1)* *pc1 + *pd1;
-   float Ac0 = *pAc1 / 255.0f;
-   c.setAlpha((Ac0 * (*pAa1 - *pAb1)) + *pAd1);
+   c.setAlpha(directAlpha1 ? *pAd1 :
+       (*pAc1 / 255.0f) * (*pAa1 - *pAb1) + *pAd1);
    return c;
 }
+
+#ifdef DC_SOFT_COMBINE_SPAN
+bool CC::prepareSimpleSpan(SimpleSpan &span)
+{
+#ifdef DC_SOFT_REFERENCE
+   return false;
+#else
+   // These muxes have no feedback, TEXEL1 or shade dependency. Texture values
+   // and packed primitive/environment channels are finite and nonnegative;
+   // subtracting/adding the selected zero does not change their values.
+   if(pa1!=&texel0 || pb1!=&zero || pd1!=&zero ||
+      (pc1!=&envColor && pc1!=&primColor))return false;
+   if(directAlpha1 && pAd1==texel0.getAlphap()) {
+      span.directAlpha=true;
+   } else {
+      if(pAa1!=texel0.getAlphap() || pAb1!=zero.getAlphap() ||
+         pAd1!=zero.getAlphap() ||
+         (pAc1!=envColor.getAlphap() && pAc1!=primColor.getAlphap() &&
+          pAc1!=one.getAlphap()))return false;
+      span.directAlpha=false;span.alphaFactor=*pAc1/255.0f;
+   }
+   span.factor=*pc1;
+   return true;
+#endif
+}
+void CC::finishSimpleSpan(const Color32 &texel)
+{
+   texel0=texel;
+   texel0Alpha=Color32(texel0.getAlpha(),texel0.getAlpha(),texel0.getAlpha(),texel0.getAlpha());
+}
+#endif
 
 Color32 CC::combine2(const Color32& texela, const Color32& texelb)
 {
@@ -181,13 +226,13 @@ Color32 CC::combine2(const Color32& texela, const Color32& texelb)
    texel1Alpha = Color32(texel1.getAlpha(), texel1.getAlpha(), texel1.getAlpha(), texel1.getAlpha());
    
    combined = directColor0 ? *pd0 : (*pa0 - *pb0)* *pc0 + *pd0;
-   float Ac0 = *pAc0 / 255.0f;
-   combined.setAlpha((Ac0 * (*pAa0 - *pAb0)) + *pAd0);
+   combined.setAlpha(directAlpha0 ? *pAd0 :
+       (*pAc0 / 255.0f) * (*pAa0 - *pAb0) + *pAd0);
    
    combinedAlpha=Color32(combined.getAlpha(),combined.getAlpha(),combined.getAlpha(),combined.getAlpha());
    Color32 c = directColor1 ? *pd1 : (*pa1 - *pb1)* *pc1 + *pd1;
-   float Ac1 = *pAc1 / 255.0f;
-   c.setAlpha((Ac1 * (*pAa1 - *pAb1)) + *pAd1);
+   c.setAlpha(directAlpha1 ? *pAd1 :
+       (*pAc1 / 255.0f) * (*pAa1 - *pAb1) + *pAd1);
    
    return c;
 }

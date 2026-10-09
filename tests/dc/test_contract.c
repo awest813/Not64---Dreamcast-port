@@ -5,6 +5,11 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef DC_INTERP_MEMORY
+#include "../../platform/dc_interp_memory.h"
+static unsigned memory_handler_calls;
+static void memory_handler_probe(void) { ++memory_handler_calls; }
+#endif
 
 uint32_t rsp_probe_word(const unsigned char *, unsigned);
 uint16_t rsp_probe_half(const unsigned char *, unsigned);
@@ -12,6 +17,9 @@ uint8_t rsp_probe_byte(const unsigned char *, unsigned);
 size_t rsp_info_size(void);
 size_t rsp_info_callback_offset(void);
 extern int stop;
+#ifdef DC_VI_HIGHRES
+extern int vi_field;
+#endif
 
 static unsigned interrupt_calls;
 static void interrupt_probe(void) { ++interrupt_calls; }
@@ -57,6 +65,29 @@ int main(void)
     CHECK(rsp_info_size() == sizeof(RSP_INFO));
     CHECK(rsp_info_callback_offset() == offsetof(RSP_INFO, CheckInterrupts));
     CHECK(init_memory() == 0);
+#ifdef DC_INTERP_MEMORY
+    /* A framebuffer/device hook installed in an ordinary RAM page must still
+     * run at every width. Address-only shortcuts would bypass these calls. */
+    {
+        void (**saved)() = rwmem[0x8000];
+        void (*hooks[8])() = {memory_handler_probe,memory_handler_probe,
+            memory_handler_probe,memory_handler_probe,memory_handler_probe,
+            memory_handler_probe,memory_handler_probe,memory_handler_probe};
+        rwmem[0x8000] = hooks;
+        address=0x80001000u;
+        read_word_in_memory(); read_byte_in_memory();
+        read_hword_in_memory(); read_dword_in_memory();
+        write_word_in_memory(); write_byte_in_memory();
+        write_hword_in_memory(); write_dword_in_memory();
+        CHECK(memory_handler_calls == 8);
+        rwmem[0x8000] = saved;
+        dword=0x123456789abcdef0ull; write_dword_in_memory();
+        address=0xa0001000u; dword=0; read_dword_in_memory();
+        CHECK(dword == 0x123456789abcdef0ull);
+        CHECK(rsp_probe_word(rdramb,0x1000) == 0x12345678u);
+        CHECK(rsp_probe_word(rdramb,0x1004) == 0x9abcdef0u);
+    }
+#endif
 
     closeDLL_gfx();
     romOpen_gfx();
@@ -169,6 +200,139 @@ int main(void)
     CHECK(dc_gfx_get_stats().presented == 2 && stop);
     CHECK(!dc_gfx_capture_ppm("/nonexistent/not64-frame.ppm"));
     dc_gfx_set_frame_limit(0);
+    /* Frameskip cannot freeze CPU-produced VI images before a display list.
+     * Changing the source or requesting CFB must refresh the scanout. */
+    dc_gfx_set_frameskip(3);
+    address=0x80001000u; word=0xf801f801u; write_word_in_memory();
+    updateScreen();
+    CHECK(dc_gfx_get_frame()->pixels[0] == 0xf800u);
+    address=0x80001000u; word=0x07c107c1u; write_word_in_memory();
+    updateScreen();
+    CHECK(dc_gfx_get_frame()->pixels[0] == 0x07e0u);
+    showCFB();
+    address=0x80001000u; word=0x003f003fu; write_word_in_memory();
+    updateScreen();
+    CHECK(dc_gfx_get_frame()->pixels[0] == 0x001fu);
+    romClosed_gfx(); romOpen_gfx(); updateScreen();
+    CHECK(dc_gfx_get_frame()->pixels[0] == 0x001fu);
+#ifdef DC_SOFT_GFX
+    /* A valid no-op F3DEX2 list establishes a drawn-list boundary. Repeated
+     * scanout can reuse it, but CFB and framebuffer writes must invalidate it. */
+    {
+        const char *uc="RSP Gfx ucode F3DEX fifo 2.08";
+        unsigned long *task=(unsigned long *)(SP_DMEMb+0xfc0);
+        memset(SP_DMEMb+0xfc0,0,64);
+        for(i=0;uc[i];++i)rdramb[(0x2000+i)^3]=(unsigned char)uc[i];
+        task[6]=0x2000; task[7]=2048; task[12]=0x3000;
+        address=0x80003000u;word=0xdf000000u;write_word_in_memory();
+        address=0x80003004u;word=0;write_word_in_memory();
+        stop=0;processDList();
+        CHECK(dc_gfx_get_stats().decode_failures==0 && dc_gfx_get_stats().rendered_lists==1);
+        updateScreen();
+        CHECK(dc_gfx_get_frame()->pixels[0]==0x001fu);
+        address=0x80001000u;word=0x07c107c1u;write_word_in_memory();
+        updateScreen();
+        CHECK(dc_gfx_get_frame()->pixels[0]==0x001fu);
+        CHECK(dc_gfx_get_stats().new_render_presentations==1);
+        showCFB();updateScreen();
+        CHECK(dc_gfx_get_frame()->pixels[0]==0x07e0u);
+        address=0x80001000u;word=0xf801f801u;write_word_in_memory();
+        fBWrite(0x1000,4);updateScreen();
+        CHECK(dc_gfx_get_frame()->pixels[0]==0xf800u);
+        vi_register.vi_origin=0x1004;updateScreen();
+        CHECK(dc_gfx_get_frame()->pixels[0]!=0xf800u);
+        vi_register.vi_origin=0x1000;updateScreen();
+        CHECK(dc_gfx_get_frame()->pixels[0]==0xf800u);
+    }
+#endif
+    #ifdef DC_SOFT_GFX
+#ifdef DC_VI_HIGHRES
+    /* Both woven fields need conversion after a fresh draw. Once both hold
+     * that drawing, alternating fields can reuse their own scanout snapshots. */
+    {
+        unsigned converted;
+        romClosed_gfx();romOpen_gfx();dc_gfx_set_frameskip(3);
+        vi_register.vi_status=0x42;vi_register.vi_width=2;
+        vi_register.vi_h_start=2;vi_register.vi_v_start=4;
+        vi_register.vi_x_scale=1024;vi_register.vi_y_scale=2048;
+        address=0x80001000u;word=0xf801f801u;write_word_in_memory();
+        address=0x80001004u;word=0x07c107c1u;write_word_in_memory();
+        address=0x80001008u;word=0xf801f801u;write_word_in_memory();
+        address=0x8000100cu;word=0x07c107c1u;write_word_in_memory();
+        stop=0;processDList();
+        vi_field=0;vi_register.vi_origin=0x1000;updateScreen();
+        vi_field=1;vi_register.vi_origin=0x1004;updateScreen();
+        converted=dc_gfx_get_stats().converted;CHECK(converted==2);
+        CHECK(dc_gfx_get_frame()->pixels[0]==0xf800u);
+        CHECK(dc_gfx_get_frame()->pixels[DC_VI_TEXTURE_WIDTH]==0x07e0u);
+        address=0x80001000u;word=0x003f003fu;write_word_in_memory();
+        address=0x80001004u;word=0xf801f801u;write_word_in_memory();
+        vi_field=0;vi_register.vi_origin=0x1000;updateScreen();
+        vi_field=1;vi_register.vi_origin=0x1004;updateScreen();
+        CHECK(dc_gfx_get_stats().converted==converted);
+        CHECK(dc_gfx_get_frame()->pixels[0]==0xf800u);
+        CHECK(dc_gfx_get_frame()->pixels[DC_VI_TEXTURE_WIDTH]==0x07e0u);
+        for(unsigned n=0;n<4;n++)processDList(); // Next drawn list is five.
+        vi_field=0;vi_register.vi_origin=0x1000;updateScreen();
+        vi_field=1;vi_register.vi_origin=0x1004;updateScreen();
+        CHECK(dc_gfx_get_stats().converted==converted+2);
+        CHECK(dc_gfx_get_frame()->pixels[0]==0x001fu);
+        CHECK(dc_gfx_get_frame()->pixels[DC_VI_TEXTURE_WIDTH]==0xf800u);
+        fBWrite(0x1000,4);
+        vi_field=0;vi_register.vi_origin=0x1000;updateScreen();
+        vi_field=1;vi_register.vi_origin=0x1004;updateScreen();
+        CHECK(dc_gfx_get_stats().converted==converted+4);
+        vi_register.vi_status=2;updateScreen();
+        vi_register.vi_status=0x42;updateScreen();
+        CHECK(dc_gfx_get_stats().converted==converted+6);
+        CHECK(dc_gfx_get_frame()->pixels[0]==0); // Mode change cleared old field.
+    }
+#endif
+    /* Balanced skipping draws at lists 1,4,8,11, preserving every FullSync.
+     * Reopening a ROM restarts the same cadence. */
+    {
+        unsigned before;
+        address=0x80003000u;word=0xe9000000u;write_word_in_memory();
+        address=0x80003008u;word=0xdf000000u;write_word_in_memory();
+        address=0x8000300cu;word=0;write_word_in_memory();
+        for(unsigned run=0;run<2;run++) {
+            romClosed_gfx();romOpen_gfx();dc_gfx_set_frameskip(DC_FRAMESKIP_BALANCED);
+            before=interrupt_calls;
+            for(unsigned list=0;list<14;list++) {
+                unsigned expected=0;
+                for(unsigned n=0;n<=list;n++)if(n%7==0 || n%7==3)++expected;
+                stop=0;processDList();
+                s=dc_gfx_get_stats();
+                CHECK(s.rendered_lists==expected && s.skipped_lists==list+1-expected);
+                CHECK(s.decode_failures==0 && !stop);
+            }
+            CHECK(interrupt_calls-before==14);
+        }
+    }
+#endif
+#ifdef DC_SOFT_GFX
+    /* A steady period has four drawings and every rolling thirty-list window
+     * has eight. Lifecycle and mode changes restart it; all FullSyncs run. */
+    for(unsigned run=0;run<2;++run) {
+        romClosed_gfx();romOpen_gfx();dc_gfx_set_frameskip(DC_FRAMESKIP_STEADY);
+        unsigned before=interrupt_calls,drawn[61]={0},skipped=0;
+        for(unsigned list=0;list<60;++list) {
+            stop=0;processDList();s=dc_gfx_get_stats();
+            drawn[list+1]=s.rendered_lists;
+            CHECK(s.rendered_lists+s.skipped_lists==list+1);
+            CHECK(drawn[list+1]-drawn[list]<=1);
+            if(drawn[list+1]!=drawn[list])skipped=0;else ++skipped;
+            CHECK(skipped<=3);
+            if(!list)CHECK(s.rendered_lists==1);
+            if(list>=29)CHECK(drawn[list+1]-drawn[list+1-30]==8);
+            CHECK(!s.decode_failures && !stop);
+        }
+        CHECK(interrupt_calls-before==60);
+        CHECK(s.rendered_lists==16 && s.skipped_lists==44);
+    }
+#endif
+    dc_gfx_set_frameskip(99); CHECK(dc_gfx_get_frameskip()==DC_FRAMESKIP_STEADY);
+    dc_gfx_set_frameskip(0);
     /* A failed re-init must discard old pointers/state. */
     CHECK(!initiateGFX(bad));
     CHECK(!dc_gfx_read_u8(0, &b));

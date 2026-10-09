@@ -10,6 +10,11 @@
 
 #include "dc_settings.h"
 #include "dc_menu/dc_draw.h"
+#include "dc_menu/dc_ui.h"
+#include "dc_storage.h"
+#include <stddef.h>
+#include <errno.h>
+#include <limits.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +25,7 @@
 #include "../fileBrowser/fileBrowser.h"
 #include "../fileBrowser/fileBrowser-kos.h"
 #include "dc_debug.h"
+#include "dc_gfx.h"
 
 extern char audioEnabled;
 #include "dc_audio.h"
@@ -28,10 +34,11 @@ extern char saveEnabled;
 extern char *get_savespath(void);
 
 static const char *onoff[] = { "Off", "On" };
-static const char *aspect[] = { "4:3", "16:9", "16:9 pillar" };
+static const char *aspect[] = { "Original", "Full screen", "Wide TV" };
 static const char *video[] = { "VGA", "RGB / 480i" };
 static const char *saves[] = { "SD", "VMU (later)" };
 static const char *vilimit[] = { "Off", "Wait for VI", "Wait for frame" };
+static const char *skipframes[] = { "Off", "1", "2", "3", "4", "5", "2 / 3", "2 / 3 / 3 / 3" };
 
 struct dc_setting {
 	const char *key;
@@ -42,50 +49,59 @@ struct dc_setting {
 };
 
 static const struct dc_setting table[DC_SET_COUNT] = {
-	{ "audio",    "Audio",           "AICA drain is still a stub; this gates the ring.", onoff, 2 },
+	{ "audio",    "Audio",           "Play game sound.", onoff, 2 },
 	{ "fps",      "Show FPS",        "Overlay once a renderer exists.", onoff, 2 },
-	{ "debug",    "Debug overlay",   "Mirror log lines to the console.", onoff, 2 },
-	{ "autosave", "Auto-save SRAM",  "Write native saves when leaving a game.", onoff, 2 },
-	{ "autoload", "Auto-load SRAM",  "Load native saves on ROM boot.", onoff, 2 },
-	{ "aspect",   "Aspect",          "16:9 pillar-boxes the N64 4:3 frame.", aspect, 3 },
+	{ "debug",    "Debug overlay",   "Show diagnostic messages on the console.", onoff, 2 },
+	{ "autosave", "Auto-save SRAM",  "Keep cartridge and Controller Pak saves on SD.", onoff, 2 },
+	{ "autoload", "Auto-load SRAM",  "Restore cartridge and Controller Pak saves at launch.", onoff, 2 },
+	{ "aspect",   "Aspect",          "Original proportions, fill the screen, or correct a wide TV.", aspect, 3 },
 	{ "video",    "Video out",       "VGA box vs RGB/composite. Auto-detect is a human call.", video, 2 },
 	{ "saves",    "Save device",     "VMU layout for FlashRAM is a human call.", saves, 2 },
 	{ "vilimit",  "VI limiter",      "Same three modes as Wii64.", vilimit, 3 },
-	{ "logfile",  "Log file",        "Append saves/not64.log (session + errors).", onoff, 2 },
+	{ "logfile",  "Log file",        "Write diagnostic messages to SD.", onoff, 2 },
+	{ "frameskip", "Frameskip",       "Higher values draw less often. The last option keeps the Stadium 2 speed improvements.", skipframes, 8 },
 	{ "skipMenu", "Skip menu",       "Bring-up / argv path. Keep Off on hardware.", onoff, 2 },
 };
 
-#define COL_BG    DC_RGB(0x10, 0x14, 0x20)
-#define COL_BAR   DC_RGB(0x28, 0x50, 0x90)
-#define COL_TITLE DC_RGB(0xFF, 0xFF, 0xFF)
-#define COL_TEXT  DC_RGB(0xC8, 0xC8, 0xC8)
-#define COL_PICK  DC_RGB(0xFF, 0xFF, 0x80)
-#define COL_HINT  DC_RGB(0x80, 0x88, 0x98)
 
-#define DC_PAK_PORTS 4
-#define DC_STICK_EDGE 40
-
-static unsigned menu_now(const BUTTONS *keys)
-{
-	unsigned now = 0;
-	int x, y;
-
-	if (keys->B_BUTTON) now |= 1u;
-	if (keys->A_BUTTON) now |= 2u;
-	if (keys->L_DPAD) now |= 4u;
-	if (keys->R_DPAD) now |= 8u;
-	if (keys->U_DPAD) now |= 16u;
-	if (keys->D_DPAD) now |= 32u;
-	x = (int)(signed char)keys->X_AXIS;
-	y = (int)(signed char)keys->Y_AXIS;
-	if (x <= -DC_STICK_EDGE) now |= 4u;
-	if (x >= DC_STICK_EDGE) now |= 8u;
-	if (y >= DC_STICK_EDGE) now |= 16u;
-	if (y <= -DC_STICK_EDGE) now |= 32u;
-	return now;
+static int set_cursor, set_top, ctl_cursor, ctl_top, ctl_port;
+static dc_ui_input set_input, ctl_input;
+static char settings_status[96] = "Settings apply immediately.";
+static controller_config_t mappings[4];
+static int mappings_ready;
+static const int visible[] = { DC_SET_AUDIO, DC_SET_AUTOSAVE, DC_SET_AUTOLOAD,
+    DC_SET_FRAMESKIP, DC_SET_ASPECT, DC_SET_DEBUG, DC_SET_LOGFILE };
+struct binding { const char *key, *label; size_t offset; int kind; };
+#define BIND(field, label, kind) {#field, label, offsetof(controller_config_t, field), kind}
+static const struct binding bindings[] = {
+    BIND(A,"N64 A",0), BIND(B,"N64 B",0), BIND(START,"N64 Start",0),
+    BIND(Z,"N64 Z",0), BIND(L,"N64 L",0), BIND(R,"N64 R",0),
+    BIND(CU,"C-Up",0), BIND(CD,"C-Down",0), BIND(CL,"C-Left",0), BIND(CR,"C-Right",0),
+    BIND(DU,"D-pad Up",0), BIND(DD,"D-pad Down",0), BIND(DL,"D-pad Left",0), BIND(DR,"D-pad Right",0),
+    BIND(analog,"Analog source",1), BIND(exit,"Pause shortcut",2)
+};
+#define BIND_COUNT ((int)(sizeof(bindings)/sizeof(bindings[0])))
+static const int button_choices[] = {0,1,2,3,4,5,6,7,8,9,13,14,15,16,17,18,19};
+static button_tp *binding_ptr(int port, int row) {
+    return (button_tp *)((char *)&mappings[port] + bindings[row].offset);
 }
-
-static int set_cursor, set_prev, ctl_cursor, ctl_scroll, ctl_prev;
+static button_tp binding_button(int row, int index) {
+    int kind = bindings[row].kind, i;
+    if (kind == 1) return index >= 0 && index < controller_DC.num_analog_sources ? &controller_DC.analog_sources[index] : NULL;
+    if (kind == 2) return index >= 0 && index < controller_DC.num_menu_combos ? &controller_DC.menu_combos[index] : NULL;
+    for (i=0; i<(int)(sizeof(button_choices)/sizeof(button_choices[0])); i++)
+        if (index == button_choices[i]) return &controller_DC.buttons[index];
+    return NULL;
+}
+void dc_controls_apply(void) {
+    int i;
+    if (!mappings_ready) {
+        for (i=0;i<4;i++) mappings[i] = controller_DC.config_default;
+        mappings_ready=1;
+    }
+    for (i=0;i<4;i++) controller_DC.config[i] = mappings[i];
+}
+const char *dc_settings_status(void) { return settings_status; }
 
 static int get_int(int i)
 {
@@ -100,6 +116,7 @@ static int get_int(int i)
 	case DC_SET_VIDEO:    return videoMode ? 1 : 0;
 	case DC_SET_SAVES:    return (nativeSaveDevice == NATIVESAVEDEVICE_CARDA) ? 1 : 0;
 	case DC_SET_VILIMIT:  return (int)Timers.limitVIs;
+	case DC_SET_FRAMESKIP: return (int)dc_gfx_get_frameskip();
 	case DC_SET_SKIPMENU: return skipMenu ? 1 : 0;
 	default:              return 0;
 	}
@@ -126,6 +143,7 @@ static void set_int(int i, int v)
 		saveStateDevice = SAVESTATEDEVICE_SD;
 		break;
 	case DC_SET_VILIMIT:  Timers.limitVIs = (char)v; break;
+	case DC_SET_FRAMESKIP: dc_gfx_set_frameskip((unsigned)v); break;
 	case DC_SET_SKIPMENU: skipMenu = (char)v; break;
 	default: break;
 	}
@@ -133,7 +151,15 @@ static void set_int(int i, int v)
 
 void dc_settings_defaults(void)
 {
+	int port;
+	for (port=0;port<4;port++) mappings[port]=controller_DC.config_default;
+	mappings_ready=1;
+	dc_controls_apply();
 	skipMenu = 0;
+	dc_gfx_set_frameskip(0);
+#ifdef DC_GAME_FRAMESKIP
+	dc_gfx_set_frameskip(DC_GAME_FRAMESKIP);
+#endif
 	audio_dc_set_enabled(1);
 	showFPSonScreen = 1;
 	printToScreen = 1;
@@ -169,9 +195,7 @@ int dc_settings_count(void)
 
 int dc_settings_visible_count(void)
 {
-	/* skipMenu is file-only: turning it On from the UI would lock a
-	 * hardware boot out of the menu (argc<=1). Edit settings.cfg. */
-	return DC_SET_SKIPMENU;
+    return (int)(sizeof(visible)/sizeof(visible[0]));
 }
 
 const char *dc_settings_label(int i)
@@ -238,509 +262,216 @@ static char *trim(char *s)
 	return s;
 }
 
-static int parse_val(const char *s)
+
+static int parse_val(const char *s, int *value)
 {
-	if (!strcmp(s, "True") || !strcmp(s, "true") ||
-	    !strcmp(s, "On") || !strcmp(s, "on"))
-		return 1;
-	if (!strcmp(s, "False") || !strcmp(s, "false") ||
-	    !strcmp(s, "Off") || !strcmp(s, "off"))
-		return 0;
-	return atoi(s);
+    char *end;
+    long v;
+    if (!strcmp(s,"True") || !strcmp(s,"true") || !strcmp(s,"On") || !strcmp(s,"on")) { *value=1; return 1; }
+    if (!strcmp(s,"False") || !strcmp(s,"false") || !strcmp(s,"Off") || !strcmp(s,"off")) { *value=0; return 1; }
+    errno=0; v=strtol(s,&end,10);
+    if (end==s || *end || errno || v<0 || v>INT_MAX) return 0;
+    *value=(int)v; return 1;
 }
 
 int dc_settings_save(const char *path)
 {
-	FILE *fp;
-	int i;
-
-	fileBrowser_kos_bind();
-	if (saveFile_dir)
-		fileBrowser_kos_init(saveFile_dir);
-
-	if (!path)
-		path = dc_settings_path();
-	fp = fopen(path, "w");
-	if (!fp)
-		return -1;
-	fprintf(fp, "# Not64 Dreamcast settings (mupen64plus.cfg layout)\n");
-	fprintf(fp, "# Unknown keys are ignored. skipMenu is file-only.\n");
-	fprintf(fp, "# not64-dc %d\n\n", DC_SETTINGS_VERSION);
-	fprintf(fp, "[Core]\n");
-	for (i = 0; i < DC_SET_COUNT; ++i) {
-		fprintf(fp, "# %s\n", table[i].help);
-		fprintf(fp, "%s = %d\n", table[i].key, get_int(i));
-	}
-	fprintf(fp, "\n[Input]\n");
-	fprintf(fp, "# 0 = Mem Pak, 1 = Rumble Pak. Jump Pack send needs KOS.\n");
-	for (i = 0; i < 4; ++i)
-		fprintf(fp, "pak%d = %d\n", i + 1,
-			pakMode[i] == PAKMODE_RUMBLEPAK ? 1 : 0);
-	fclose(fp);
-	return 0;
+    FILE *fp;
+    char temporary[256];
+    int i,j,failed=0;
+    fileBrowser_kos_bind();
+    if (saveFile_dir) fileBrowser_kos_init(saveFile_dir);
+    if (!path) path=dc_settings_path();
+    if (snprintf(temporary,sizeof(temporary),"%s.tmp",path)>=(int)sizeof(temporary)) goto failure;
+    fp=fopen(temporary,"w");
+    if (!fp) goto failure;
+    dc_controls_apply();
+    fprintf(fp,"# Not64 DC settings version %d\n[Core]\n",DC_SETTINGS_VERSION);
+    for (i=0;i<DC_SET_COUNT;i++) fprintf(fp,"%s = %d\n",table[i].key,get_int(i));
+    fprintf(fp,"\n[Input]\n");
+    for (i=0;i<4;i++) {
+        fprintf(fp,"pak%d = %d\n",i+1,pakMode[i]==PAKMODE_RUMBLEPAK?1:0);
+        for (j=0;j<BIND_COUNT;j++) fprintf(fp,"port%d_%s = %d\n",i+1,bindings[j].key,(*binding_ptr(i,j))->index);
+        fprintf(fp,"port%d_inverted = %d\n",i+1,mappings[i].inverted);
+    }
+    if (ferror(fp) || fflush(fp)) failed=1;
+    if (fclose(fp)) failed=1;
+    if (failed || dc_storage_commit(temporary,path)) { remove(temporary); goto failure; }
+    snprintf(settings_status,sizeof(settings_status),"Settings saved to SD.");
+    return 0;
+failure:
+    snprintf(settings_status,sizeof(settings_status),"Settings apply this session; SD save unavailable.");
+    return -1;
 }
 
 int dc_settings_load(const char *path)
 {
-	FILE *fp;
-	char line[192];
-
-	if (!path)
-		path = dc_settings_path();
-	fp = fopen(path, "r");
-	if (!fp)
-		return -1;
-	while (fgets(line, sizeof(line), fp)) {
-		char *eq, *key, *val, *nl;
-		int i, v;
-
-		nl = strchr(line, '\n');
-		if (nl)
-			*nl = '\0';
-		nl = strchr(line, '\r');
-		if (nl)
-			*nl = '\0';
-		key = trim(line);
-		if (key[0] == '#' || key[0] == '\0' || key[0] == '[')
-			continue;
-		eq = strchr(key, '=');
-		if (!eq)
-			continue;
-		*eq = '\0';
-		key = trim(key);
-		val = trim(eq + 1);
-		v = parse_val(val);
-		if (!strncmp(key, "pak", 3) && key[3] >= '1' && key[3] <= '4' &&
-		    !key[4]) {
-			pakMode[key[3] - '1'] =
-				v ? PAKMODE_RUMBLEPAK : PAKMODE_MEMPAK;
-			continue;
-		}
-		for (i = 0; i < DC_SET_COUNT; ++i) {
-			if (!strcmp(key, table[i].key)) {
-				set_int(i, v);
-				break;
-			}
-		}
-	}
-	fclose(fp);
-	apply_pak_modes();
-	return 0;
+    FILE *fp;
+    char line[192];
+    int failed;
+    if (!path) path=dc_settings_path();
+    fp=fopen(path,"r");
+    if (!fp) return -1;
+    dc_controls_apply();
+    while (fgets(line,sizeof(line),fp)) {
+        char *eq,*key,*val,*nl;
+        int i,j,v;
+        nl=strpbrk(line,"\r\n"); if(nl)*nl=0;
+        key=trim(line);
+        if (*key=='#' || !*key || *key=='[') continue;
+        eq=strchr(key,'='); if(!eq)continue;
+        *eq=0; key=trim(key); val=trim(eq+1);
+        if (!parse_val(val,&v)) continue;
+        if (!strncmp(key,"pak",3) && key[3]>='1' && key[3]<='4' && !key[4] && v<=1) {
+            pakMode[key[3]-'1']=v?PAKMODE_RUMBLEPAK:PAKMODE_MEMPAK;
+            continue;
+        }
+        if (!strncmp(key,"port",4) && key[4]>='1' && key[4]<='4' && key[5]=='_') {
+            i=key[4]-'1';
+            if (!strcmp(key+6,"inverted") && v<=3) mappings[i].inverted=v;
+            for (j=0;j<BIND_COUNT;j++) if (!strcmp(key+6,bindings[j].key)) {
+                button_tp b=binding_button(j,v);
+                if (b) *binding_ptr(i,j)=b;
+                break;
+            }
+            continue;
+        }
+        for (i=0;i<DC_SET_COUNT;i++) if (!strcmp(key,table[i].key)) {
+            if(v<table[i].nnames)set_int(i,v);
+            break;
+        }
+    }
+    failed=ferror(fp); if(fclose(fp))failed=1;
+    dc_controls_apply(); apply_pak_modes();
+    snprintf(settings_status,sizeof(settings_status),"%s",failed?"Settings read failed; check SD.":"Settings loaded.");
+    return failed?-1:0;
 }
 
-void dc_settings_boot(void)
-{
-	dc_settings_defaults();
-	if (dc_settings_load(NULL) != 0)
-		(void)dc_settings_save(NULL);
+void dc_settings_boot(void) {
+    dc_settings_defaults();
+    if (dc_settings_load(NULL)) (void)dc_settings_save(NULL);
+}
+void dc_settings_enter(void) {
+    set_cursor=set_top=0;
+    dc_ui_input_init(&set_input,1);
+}
+int dc_settings_step(const BUTTONS *keys) {
+    unsigned pressed=dc_ui_input_step(&set_input,keys);
+    if (pressed&DC_UI_B) return 0;
+    dc_ui_scroll(&set_cursor,&set_top,dc_settings_visible_count(),DC_UI_ROWS,pressed);
+    if (pressed&DC_UI_LEFT) dc_settings_cycle(visible[set_cursor],-1);
+    if (pressed&(DC_UI_A|DC_UI_RIGHT)) dc_settings_cycle(visible[set_cursor],1);
+    return 1;
+}
+void dc_settings_draw(void) {
+    int i;
+    dc_ui_begin("Settings","Changes apply immediately; B saves and returns.");
+    for (i=0;i<DC_UI_ROWS && set_top+i<dc_settings_visible_count();i++) {
+        int row=set_top+i, id=visible[row];
+        dc_ui_row(DC_UI_FIRST_ROW+i,dc_settings_label(id),dc_settings_value(id),row==set_cursor);
+    }
+    dc_ui_paragraph(14,2,DC_UI_MUTED,dc_settings_help(visible[set_cursor]));
+    dc_ui_finish(settings_status,"Up/Down select   Left/Right or A change   B back");
 }
 
-void dc_settings_enter(void)
-{
-	set_cursor = 0;
-	set_prev = ~0; /* swallow a held stick/button from the ROM browser */
+int dc_controls_row_count(void) { return ctl_port<0?8:BIND_COUNT+3; }
+void dc_controls_enter(void) {
+    dc_controls_apply();
+    ctl_cursor=ctl_top=0; ctl_port=-1;
+    dc_ui_input_init(&ctl_input,1);
 }
-
-int dc_settings_step(const BUTTONS *keys)
-{
-	unsigned now = 0, pressed;
-	int vis = dc_settings_visible_count();
-
-	if (!keys)
-		return 1;
-	now = menu_now(keys);
-	pressed = now & ~(unsigned)set_prev;
-	set_prev = (int)now;
-	if (pressed & 1u)
-		return 0;
-	if (pressed & 4u)
-		dc_settings_cycle(set_cursor, -1);
-	if (pressed & (2u | 8u))
-		dc_settings_cycle(set_cursor, 1);
-	if (pressed & 16u)
-		set_cursor--;
-	if (pressed & 32u)
-		set_cursor++;
-	if (set_cursor < 0)
-		set_cursor = vis - 1;
-	if (set_cursor >= vis)
-		set_cursor = 0;
-	return 1;
+static void cycle_binding(int port,int row,int dir) {
+    button_tp *b=binding_ptr(port,row);
+    int i,index=(*b)->index,kind=bindings[row].kind;
+    if (kind) {
+        int count=kind==1?controller_DC.num_analog_sources:controller_DC.num_menu_combos;
+        *b=binding_button(row,(index+dir+count)%count);
+    } else {
+        int count=(int)(sizeof(button_choices)/sizeof(button_choices[0]));
+        for (i=0;i<count;i++) if(button_choices[i]==index)break;
+        *b=binding_button(row,button_choices[(i+dir+count)%count]);
+    }
 }
-
-void dc_settings_draw(void)
-{
-	const int cw = dc_draw_char_w();
-	const int ch = dc_draw_char_h();
-	char line[128];
-	int i, vis = dc_settings_visible_count();
-
-	dc_draw_begin(COL_BG);
-	dc_draw_fill_rect(0, 0, dc_draw_width(), ch, COL_BAR);
-	dc_draw_text(cw, 0, COL_TITLE, "Settings");
-	for (i = 0; i < vis; ++i) {
-		int y = ch * (i + 2);
-		if (i == set_cursor)
-			dc_draw_fill_rect(0, y, dc_draw_width(), ch, COL_BAR);
-		snprintf(line, sizeof(line), "%c %-16.16s %s",
-			 i == set_cursor ? '>' : ' ',
-			 dc_settings_label(i), dc_settings_value(i));
-		dc_draw_text(cw, y, i == set_cursor ? COL_PICK : COL_TEXT, line);
-	}
-	dc_draw_text(cw, dc_draw_height() - ch * 2, COL_HINT,
-		     dc_settings_help(set_cursor));
-	dc_draw_text(cw, dc_draw_height() - ch, COL_HINT,
-		     "A/R change   L previous   B back");
-	dc_draw_end();
+int dc_controls_step(const BUTTONS *keys) {
+    unsigned pressed=dc_ui_input_step(&ctl_input,keys);
+    if (pressed&DC_UI_B) {
+        if (ctl_port<0)return 0;
+        ctl_cursor=ctl_port; ctl_port=-1; ctl_top=0;
+        dc_ui_input_init(&ctl_input,1); return 1;
+    }
+    dc_ui_scroll(&ctl_cursor,&ctl_top,dc_controls_row_count(),DC_UI_ROWS,pressed);
+    if (ctl_port<0) {
+        if (ctl_cursor<4 && (pressed&(DC_UI_A|DC_UI_START))) {
+            ctl_port=ctl_cursor; ctl_cursor=ctl_top=0; dc_ui_input_init(&ctl_input,1);
+        }
+    } else if (pressed&(DC_UI_A|DC_UI_LEFT|DC_UI_RIGHT)) {
+        int dir=pressed&DC_UI_LEFT?-1:1;
+        if (ctl_cursor<BIND_COUNT) cycle_binding(ctl_port,ctl_cursor,dir);
+        else if (ctl_cursor==BIND_COUNT) mappings[ctl_port].inverted^=2;
+        else if (ctl_cursor==BIND_COUNT+1) mappings[ctl_port].inverted^=1;
+        else if (pressed&DC_UI_A) mappings[ctl_port]=controller_DC.config_default;
+        dc_controls_apply();
+    }
+    return 1;
 }
-
-struct dc_ctrl_row {
-	const char *dc;
-	const char *n64;
-};
-
-static const struct dc_ctrl_row controls[] = {
-	{ "A / B / Start",     "A / B / Start" },
-	{ "Analog stick",      "Analog stick  (-80..+80, deadzone 10)" },
-	{ "D-pad",             "D-pad" },
-	{ "Left trigger",      "Z" },
-	{ "Right trigger",     "R" },
-	{ "Y + left trigger",  "L  (no Z)" },
-	{ "X",                 "L  (Z still available on LT)" },
-	{ "Both triggers + D-pad", "C-Up / C-Down / C-Left / C-Right" },
-	{ "Y (in menu)",       "Settings" },
-	{ "X (in menu)",       "Controls" },
-	{ "Start+A+B (in game)", "Pause overlay (reset / menu / slots)" },
-};
-
-int dc_controls_row_count(void)
-{
-	return DC_PAK_PORTS + (int)(sizeof(controls) / sizeof(controls[0]));
-}
-
-void dc_controls_enter(void)
-{
-	ctl_cursor = 0;
-	ctl_scroll = 0;
-	ctl_prev = ~0; /* swallow a held stick from the ROM browser */
-}
-
-int dc_controls_step(const BUTTONS *keys)
-{
-	unsigned now = 0, pressed;
-	int n = dc_controls_row_count();
-	int rows, vis;
-
-	if (!keys)
-		return 1;
-	rows = dc_draw_height() / dc_draw_char_h() - 3;
-	if (rows < 1)
-		rows = 1;
-	vis = n < rows ? n : rows;
-	now = menu_now(keys);
-	pressed = now & ~(unsigned)ctl_prev;
-	ctl_prev = (int)now;
-	if (pressed & 1u)
-		return 0;
-	if (pressed & 16u)
-		ctl_cursor--;
-	if (pressed & 32u)
-		ctl_cursor++;
-	if (ctl_cursor < 0)
-		ctl_cursor = n - 1;
-	if (ctl_cursor >= n)
-		ctl_cursor = 0;
-	if (ctl_cursor < ctl_scroll)
-		ctl_scroll = ctl_cursor;
-	if (ctl_cursor >= ctl_scroll + vis)
-		ctl_scroll = ctl_cursor - vis + 1;
-	if ((pressed & (2u | 4u | 8u)) && ctl_cursor < DC_PAK_PORTS) {
-		int dir = (pressed & 4u) ? -1 : 1;
-		int v = (pakMode[ctl_cursor] == PAKMODE_RUMBLEPAK) ? 1 : 0;
-
-		v += dir;
-		if (v < 0)
-			v = 1;
-		if (v > 1)
-			v = 0;
-		pakMode[ctl_cursor] = v ? PAKMODE_RUMBLEPAK : PAKMODE_MEMPAK;
-		apply_pak_modes();
-	}
-	return 1;
-}
-
-void dc_controls_draw(void)
-{
-	const int cw = dc_draw_char_w();
-	const int ch = dc_draw_char_h();
-	char line[128];
-	int i, n = dc_controls_row_count();
-	int rows = dc_draw_height() / ch - 3;
-	int vis;
-
-	if (rows < 1)
-		rows = 1;
-	vis = n < rows ? n : rows;
-
-	dc_draw_begin(COL_BG);
-	dc_draw_fill_rect(0, 0, dc_draw_width(), ch, COL_BAR);
-	dc_draw_text(cw, 0, COL_TITLE, "Controls");
-	for (i = 0; i < vis && ctl_scroll + i < n; ++i) {
-		int row = ctl_scroll + i;
-		int y = ch * (i + 2);
-		int pick = (row == ctl_cursor);
-
-		if (pick)
-			dc_draw_fill_rect(0, y, dc_draw_width(), ch, COL_BAR);
-		if (row < DC_PAK_PORTS)
-			snprintf(line, sizeof(line), "%c Port %d pak       %s",
-				 pick ? '>' : ' ', row + 1,
-				 pakMode[row] == PAKMODE_RUMBLEPAK ?
-					 "Rumble Pak" : "Mem Pak");
-		else {
-			const struct dc_ctrl_row *r = &controls[row - DC_PAK_PORTS];
-			snprintf(line, sizeof(line), "%c %-22.22s %s",
-				 pick ? '>' : ' ', r->dc, r->n64);
-		}
-		dc_draw_text(cw, y, pick ? COL_PICK : COL_TEXT, line);
-	}
-	dc_draw_text(cw, dc_draw_height() - ch, COL_HINT,
-		     "A/R pak   L previous   B back");
-	dc_draw_end();
+void dc_controls_draw(void) {
+    char title[64],label[64];
+    int i;
+    snprintf(title,sizeof(title),"Controls%s",ctl_port<0?"":" / Edit mapping");
+    snprintf(label,sizeof(label),ctl_port<0?"Select a controller port to edit its mapping.":"Port %d   Menu navigation always uses the default controls.",ctl_port+1);
+    dc_ui_begin(title,label);
+    for (i=0;i<DC_UI_ROWS && ctl_top+i<dc_controls_row_count();i++) {
+        int row=ctl_top+i;
+        const char *name,*value;
+        if (ctl_port<0) {
+            static const char *tips[]={"Both triggers + D-pad","Start + A + B","Memory Pak saves","Rumble"};
+            static const char *values[]={"Default C buttons","Default pause","SD required","Unavailable"};
+            if(row<4) { snprintf(label,sizeof(label),"Port %d mapping",row+1); name=label; value="Edit"; }
+            else { name=tips[row-4]; value=values[row-4]; }
+        } else if (row<BIND_COUNT) { name=bindings[row].label; value=(*binding_ptr(ctl_port,row))->name; }
+        else if(row==BIND_COUNT) { name="Invert horizontal"; value=onoff[!!(mappings[ctl_port].inverted&2)]; }
+        else if(row==BIND_COUNT+1) { name="Invert vertical"; value=onoff[!!(mappings[ctl_port].inverted&1)]; }
+        else { name="Restore this port"; value="A: defaults"; }
+        dc_ui_row(DC_UI_FIRST_ROW+i,name,value,row==ctl_cursor);
+    }
+    dc_ui_paragraph(14,2,DC_UI_MUTED,ctl_port<0?"Mappings are saved with settings. Standard controllers use Memory Paks; Jump Pack rumble is not available.":"Choose the Dreamcast input for each N64 control. Both triggers plus a direction selects a C button.");
+    dc_ui_finish(settings_status,ctl_port<0?"Up/Down select   A edit port   B back":"Up/Down select   Left/Right or A change   B back");
 }
 
 #ifdef DC_HOST_STUB
-int dc_settings_selftest(void)
-{
-	int fails = 0;
-	char path[] = "/tmp/not64-settings-test.cfg";
-	int audio0;
-	FILE *fp;
-
-	dc_settings_defaults();
-	if (audioEnabled != 1) {
-		printf("settings FAIL: default audio\n");
-		fails++;
-	}
-	if (pakMode[0] != PAKMODE_MEMPAK || pakMode[3] != PAKMODE_MEMPAK) {
-		printf("settings FAIL: default pak is Mem Pak\n");
-		fails++;
-	}
-	audio0 = audioEnabled;
-	dc_settings_cycle(DC_SET_AUDIO, 1);
-	if (audioEnabled == audio0) {
-		printf("settings FAIL: cycle audio\n");
-		fails++;
-	}
-	dc_settings_cycle(DC_SET_ASPECT, 1);
-	dc_settings_cycle(DC_SET_ASPECT, 1);
-	if (screenMode != SCREENMODE_16x9_PILLARBOX) {
-		printf("settings FAIL: aspect wrap\n");
-		fails++;
-	}
-	dc_settings_cycle(DC_SET_VIDEO, 1);
-	if (!videoMode) {
-		printf("settings FAIL: video RGB\n");
-		fails++;
-	}
-	if (dc_settings_save(path) != 0) {
-		printf("settings FAIL: save\n");
-		fails++;
-	}
-	dc_settings_defaults();
-	if (dc_settings_load(path) != 0) {
-		printf("settings FAIL: load\n");
-		fails++;
-	}
-	if (audioEnabled == audio0) {
-		printf("settings FAIL: load did not restore audio\n");
-		fails++;
-	}
-	if (screenMode != SCREENMODE_16x9_PILLARBOX) {
-		printf("settings FAIL: load aspect\n");
-		fails++;
-	}
-	if (!videoMode) {
-		printf("settings FAIL: load video\n");
-		fails++;
-	}
-	pakMode[0] = PAKMODE_RUMBLEPAK;
-	pakMode[1] = PAKMODE_MEMPAK;
-	if (dc_settings_save(path) != 0) {
-		printf("settings FAIL: save pak\n");
-		fails++;
-	}
-	dc_settings_defaults();
-	if (dc_settings_load(path) != 0 ||
-	    pakMode[0] != PAKMODE_RUMBLEPAK ||
-	    pakMode[1] != PAKMODE_MEMPAK) {
-		printf("settings FAIL: load pak %d %d\n",
-		       pakMode[0], pakMode[1]);
-		fails++;
-	}
-	fp = fopen(path, "w");
-	if (!fp) {
-		printf("settings FAIL: rewrite fixture\n");
-		fails++;
-	} else {
-		fputs("# mupen64plus-style\n[Core]\n# comment\naudio = Off\n"
-		      "unknown_key = 9\nfps = True\n[Video]\naspect = 2\n", fp);
-		fclose(fp);
-		dc_settings_defaults();
-		if (dc_settings_load(path) != 0 || audioEnabled ||
-		    !showFPSonScreen || screenMode != SCREENMODE_16x9_PILLARBOX) {
-			printf("settings FAIL: section/True/unknown-key parse\n");
-			fails++;
-		}
-	}
-	if (dc_controls_row_count() < 7) {
-		printf("settings FAIL: controls legend\n");
-		fails++;
-	}
-	if (dc_settings_visible_count() >= dc_settings_count() ||
-	    !strcmp(dc_settings_label(dc_settings_visible_count() - 1),
-		    "Skip menu")) {
-		printf("settings FAIL: skipMenu must stay off the screen\n");
-		fails++;
-	}
-	if (!printToSD) {
-		printf("settings FAIL: log file should default On\n");
-		fails++;
-	}
-	{
-		int overlay0 = printToScreen;
-		int file0 = printToSD;
-
-		dc_settings_cycle(DC_SET_DEBUG, 1);
-		if (printToScreen == overlay0 || printToSD != file0) {
-			printf("settings FAIL: debug overlay must not toggle logfile\n");
-			fails++;
-		}
-		dc_settings_cycle(DC_SET_LOGFILE, 1);
-		if (printToSD == file0) {
-			printf("settings FAIL: cycle logfile\n");
-			fails++;
-		}
-		if (dc_settings_save(path) != 0) {
-			printf("settings FAIL: save logfile\n");
-			fails++;
-		}
-		dc_settings_defaults();
-		if (dc_settings_load(path) != 0) {
-			printf("settings FAIL: load logfile\n");
-			fails++;
-		}
-		if (printToSD) {
-			printf("settings FAIL: load did not restore logfile Off\n");
-			fails++;
-		}
-		if (printToScreen == overlay0) {
-			printf("settings FAIL: load did not restore overlay Off\n");
-			fails++;
-		}
-	}
-	{
-		BUTTONS k;
-
-		dc_settings_defaults();
-		dc_settings_enter();
-		dc_draw_init();
-		dc_settings_draw();
-		{
-			const char *row = dc_draw_host_row(0);
-			if (!row || !strstr(row, "Settings")) {
-				printf("settings FAIL: title row '%s'\n", row ? row : "(null)");
-				fails++;
-			}
-			row = dc_draw_host_row(2);
-			if (!row || !strstr(row, "Audio")) {
-				printf("settings FAIL: audio row '%s'\n", row ? row : "(null)");
-				fails++;
-			}
-		}
-		memset(&k, 0, sizeof(k));
-		k.X_AXIS = 80;
-		dc_settings_step(&k);
-		if (!audioEnabled) {
-			printf("settings FAIL: opening stick must not cycle Audio\n");
-			fails++;
-		}
-		memset(&k, 0, sizeof(k));
-		dc_settings_step(&k);
-		k.D_DPAD = 1;
-		dc_settings_step(&k);
-		memset(&k, 0, sizeof(k));
-		dc_settings_step(&k);
-		k.A_BUTTON = 1;
-		dc_settings_step(&k);
-		if (showFPSonScreen) {
-			printf("settings FAIL: A did not cycle Show FPS\n");
-			fails++;
-		}
-		memset(&k, 0, sizeof(k));
-		k.B_BUTTON = 1;
-		if (dc_settings_step(&k)) {
-			printf("settings FAIL: B did not leave settings\n");
-			fails++;
-		}
-		dc_controls_enter();
-		dc_controls_draw();
-		{
-			const char *row = dc_draw_host_row(0);
-			if (!row || !strstr(row, "Controls")) {
-				printf("settings FAIL: controls title '%s'\n",
-				       row ? row : "(null)");
-				fails++;
-			}
-			row = dc_draw_host_row(2);
-			if (!row || !strstr(row, "Port 1") ||
-			    !strstr(row, "Mem Pak")) {
-				printf("settings FAIL: port 1 pak '%s'\n",
-				       row ? row : "(null)");
-				fails++;
-			}
-		}
-		memset(&k, 0, sizeof(k));
-		k.X_AXIS = 80;
-		dc_controls_step(&k);
-		if (pakMode[0] != PAKMODE_MEMPAK) {
-			printf("settings FAIL: opening stick must not cycle pak\n");
-			fails++;
-		}
-		memset(&k, 0, sizeof(k));
-		dc_controls_step(&k);
-		k.A_BUTTON = 1;
-		dc_controls_step(&k);
-		if (pakMode[0] != PAKMODE_RUMBLEPAK) {
-			printf("settings FAIL: A did not cycle Port 1 pak\n");
-			fails++;
-		}
-		{
-			int i;
-			const char *row;
-
-			memset(&k, 0, sizeof(k));
-			dc_controls_step(&k);
-			for (i = 0; i < DC_PAK_PORTS; ++i) {
-				k.D_DPAD = 1;
-				dc_controls_step(&k);
-				memset(&k, 0, sizeof(k));
-				dc_controls_step(&k);
-			}
-			dc_controls_draw();
-			row = dc_draw_host_row(2 + DC_PAK_PORTS);
-			if (!row || !strchr(row, '>') || !strstr(row, "A / B")) {
-				printf("settings FAIL: legend cursor '%s'\n",
-				       row ? row : "(null)");
-				fails++;
-			}
-		}
-		dc_draw_shutdown();
-	}
-	remove(path);
-	dc_settings_defaults();
-	printf("settings selftest: %s (%d failure(s))\n",
-	       fails ? "FAIL" : "PASS", fails);
-	return fails;
+int dc_settings_selftest(void) {
+    int fails=0;
+    const char *path="not64-settings-test.cfg";
+    FILE *fp;
+    BUTTONS k;
+    dc_settings_defaults();
+    dc_settings_cycle(DC_SET_AUDIO,1);
+    mappings[0].A=&controller_DC.buttons[7];
+    mappings[3].inverted=3;
+    dc_gfx_set_frameskip(DC_FRAMESKIP_STEADY);
+    if(dc_settings_save(path))fails++;
+    dc_settings_defaults();
+    if(dc_settings_load(path) || audioEnabled || mappings[0].A->index!=7 || mappings[3].inverted!=3 || dc_gfx_get_frameskip()!=DC_FRAMESKIP_STEADY)fails++;
+    controller_DC.config[0]=controller_DC.config_default;
+    dc_controls_apply();
+    if(controller_DC.config[0].A->index!=7)fails++;
+    fp=fopen(path,"w");
+    if(fp) { fputs("audio = garbage\nframeskip = 99\nport1_A = 12\nport4_inverted = -1\n",fp); fclose(fp); }
+    if(dc_settings_load(path) || audioEnabled || dc_gfx_get_frameskip()!=DC_FRAMESKIP_STEADY || mappings[0].A->index!=7 || mappings[3].inverted!=3)fails++;
+    if(!dc_settings_save("missing-directory/settings.cfg") || !strstr(settings_status,"this session"))fails++;
+    dc_settings_enter(); memset(&k,0,sizeof(k)); k.A_BUTTON=1;
+    dc_settings_step(&k); if(audioEnabled)fails++;
+    memset(&k,0,sizeof(k)); dc_settings_step(&k); k.A_BUTTON=1; dc_settings_step(&k); if(!audioEnabled)fails++;
+    dc_draw_init(); dc_settings_draw();
+    if(!strstr(dc_draw_host_row(1),"Settings") || !strstr(dc_draw_host_row(4),"Audio"))fails++;
+    dc_controls_enter(); dc_controls_draw();
+    if(!strstr(dc_draw_host_row(4),"Port 1"))fails++;
+    memset(&k,0,sizeof(k)); dc_controls_step(&k); k.A_BUTTON=1; dc_controls_step(&k);
+    if(ctl_port!=0)fails++;
+    memset(&k,0,sizeof(k)); dc_controls_step(&k); k.R_DPAD=1; dc_controls_step(&k);
+    if(controller_DC.config[0].A->index!=8)fails++;
+    dc_draw_shutdown(); remove(path); dc_settings_defaults();
+    printf("settings selftest: %s (%d failure(s))\n",fails?"FAIL":"PASS",fails);
+    return fails;
 }
 #endif

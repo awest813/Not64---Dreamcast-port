@@ -25,6 +25,12 @@ typedef struct {
     unsigned width, height;
     unsigned interlaced;
 } dc_vi_frame;
+/* Initialize to zero. The cached converter owns the frame's padding between
+ * calls; invalidate valid if another writer changes that frame. */
+typedef struct {
+    dc_vi_frame *frame;
+    unsigned width, height, valid;
+} dc_vi_padding_cache;
 typedef enum { DC_VI_READY, DC_VI_BLANK, DC_VI_UNSUPPORTED, DC_VI_INVALID } dc_vi_result;
 
 /* Native-resolution preview, not the N64 VI filter pipeline. DC_VI_HIGHRES
@@ -33,4 +39,7 @@ typedef enum { DC_VI_READY, DC_VI_BLANK, DC_VI_UNSUPPORTED, DC_VI_INVALID } dc_v
  * RGB565 output has DC_VI_TEXTURE_WIDTH stride and zeroed unused padding. */
 dc_vi_result dc_vi_convert(const dc_vi_state *state, const uint8_t *memory,
                           size_t memory_size, dc_vi_frame *frame);
+dc_vi_result dc_vi_convert_cached(const dc_vi_state *state, const uint8_t *memory,
+                                 size_t memory_size, dc_vi_frame *frame,
+                                 dc_vi_padding_cache *cache);
 #endif

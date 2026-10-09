@@ -8,6 +8,7 @@
 
 #include "dc_nativesaves.h"
 #include "dc_debug.h"
+#include "dc_types.h"
 
 #include "../main/wii64config.h"
 #include "../fileBrowser/fileBrowser.h"
@@ -25,6 +26,7 @@
 extern char saveEnabled;
 extern char autoLoadSave;
 extern char autoSave;
+extern BOOL eepromWritten, sramWritten, mempakWritten, flashramWritten;
 
 void dc_nativesave_load(void)
 {
@@ -45,23 +47,26 @@ void dc_nativesave_load(void)
 		dc_log(DC_LOG_INFO, "native save: loaded %d file(s)", n);
 }
 
-void dc_nativesave_save(void)
+int dc_nativesave_save(void)
 {
-	int n = 0;
+	int n = 0, result, failed=0;
 
 	if (!autoSave && !saveEnabled)
-		return;
+		return 0;
+	if (!eepromWritten && !sramWritten && !mempakWritten && !flashramWritten)
+		return 0;
 	fileBrowser_kos_bind();
 	if (!saveFile_dir || !saveFile_init || !saveFile_writeFile)
-		return;
+		return -1;
 	if (saveFile_init(saveFile_dir) != 0)
-		return;
-	n += saveEeprom(saveFile_dir);
-	n += saveSram(saveFile_dir);
-	n += saveMempak(saveFile_dir);
-	n += saveFlashram(saveFile_dir);
+		return -1;
+	result=saveEeprom(saveFile_dir); if(result<0)failed=1; else n+=result;
+	result=saveSram(saveFile_dir); if(result<0)failed=1; else n+=result;
+	result=saveMempak(saveFile_dir); if(result<0)failed=1; else n+=result;
+	result=saveFlashram(saveFile_dir); if(result<0)failed=1; else n+=result;
 	if (n > 0)
 		dc_log(DC_LOG_INFO, "native save: wrote %d file(s)", n);
+	return failed?-1:0;
 }
 
 #ifdef DC_HOST_STUB

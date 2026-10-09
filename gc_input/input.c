@@ -208,6 +208,8 @@ EXPORT void CALL GetKeys(int Control, BUTTONS * Keys )
 		pauseAudio();
 		dc_overlay_run();
 		resumeAudio();
+		/* Menu gestures must not also press buttons in the resumed game. */
+		memset(Keys, 0, sizeof(*Keys));
 	} else if (!exit_combo)
 		combo_held = 0;
 #else

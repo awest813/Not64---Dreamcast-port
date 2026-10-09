@@ -37,6 +37,7 @@ CORE_OBJS = \
 	platform/dc_timers.o \
 	platform/dc_config.o \
 	platform/dc_settings.o \
+	platform/dc_storage.o \
 	platform/dc_savestates.o \
 	platform/dc_overlay.o \
 	platform/dc_nativesaves.o \
@@ -87,6 +88,21 @@ CORE_OBJS = \
 	rsp_hle/plugin.o
 
 DC_DEFS = -D__DREAMCAST__ -D__LINUX__ -DNOASM -DUSE_TLB_CACHE -DPIXEL_FORMAT=RGB565
+ifeq ($(UI_BOOT),1)
+DC_DEFS += -DDC_UI_BOOT
+endif
+ifeq ($(SOFT_IDENTITY_SPAN),1)
+DC_DEFS += -DDC_SOFT_IDENTITY_SPAN
+endif
+ifeq ($(SOFT_COMBINE_SPAN),1)
+ifneq ($(SOFT_IDENTITY_SPAN),1)
+$(error SOFT_COMBINE_SPAN=1 requires SOFT_IDENTITY_SPAN=1)
+endif
+DC_DEFS += -DDC_SOFT_COMBINE_SPAN
+endif
+ifneq ($(filter test-interp-local %/test-interp-kernel.elf,$(MAKECMDGOALS)),)
+DC_DEFS += -DDC_INTERP_ORACLE
+endif
 ifeq ($(VIDEO_HIRES),1)
 DC_DEFS += -DDC_VI_HIGHRES
 endif
@@ -102,15 +118,186 @@ endif
 ifeq ($(PERF),1)
 DC_DEFS += -DDC_PERF
 endif
+ifeq ($(INTERP_ALU),1)
+DC_DEFS += -DDC_INTERP_ALU
+endif
+ifeq ($(INTERP_MEMORY),1)
+DC_DEFS += -DDC_INTERP_MEMORY
+endif
+ifeq ($(INTERP_EXPAND),1)
+ifneq ($(INTERP_DIRECT)$(INTERP_ALU),11)
+$(error INTERP_EXPAND=1 requires INTERP_DIRECT=1 INTERP_ALU=1)
+endif
+DC_DEFS += -DDC_INTERP_EXPAND
+endif
+ifeq ($(INTERP_LOCAL),1)
+ifneq ($(INTERP_DIRECT)$(INTERP_MEMORY)$(INTERP_ALU),111)
+$(error INTERP_LOCAL=1 requires INTERP_DIRECT=1 INTERP_MEMORY=1 INTERP_ALU=1)
+endif
+ifneq ($(filter 1,$(INTERP_BLOCK) $(CPU_PROFILE)),)
+$(error INTERP_LOCAL=1 is separate from INTERP_BLOCK/CPU_PROFILE diagnostics)
+endif
+DC_DEFS += -DDC_INTERP_LOCAL
+endif
+ifeq ($(INTERP_THREAD),1)
+ifneq ($(INTERP_DIRECT)$(INTERP_MEMORY)$(INTERP_ALU),111)
+$(error INTERP_THREAD=1 requires INTERP_DIRECT=1 INTERP_MEMORY=1 INTERP_ALU=1)
+endif
+ifneq ($(filter 1,$(HOST) $(INTERP_LOCAL) $(INTERP_BLOCK) $(CPU_PROFILE)),)
+$(error INTERP_THREAD=1 requires native SH4 and separate LOCAL/BLOCK/PROFILE diagnostics)
+endif
+DC_DEFS += -DDC_INTERP_THREAD
+CORE_OBJS += platform/dc_interp_thread.o
+endif
+ifeq ($(INTERP_PC_LAZY),1)
+ifneq ($(INTERP_DIRECT)$(INTERP_MEMORY)$(INTERP_ALU),111)
+$(error INTERP_PC_LAZY=1 requires INTERP_DIRECT=1 INTERP_MEMORY=1 INTERP_ALU=1)
+endif
+ifneq ($(filter 1,$(INTERP_LOCAL) $(INTERP_THREAD)),)
+$(error INTERP_PC_LAZY=1 is separate from LOCAL/THREAD diagnostics)
+endif
+DC_DEFS += -DDC_INTERP_PC_LAZY
+endif
+ifeq ($(INTERP_COUNT_INLINE),1)
+DC_DEFS += -DDC_INTERP_COUNT_INLINE
+endif
+ifeq ($(INTERP_DELAY_ALU),1)
+ifneq ($(INTERP_DIRECT)$(INTERP_MEMORY)$(INTERP_ALU),111)
+$(error INTERP_DELAY_ALU=1 requires INTERP_DIRECT=1 INTERP_MEMORY=1 INTERP_ALU=1)
+endif
+DC_DEFS += -DDC_INTERP_DELAY_ALU
+endif
+ifeq ($(INTERP_BRANCH_PAIR),1)
+ifneq ($(INTERP_DIRECT)$(INTERP_MEMORY)$(INTERP_ALU),111)
+$(error INTERP_BRANCH_PAIR=1 requires INTERP_DIRECT=1 INTERP_MEMORY=1 INTERP_ALU=1)
+endif
+ifneq ($(filter 1,$(INTERP_BLOCK) $(INTERP_LOCAL) $(INTERP_THREAD) $(CPU_PROFILE)),)
+$(error INTERP_BRANCH_PAIR=1 is separate from BLOCK/LOCAL/THREAD/PROFILE diagnostics)
+endif
+DC_DEFS += -DDC_INTERP_BRANCH_PAIR
+endif
+ifeq ($(INTERP_COMPACT),1)
+ifneq ($(INTERP_DIRECT)$(INTERP_MEMORY)$(INTERP_ALU),111)
+$(error INTERP_COMPACT=1 requires INTERP_DIRECT=1 INTERP_MEMORY=1 INTERP_ALU=1)
+endif
+ifneq ($(filter 1,$(INTERP_BLOCK) $(INTERP_LOCAL) $(INTERP_THREAD) $(INTERP_EXPAND) $(INTERP_BRANCH_PAIR) $(CPU_PROFILE)),)
+$(error INTERP_COMPACT=1 is separate from alternate dispatch/cache/profile experiments)
+endif
+DC_DEFS += -DDC_INTERP_COMPACT
+endif
+ifeq ($(CPU_PROFILE),1)
+DC_DEFS += -DDC_CPU_PROFILE
+endif
+ifeq ($(CPU_TRACE_HOST),1)
+ifneq ($(HOST)$(CPU_PROFILE),11)
+$(error CPU_TRACE_HOST=1 requires HOST=1 CPU_PROFILE=1)
+endif
+DC_DEFS += -DDC_CPU_TRACE_HOST
+endif
+ifeq ($(INTERP_BLOCK_REUSE),1)
+ifneq ($(INTERP_BLOCK),1)
+$(error INTERP_BLOCK_REUSE=1 requires INTERP_BLOCK=1)
+endif
+DC_DEFS += -DDC_INTERP_BLOCK_REUSE
+endif
+ifeq ($(INTERP_BLOCK_FRONTIER),1)
+ifneq ($(INTERP_BLOCK),1)
+$(error INTERP_BLOCK_FRONTIER=1 requires INTERP_BLOCK=1)
+endif
+DC_DEFS += -DDC_INTERP_BLOCK_FRONTIER
+endif
+ifeq ($(INTERP_BLOCK_RAM_PROOF),1)
+ifneq ($(INTERP_BLOCK),1)
+$(error INTERP_BLOCK_RAM_PROOF=1 requires INTERP_BLOCK=1)
+endif
+DC_DEFS += -DDC_INTERP_BLOCK_RAM_PROOF
+endif
+ifeq ($(INTERP_BLOCK_STORES),1)
+ifneq ($(INTERP_BLOCK),1)
+$(error INTERP_BLOCK_STORES=1 requires INTERP_BLOCK=1)
+endif
+DC_DEFS += -DDC_INTERP_BLOCK_STORES
+endif
+ifeq ($(INTERP_BLOCK_EPOCH),1)
+ifneq ($(INTERP_BLOCK),1)
+$(error INTERP_BLOCK_EPOCH=1 requires INTERP_BLOCK=1)
+endif
+DC_DEFS += -DDC_INTERP_BLOCK_EPOCH
+endif
+ifeq ($(INTERP_BLOCK_PROFILE),1)
+ifneq ($(INTERP_BLOCK),1)
+$(error INTERP_BLOCK_PROFILE=1 requires INTERP_BLOCK=1)
+endif
+DC_DEFS += -DDC_INTERP_BLOCK_PROFILE
+endif
+ifeq ($(INTERP_BLOCK_DISPATCH),1)
+ifneq ($(INTERP_BLOCK)$(INTERP_BLOCK_FRONTIER),11)
+$(error INTERP_BLOCK_DISPATCH=1 requires INTERP_BLOCK=1 INTERP_BLOCK_FRONTIER=1)
+endif
+DC_DEFS += -DDC_INTERP_BLOCK_DISPATCH
+endif
+ifeq ($(INTERP_BLOCK_ARENA),1)
+ifneq ($(INTERP_BLOCK),1)
+$(error INTERP_BLOCK_ARENA=1 requires INTERP_BLOCK=1)
+endif
+DC_DEFS += -DDC_INTERP_BLOCK_ARENA
+endif
+ifeq ($(INTERP_BLOCK_HOT_ENTRY),1)
+ifneq ($(INTERP_BLOCK_ARENA)$(INTERP_BLOCK_EPOCH)$(INTERP_BLOCK_DISPATCH),111)
+$(error INTERP_BLOCK_HOT_ENTRY=1 requires ARENA=1 EPOCH=1 DISPATCH=1)
+endif
+ifeq ($(INTERP_BLOCK_PROFILE),1)
+$(error INTERP_BLOCK_HOT_ENTRY=1 is separate from sampled block diagnostics)
+endif
+DC_DEFS += -DDC_INTERP_BLOCK_HOT_ENTRY
+endif
+ifeq ($(INTERP_BLOCK),1)
+ifneq ($(INTERP_DIRECT)$(INTERP_MEMORY)$(INTERP_ALU),111)
+$(error INTERP_BLOCK=1 requires INTERP_DIRECT=1 INTERP_MEMORY=1 INTERP_ALU=1)
+endif
+ifeq ($(CPU_PROFILE),1)
+$(error INTERP_BLOCK=1 and CPU_PROFILE=1 are separate diagnostics)
+endif
+INTERP_BLOCK_KB ?= 512
+ifeq ($(filter $(INTERP_BLOCK_KB),512 1024 2048),)
+$(error INTERP_BLOCK_KB must be 512, 1024 or 2048)
+endif
+DC_DEFS += -DDC_INTERP_BLOCK -DDC_INTERP_BLOCK_KB=$(INTERP_BLOCK_KB)
+CORE_OBJS += platform/dc_interp_block.o
+endif
+ifeq ($(MEMORY_PROFILE),1)
+DC_DEFS += -DDC_MEMORY_PROFILE
+endif
+ifeq ($(FRAME_AUDIT),1)
+ifneq ($(STATE_AUDIT),1)
+$(error FRAME_AUDIT=1 requires STATE_AUDIT=1)
+endif
+DC_DEFS += -DDC_FRAME_AUDIT
+endif
+ifeq ($(STATE_AUDIT),1)
+DC_DEFS += -DDC_STATE_AUDIT
+endif
 ifeq ($(SOFT_PROFILE),1)
 DC_DEFS += -DDC_SOFT_PROFILE
 endif
 # Legacy register/memory views intentionally alias 32-bit and 64-bit words.
 ifeq ($(GFX),soft)
 DC_DEFS += -DDC_SOFT_GFX
+ifeq ($(RSP_LAZY_CLIP),1)
+DC_DEFS += -DDC_RSP_LAZY_CLIP
+endif
+ifeq ($(SOFT_REFERENCE),1)
+DC_DEFS += -DDC_SOFT_REFERENCE
+endif
 ifeq ($(GAME_DISC),1)
 DC_DEFS += -DDC_GAME_DISC
 GAME_FRAMES ?= 600
+ifneq ($(origin GAME_FRAMESKIP),undefined)
+ifeq ($(filter $(GAME_FRAMESKIP),0 1 2 3 4 5 6 7),)
+$(error GAME_FRAMESKIP must be 0 through 7 (6 balanced; 7 steady))
+endif
+DC_DEFS += -DDC_GAME_FRAMESKIP=$(GAME_FRAMESKIP)
+endif
 GAME_STEPS ?= 500000000
 GAME_START ?= 400
 DC_DEFS += -DDC_GAME_FRAMES=$(GAME_FRAMES) -DDC_GAME_STEPS=$(GAME_STEPS) -DDC_GAME_START=$(GAME_START)
@@ -137,13 +324,96 @@ ifneq ($(VIDEO),pvr)
 $(error RASTER_PVR=1 requires VIDEO=pvr)
 endif
 DC_DEFS += -DDC_RASTER_PVR
+ifeq ($(RASTER_WIDE),1)
+ifneq ($(VIDEO_HIRES),1)
+$(error RASTER_WIDE=1 requires VIDEO_HIRES=1)
+endif
+DC_DEFS += -DDC_RASTER_WIDE
+endif
+ifeq ($(RASTER_SHADE),1)
+DC_DEFS += -DDC_RASTER_SHADE
+endif
 ifeq ($(RASTER_STRICT),1)
 DC_DEFS += -DDC_RASTER_STRICT
+endif
+ifeq ($(RASTER_BATCH_CACHE),1)
+DC_DEFS += -DDC_RASTER_BATCH_CACHE
+endif
+ifeq ($(RASTER_IDENTITY),1)
+ifneq ($(RASTER_SHADE),1)
+$(error RASTER_IDENTITY=1 requires RASTER_SHADE=1)
+endif
+DC_DEFS += -DDC_RASTER_IDENTITY
+endif
+ifeq ($(RASTER_FULL_ALPHA),1)
+ifneq ($(RASTER_IDENTITY),1)
+$(error RASTER_FULL_ALPHA=1 requires RASTER_IDENTITY=1)
+endif
+DC_DEFS += -DDC_RASTER_FULL_ALPHA
+endif
+ifeq ($(RASTER_TEXTURE_ALPHA),1)
+ifneq ($(RASTER_FULL_ALPHA),1)
+$(error RASTER_TEXTURE_ALPHA=1 requires RASTER_FULL_ALPHA=1)
+endif
+DC_DEFS += -DDC_RASTER_TEXTURE_ALPHA
+endif
+ifeq ($(RASTER_CVG_POINT),1)
+ifneq ($(RASTER_FULL_ALPHA),1)
+$(error RASTER_CVG_POINT=1 requires RASTER_FULL_ALPHA=1)
+endif
+DC_DEFS += -DDC_RASTER_CVG_POINT
+endif
+ifeq ($(RASTER_RECT_SAMPLE),1)
+DC_DEFS += -DDC_RASTER_RECT_SAMPLE
+endif
+ifeq ($(RASTER_TEXEL_SCALE),1)
+ifneq ($(RASTER_RECT_SAMPLE),1)
+$(error RASTER_TEXEL_SCALE=1 requires RASTER_RECT_SAMPLE=1)
+endif
+DC_DEFS += -DDC_RASTER_TEXEL_SCALE
+endif
+ifeq ($(RASTER_CACHE_INDEX),1)
+ifneq ($(RASTER_BATCH_CACHE),1)
+$(error RASTER_CACHE_INDEX=1 requires RASTER_BATCH_CACHE=1)
+endif
+DC_DEFS += -DDC_RASTER_CACHE_INDEX
+endif
+ifeq ($(RASTER_SHADE_SCALE),1)
+ifneq ($(RASTER_TEXEL_SCALE)$(RASTER_SHADE),11)
+$(error RASTER_SHADE_SCALE=1 requires RASTER_TEXEL_SCALE=1 RASTER_SHADE=1)
+endif
+DC_DEFS += -DDC_RASTER_SHADE_SCALE
+endif
+ifeq ($(RASTER_TRI_ORIGIN),1)
+ifneq ($(RASTER_TEXEL_SCALE),1)
+$(error RASTER_TRI_ORIGIN=1 requires RASTER_TEXEL_SCALE=1)
+endif
+DC_DEFS += -DDC_RASTER_TRI_ORIGIN
+endif
+ifeq ($(RASTER_FILTER_GRID),1)
+ifneq ($(RASTER_TRI_ORIGIN)$(RASTER_SHADE_SCALE),11)
+$(error RASTER_FILTER_GRID=1 requires RASTER_TRI_ORIGIN=1 RASTER_SHADE_SCALE=1)
+endif
+DC_DEFS += -DDC_RASTER_FILTER_GRID
+endif
+ifeq ($(RASTER_RECT_CLIP),1)
+DC_DEFS += -DDC_RASTER_RECT_CLIP
+endif
+ifeq ($(RASTER_CUTOUT),1)
+ifneq ($(RASTER_SHADE),1)
+$(error RASTER_CUTOUT=1 requires RASTER_SHADE=1)
+endif
+DC_DEFS += -DDC_RASTER_CUTOUT
 endif
 ifeq ($(RASTER_PROFILE),1)
 DC_DEFS += -DDC_RASTER_PROFILE
 endif
 SOFT_OBJS += platform/dc_raster_pvr.o
+endif
+ifeq ($(RASTER_WIDE),1)
+ifneq ($(RASTER_PVR),1)
+$(error RASTER_WIDE=1 requires RASTER_PVR=1)
+endif
 endif
 ifeq ($(RASTER_STRICT),1)
 ifneq ($(RASTER_PVR),1)
@@ -235,6 +505,7 @@ DC_LIBS = $(OBJEXTRA) $(KOS_LIBS) -lm
 endif
 
 SOURCE_OBJS = main/main_dc.o \
+	platform/dc_menu/dc_ui.o \
 	fileBrowser/fileBrowser.o \
 	fileBrowser/fileBrowser-kos.o \
 	gc_input/controller-DC.o \
@@ -279,6 +550,29 @@ help:
 	  '  make -f Makefile.dc VIDEO=pvr|software [DEMO=1] [GFX=soft] [GAME_DISC=1]' \
 	  '  RASTER_PVR=1 enables experimental PVR geometry; INTERP_DIRECT=1 streamlines operand decoding.' \
 	  '  RASTER_STRICT=1 restricts GPU work to replay-tested opaque fills (requires RASTER_PVR=1).' \
+	  '  RASTER_WIDE=1 adds experimental native 640-pixel GPU canvases (requires VIDEO_HIRES=1).' \
+	  '  RASTER_IDENTITY=1 opts into additional identity blending; RASTER_BATCH_CACHE=1 tests 256 pinned entries.' \
+	  '  RASTER_CUTOUT=1 adds experimental texture-alpha shade triangles (requires RASTER_SHADE=1).' \
+	  '  RASTER_FULL_ALPHA=1 and RASTER_RECT_CLIP=1 add guarded opaque-alpha and integer-scissor cases.' \
+	  '  RASTER_TEXTURE_ALPHA=1 proves uniform raw texture opacity (requires RASTER_FULL_ALPHA=1).' \
+	  '  RASTER_CVG_POINT=1 tests exact integer identity coverage masks (requires RASTER_FULL_ALPHA=1).' \
+	  '  RASTER_RECT_SAMPLE=1 and RASTER_TEXEL_SCALE=1 correct qualified rectangle sampling/packed colors.' \
+	  '  RASTER_SHADE_SCALE=1 corrects packed-texel expansion in separable shade equations (requires both TEXEL_SCALE/SHADE).' \
+	  '  RASTER_TRI_ORIGIN=1 corrects triangle attribute sampling without moving geometry (requires TEXEL_SCALE).' \
+	  '  RASTER_FILTER_GRID=1 refines small filtered shade textures (requires TRI_ORIGIN/SHADE_SCALE).' \
+	  '  RASTER_FILTER_GRID=1 refines small filtered shade textures (requires TRI_ORIGIN/SHADE_SCALE).' \
+	  '  RASTER_CACHE_INDEX=1 adds collision-checked indexed texture lookup (requires RASTER_BATCH_CACHE=1).' \
+	  '  INTERP_BLOCK=1 opts into experimental SH4 integer blocks; INTERP_BLOCK_KB=512|1024|2048 bounds RAM.' \
+  '  INTERP_BLOCK_STORES=1 guards continuation; INTERP_BLOCK_REUSE/FRONTIER/RAM_PROOF/EPOCH are opt-in.' \
+	  '  INTERP_LOCAL=1, INTERP_THREAD=1 and INTERP_PC_LAZY=1 are separate optional CPU experiments.' \
+	  '  INTERP_COUNT_INLINE=1 preserves Count boundaries with a pure-core inline update.' \
+	  '  INTERP_DELAY_ALU=1 tests direct delay-slot dispatch (requires DIRECT, MEMORY and ALU).' \
+	  '  SOFT_IDENTITY_SPAN=1 tests scalar identity rectangle spans; INTERP_BLOCK_PROFILE=1 diagnoses native costs.' \
+	  '  SOFT_COMBINE_SPAN=1 tests exact simple combiners within IDENTITY_SPAN; INTERP_BRANCH_PAIR=1 tests simple delays.' \
+	  '  INTERP_BLOCK_DISPATCH=1 rejects unsupported starts at fetch (requires BLOCK and FRONTIER).' \
+	  '  INTERP_BLOCK_ARENA=1 tests compact metadata and bounded relocated native code.' \
+	  '  STATE_AUDIT=1 prints post-run CPU/event bytes and memory checksums; MEMORY_PROFILE=1 reports allocator use.' \
+	  '  FRAME_AUDIT=1 adds untimed visible RGB565 RLE exports (requires STATE_AUDIT=1).' \
 	  '  RASTER_PROFILE=1 adds expensive per-texture timings; PERF=1 measures actual game frames.' \
 	  '  Add UPLOAD_SKIP=1 to measure PVR hash/upload reuse (slower in Flycast).' \
 	  '  SOFT_PROFILE=1 reports cumulative RDP draw-category timings every 60 display lists.' \
@@ -287,6 +581,8 @@ help:
 	  '  GAME_CHECKPOINT=1 resumes /cd/boot.st after loading the game ROM (GAME_DISC=1).' \
 	  '  VIDEO_HIRES=1 enables experimental 640x480 field-weave scanout (1 MiB staging).' \
 	  '  GAME_INPUT_REPLAY=1 reads recorded Maple inputs from /cd/input.txt (GAME_DISC=1).' \
+	  '  GAME_FRAMESKIP=0..5 skips N after each draw; 6 alternates 2/3; 7 repeats 2/3/3/3. CLI aliases: balanced|steady.' \
+	  '  INTERP_MEMORY=1 and INTERP_ALU=1 enable optional interpreter RAM/dispatch shortcuts.' \
 	  '' \
 	  'Flags: HOST=1  VIDEO=software|pvr  GFX=none|soft  DEMO=1  GAME_DISC=1' \
 	  'Docs:  tools/dc/README.md'
@@ -328,9 +624,16 @@ $(BUILD_DIR)/%.o: %.c $(CONFIG_STAMP)
 	@mkdir -p $(@D)
 	$(DC_CC) $(DC_CFLAGS) -MMD -MP -c -o $@ $<
 
+$(BUILD_DIR)/%.o: %.S $(CONFIG_STAMP)
+	@mkdir -p $(@D)
+	$(DC_CC) $(filter-out -std=gnu11 -fgnu89-inline -Werror=implicit-function-declaration,$(DC_CFLAGS)) -MMD -MP -c -o $@ $<
+
 $(BUILD_DIR)/%.o: %.cpp $(CONFIG_STAMP)
 	@mkdir -p $(@D)
 	$(DC_CXX) $(filter-out -std=gnu11 -fgnu89-inline -Werror=implicit-function-declaration -Wno-pointer-sign,$(DC_CFLAGS)) -std=gnu++11 -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/test-interp-kernel.elf: $(filter-out $(BUILD_DIR)/main/main_dc.o,$(OBJS)) $(BUILD_DIR)/tests/dc/test_interp_local.o
+	$(DC_CC) $(DC_CFLAGS) $(DC_LDFLAGS) -o $@ $(KOS_START) $^ $(DC_LIBS)
 
 ifeq ($(HOST),1)
 $(TEST_TARGET): $(filter-out $(BUILD_DIR)/main/main_dc.o,$(OBJS)) $(TEST_OBJS)
@@ -338,6 +641,13 @@ $(TEST_TARGET): $(filter-out $(BUILD_DIR)/main/main_dc.o,$(OBJS)) $(TEST_OBJS)
 
 $(SOFT_TEST_TARGET): $(BUILD_DIR)/tests/dc/test_soft.o $(addprefix $(BUILD_DIR)/mupen64_soft_gfx/,rsp.o rdp.o rs.o tx.o tf.o cc.o bl.o)
 	$(DC_CXX) $(filter-out -std=gnu11 -fgnu89-inline -Werror=implicit-function-declaration -Wno-pointer-sign,$(DC_CFLAGS)) $(DC_LDFLAGS) -o $@ $^ $(DC_LIBS)
+
+$(BUILD_DIR)/test-interp-local: $(filter-out $(BUILD_DIR)/main/main_dc.o,$(OBJS)) $(BUILD_DIR)/tests/dc/test_interp_local.o
+	$(DC_CC) $(DC_CFLAGS) $(DC_LDFLAGS) -o $@ $^ $(DC_LIBS)
+
+.PHONY: test-interp-local
+test-interp-local: $(BUILD_DIR)/test-interp-local
+	$(RUNNER) ./$(BUILD_DIR)/test-interp-local
 
 ifeq ($(GFX),soft)
 test-soft: $(SOFT_TEST_TARGET)

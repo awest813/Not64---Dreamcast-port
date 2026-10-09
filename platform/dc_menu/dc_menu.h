@@ -22,12 +22,13 @@
 #include "../../fileBrowser/fileBrowser.h"
 #include "../../gc_input/controller.h"
 
-#define DC_MENU_MAX_NAME 64
+#define DC_MENU_MAX_NAME FILE_BROWSER_MAX_PATH_LEN
 
 typedef struct {
 	char         path[FILE_BROWSER_MAX_PATH_LEN];	/* what rom_read wants */
 	char         label[DC_MENU_MAX_NAME];		/* basename, for the row */
 	unsigned int size;
+	int directory;
 } dc_menu_entry;
 
 typedef struct {
@@ -36,13 +37,17 @@ typedef struct {
 	/* Where the entries came from. Worth showing: when the list is empty,
 	 * the path is the one thing the player needs to know. */
 	char           dir[FILE_BROWSER_MAX_PATH_LEN];
+	int error;
 } dc_menu_list;
 
 /* What one polled frame of input decided. */
 typedef enum {
 	DC_MENU_NONE = 0,
 	DC_MENU_PICK,
-	DC_MENU_CANCEL
+	DC_MENU_CANCEL,
+	DC_MENU_REFRESH,
+	DC_MENU_SOURCE_PREV,
+	DC_MENU_SOURCE_NEXT
 } dc_menu_action;
 
 typedef struct {
@@ -88,6 +93,9 @@ void dc_menu_draw(const dc_menu_state *st, const char *title);
 /* A single status line on an otherwise empty screen, same chrome as the
  * browser. Used for "Loading ..." while a cart streams off the disc. */
 void dc_menu_message(const char *title, const char *message);
+/* Header and length checks happen before handing a selected cart to the core. */
+int dc_menu_validate(const char *path, char *error, size_t size);
+void dc_menu_error(const char *message);
 
 /* The whole browser: open the surface, loop until the pad picks or cancels,
  * free everything. Returns 1 on a pick (out is filled), 0 on cancel, negative

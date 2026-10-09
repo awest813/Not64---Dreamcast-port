@@ -18,9 +18,29 @@ static uint64_t perf_now(void) { return timer_us_gettime64(); }
 static uint64_t perf_begin, perf_raster, perf_convert, perf_present;
 static void perf_touch(void) { if (!perf_begin) perf_begin = perf_now(); }
 #endif
+#if defined(DC_MEMORY_PROFILE) && !defined(DC_HOST_STUB)
+#include <kos.h>
+#include <malloc.h>
+#include <arch/stack.h>
+#include <kos/mm.h>
+static void memory_report(unsigned frames) {
+    struct mallinfo heap=mallinfo();
+    uintptr_t brk=(uintptr_t)mm_sbrk(0),top=_arch_mem_top-THD_KERNEL_STACK_SIZE;
+    unsigned uncommitted=brk<top?top-brk:0;
+    printf("Memory profile: frames=%u heap-used=%d heap-free=%d uncommitted=%u main-available=%u VRAM-free=%u\n",
+           frames,heap.uordblks,heap.fordblks,uncommitted,uncommitted+heap.fordblks,(unsigned)pvr_mem_available());
+}
+#endif
+#ifdef DC_INTERP_BLOCK
+#include "dc_interp_block.h"
+#endif
+#ifdef DC_CPU_PROFILE
+extern void dc_interp_profile_report(void);
+extern void dc_rsp_profile_report(void);
+#endif
 
 #ifdef DC_SOFT_GFX
-extern int dc_soft_dlist(const GFX_INFO *);
+extern int dc_soft_dlist(const GFX_INFO *, int);
 extern void dc_soft_reset(void);
 #endif
 
@@ -28,14 +48,26 @@ static GFX_INFO info;
 static dc_gfx_stats stats;
 static int initialized, opened, video_ready;
 static dc_vi_frame frame;
+static dc_vi_padding_cache padding_cache;
 static int last_blank = -1;
 static uint32_t frame_limit;
+static unsigned frameskip, frameskip_phase;
+static uint32_t last_rendered_list;
+static dc_vi_state previous_vi[2];
+static uint32_t previous_vi_draw[2];
+static int previous_vi_valid;
 extern int stop;
 #ifdef DC_VI_HIGHRES
 extern int vi_field;
 #endif
 
 void dc_gfx_set_frame_limit(uint32_t limit) { frame_limit = limit; }
+void dc_gfx_set_frameskip(unsigned skip) {
+    frameskip=skip>DC_FRAMESKIP_STEADY?DC_FRAMESKIP_STEADY:skip;
+    frameskip_phase=0;
+    previous_vi_valid=0;
+}
+unsigned dc_gfx_get_frameskip(void) { return frameskip; }
 const dc_vi_frame *dc_gfx_get_frame(void) { return opened ? &frame : NULL; }
 const char *dc_gfx_backend_name(void) { return dc_video_name(); }
 
@@ -57,6 +89,7 @@ void closeDLL_gfx(void)
     if (video_ready) dc_video_shutdown();
     video_ready = 0;
     frame.width = frame.height = 0;
+    padding_cache.valid = 0;
     opened = initialized = 0;
     memset(&info, 0, sizeof(info));
 }
@@ -68,6 +101,9 @@ BOOL initiateGFX(GFX_INFO candidate)
     perf_begin = perf_raster = perf_convert = perf_present = 0;
 #endif
     memset(&stats, 0, sizeof(stats));
+    last_rendered_list=0;
+    frameskip_phase=0;
+    previous_vi_valid=0;
     if (!candidate.MemoryBswaped || !candidate.RDRAM || !candidate.DMEM ||
         !candidate.IMEM || !candidate.MI_INTR_REG || !candidate.DPC_START_REG ||
         !candidate.DPC_END_REG || !candidate.DPC_CURRENT_REG ||
@@ -93,7 +129,11 @@ void romOpen_gfx(void)
     }
     memset(&stats, 0, sizeof(stats));
     frame.width = frame.height = 0;
+    padding_cache.valid = 0;
     last_blank = -1;
+    previous_vi_valid=0;
+    last_rendered_list=0;
+    frameskip_phase=0;
     opened = 1;
 }
 void romClosed_gfx(void)
@@ -104,22 +144,37 @@ void romClosed_gfx(void)
     if (video_ready) dc_video_shutdown();
     video_ready = opened = 0;
     frame.width = frame.height = 0;
+    padding_cache.valid = 0;
 }
 void changeWindow(void) {}
 
 #ifdef DC_SOFT_GFX
-extern int dc_soft_dlist(const GFX_INFO *);
+extern int dc_soft_dlist(const GFX_INFO *, int);
 #endif
 void processDList(void)
 {
 #ifdef DC_SOFT_GFX
     if (active()) {
         ++stats.display_lists;
+        int draw;
+        if(frameskip==DC_FRAMESKIP_STEADY) {
+            // Exactly eight draws in any thirty-list interval. Every skipped
+            // list still decodes state and delivers its interrupts.
+            draw=frameskip_phase==0 || frameskip_phase==3 ||
+                 frameskip_phase==7 || frameskip_phase==11;
+            frameskip_phase=(frameskip_phase+1)%15;
+        } else if(frameskip==DC_FRAMESKIP_BALANCED) {
+            /* Two draws per seven lists: skip two, then three. Decode and
+             * interrupts still run on every list, with no skipped VI updates. */
+            draw=frameskip_phase==0 || frameskip_phase==3;
+            frameskip_phase=(frameskip_phase+1)%7;
+        } else draw=(stats.display_lists-1)%(frameskip+1)==0;
+        if(draw)++stats.rendered_lists;else ++stats.skipped_lists;
 #ifdef DC_PERF
         perf_touch();
         uint64_t begin = perf_now();
 #endif
-        if (!dc_soft_dlist(&info)) { ++stats.decode_failures; stop = 1; }
+        if (!dc_soft_dlist(&info,draw)) { ++stats.decode_failures; stop = 1; }
 #ifdef DC_PERF
         perf_raster += perf_now() - begin;
 #endif
@@ -169,12 +224,26 @@ void updateScreen(void)
     perf_touch();
     uint64_t begin = perf_now();
 #endif
-    result = dc_vi_convert(&state, info.RDRAM, DC_N64_RDRAM_SIZE, &frame);
+    unsigned slot=(state.status&0x40u)?state.field&1u:0u;
+    unsigned old_width=frame.width,old_height=frame.height,old_interlaced=frame.interlaced;
+    int reused=frameskip && stats.rendered_lists && (previous_vi_valid&(1u<<slot)) && last_blank==0 &&
+        stats.rendered_lists==previous_vi_draw[slot] && !memcmp(&state,&previous_vi[slot],sizeof(state));
+    result = reused ? DC_VI_READY :
+        dc_vi_convert_cached(&state, info.RDRAM, DC_N64_RDRAM_SIZE, &frame, &padding_cache);
+    if(result!=DC_VI_READY)previous_vi_valid=0;
+    else {
+        // A fresh drawing must refresh each woven field once. A layout change
+        // clears both fields; progressive conversion overwrites the whole frame.
+        if(!frame.interlaced || old_width!=frame.width || old_height!=frame.height ||
+           old_interlaced!=frame.interlaced)previous_vi_valid=0;
+        previous_vi[slot]=state;previous_vi_draw[slot]=stats.rendered_lists;
+        previous_vi_valid|=1u<<slot;
+    }
 #ifdef DC_PERF
     perf_convert += perf_now() - begin;
 #endif
     blank = result != DC_VI_READY;
-    if (result == DC_VI_READY) ++stats.converted;
+    if (result == DC_VI_READY) { if(!reused)++stats.converted; }
     else if (result == DC_VI_BLANK) ++stats.blanked;
     else if (result == DC_VI_INVALID) {
         if (++stats.invalid_vi == 1)
@@ -201,7 +270,11 @@ void updateScreen(void)
 #ifdef DC_PERF
         perf_present += perf_now() - begin;
 #endif
-        if (!blank) ++stats.presented;
+        if (!blank) {
+            ++stats.presented;
+            if(stats.rendered_lists!=last_rendered_list)++stats.new_render_presentations;
+            last_rendered_list=stats.rendered_lists;
+        }
 #ifdef DC_SOFT_GFX
         if (!blank && stats.presented % 60 == 0)
             printf("Graphics progress: frames=%lu lists=%lu\n", (unsigned long)stats.presented, (unsigned long)stats.display_lists);
@@ -215,13 +288,26 @@ void updateScreen(void)
                (unsigned long)stats.presented, (unsigned long long)total,
                (unsigned long long)perf_raster, (unsigned long long)perf_convert,
                (unsigned long long)perf_present);
+        printf("Game renders: frames=%lu rendered-lists=%lu skipped-lists=%lu new-renders=%lu frameskip=%u\n",
+               (unsigned long)stats.presented,(unsigned long)stats.rendered_lists,
+               (unsigned long)stats.skipped_lists,(unsigned long)stats.new_render_presentations,frameskip);
+#ifdef DC_INTERP_BLOCK
+        dc_interp_block_report();
+#endif
+#if defined(DC_MEMORY_PROFILE) && !defined(DC_HOST_STUB)
+        memory_report(stats.vi_updates);
+#endif
+#ifdef DC_CPU_PROFILE
+        dc_interp_profile_report();
+        dc_rsp_profile_report();
+#endif
     }
 #endif
     if (frame_limit && stats.presented >= frame_limit) stop = 1;
 }
 void viStatusChanged(void) { if (active()) ++stats.status_changes; }
 void viWidthChanged(void) { if (active()) ++stats.width_changes; }
-void showCFB(void) { if (active()) ++stats.cfb_requests; }
+void showCFB(void) { if (active()) { ++stats.cfb_requests; previous_vi_valid=0; } }
 void readScreen(void **dest, long *width, long *height)
 {
     if (dest) *dest = NULL;
@@ -233,7 +319,7 @@ static void fb_read(DWORD addr) { (void)addr; if (active()) ++stats.fb_reads; }
 static void fb_write(DWORD addr, DWORD size)
 {
     (void)addr; (void)size;
-    if (active()) ++stats.fb_writes;
+    if (active()) { ++stats.fb_writes; previous_vi_valid=0; }
 }
 static void fb_info(void *dest)
 {

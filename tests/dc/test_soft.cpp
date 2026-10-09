@@ -392,6 +392,17 @@ int main() {
     CHECK(intr==0x20 && interrupts==1);
     for(unsigned i=0;i<16;i++) CHECK(half(0x10000+i*2)==0xf801);
     CHECK(half(0xfffe)==0 && half(0x10020)==0);
+    // Skipping rasterization must still decode state and deliver FullSync.
+    // The following drawn frame uses the fill state from that skipped task.
+    {
+        RDP skipped(info); skipped.setRasterEnabled(false);
+        std::memset(ram+0x10000,0,32); intr=interrupts=0;
+        RSP decoded(info,&skipped);
+        CHECK(decoded.succeeded() && intr==0x20 && interrupts==1);
+        for(unsigned i=0;i<16;i++)CHECK(half(0x10000+i*2)==0);
+        skipped.setRasterEnabled(true); skipped.fillRect(0,0,3,3);
+        for(unsigned i=0;i<16;i++)CHECK(half(0x10000+i*2)==0xf801);
+    }
     // The E5 decoder consumes both following half-command payloads.
     word(0x3000,0xe5000000); word(0x3004,0);
     word(0x3008,0xe1000000); word(0x300c,0);
@@ -411,6 +422,11 @@ int main() {
     byte(0x4000,0); byte(0x4001,2); // x=2, outside identity clip volume
     intr=interrupts=0;
     { RSP culled(info); CHECK(culled.succeeded() && intr==0x20 && interrupts==1); }
+    { RDP skipped(info); skipped.setRasterEnabled(false);
+      intr=interrupts=0; RSP culled(info,&skipped);
+      CHECK(culled.succeeded() && intr==0x20 && interrupts==1);
+      byte(0x4001,0); intr=interrupts=0; RSP visible(info,&skipped);
+      CHECK(!visible.succeeded() && interrupts==0); }
     byte(0x4001,0); intr=interrupts=0;
     { RSP visible(info); CHECK(!visible.succeeded() && interrupts==0); }
     // Outside vertices on opposite sides still span the visible volume.
@@ -421,11 +437,48 @@ int main() {
     { RSP spanning(info); CHECK(!spanning.succeeded() && interrupts==0); }
     byte(0x4010,0); byte(0x4011,3);
     { RSP outside(info); CHECK(outside.succeeded() && intr==0x20 && interrupts==1); }
+    // Vertex positions use the matrix at load time, even when CULLDL runs
+    // after another matrix load. Exhaust and recycle all 32 lazy snapshots.
+    for(unsigned i=0;i<64;i++)byte(0x5000+i,0);
+    for(unsigned axis=0;axis<4;axis++)byte(0x5000+(axis*4+axis)*2+1,1);
+    for(unsigned i=0;i<64;i++)byte(0x5100+i,0);
+    for(unsigned axis=1;axis<4;axis++)byte(0x5100+(axis*4+axis)*2+1,1);
+    word(0x3100,0x01001002);word(0x3104,0x4000);
+    word(0x3108,0xda000003);word(0x310c,0x5100);
+    word(0x3110,0x03000000);word(0x3114,0);
+    word(0x3118,0x11000000);word(0x311c,0);
+    for(unsigned skipped=0;skipped<2;skipped++) {
+        RDP state(info);state.setRasterEnabled(!skipped);intr=interrupts=0;
+        RSP savedMatrix(info,&state);CHECK(savedMatrix.succeeded() && interrupts==1);
+    }
+    for(unsigned mixed=0;mixed<2;mixed++) {
+        unsigned pc=0x3100;
+        for(unsigned load=0;load<64;load++) {
+            word(pc,0xda000003);word(pc+4,mixed && (load&1)?0x5100:0x5000);pc+=8;
+            word(pc,0x01001000|((load%32+1)<<1));word(pc+4,0x4000);pc+=8;
+        }
+        word(pc,0x03000000);word(pc+4,62);pc+=8;
+        word(pc,0x11000000);word(pc+4,0);
+        for(unsigned skipped=0;skipped<2;skipped++) {
+            RDP state(info);state.setRasterEnabled(!skipped);intr=interrupts=0;
+            RSP snapshots(info,&state);
+            CHECK(snapshots.succeeded()==!mixed && interrupts==(!mixed?1u:0u));
+        }
+    }
+    // Restore the original two-vertex list for invalid endpoint checks.
+    word(0x3100,0x01002004);word(0x3104,0x4000);
+    word(0x3108,0x03000000);word(0x3110,0x11000000);word(0x3114,0);
     // An unloaded endpoint and a reversed range must stop safely.
     intr=interrupts=0; word(0x310c,4);
     { RSP unloaded(info); CHECK(!unloaded.succeeded() && interrupts==0); }
     word(0x3108,0x03000002); word(0x310c,0);
     { RSP reversed(info); CHECK(!reversed.succeeded() && interrupts==0); }
+    // Skipped TRI1/TRI2 must still reject an out-of-range vertex index.
+    { RDP skipped(info); skipped.setRasterEnabled(false);
+      word(0x3000,0x05fe0000);word(0x3004,0);
+      RSP badTriangle(info,&skipped);CHECK(!badTriangle.succeeded());
+      word(0x3000,0x06000000);word(0x3004,0x00fe0000);
+      RSP badPair(info,&skipped);CHECK(!badPair.succeeded()); }
     intr=interrupts=0; word(0x3000,0x11000000);
     { RSP bad(info); CHECK(!bad.succeeded() && intr==0 && interrupts==0); }
     task[12]=0x3ffffc;

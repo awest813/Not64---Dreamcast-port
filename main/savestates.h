@@ -45,6 +45,9 @@ const char *savestates_filename(void);
 #ifdef __DREAMCAST__
 void savestates_load_path(const char *path);
 int savestates_ok(void);
+#ifdef DC_STATE_AUDIT
+void savestates_audit(void);
+#endif
 const char *savestates_error(void);
 #ifdef DC_HOST_STUB
 int savestates_selftest(void);

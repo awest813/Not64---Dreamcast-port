@@ -27,6 +27,7 @@ void dc_video_release_display(void)
 }
 
 #ifndef DC_VIDEO_PVR
+int dc_video_prepare_ui(void) { return claimed ? 1 : 0; }
 int dc_video_init(void)
 {
     vid_mode_t mode;

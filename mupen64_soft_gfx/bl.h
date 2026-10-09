@@ -41,6 +41,10 @@ class BL
    friend class RS;
    bool opaqueRectangle(int x0, int y0, int x1, int y1) const;
    void finishOpaqueRectangle(Color32 color);
+#ifdef DC_SOFT_IDENTITY_SPAN
+   bool identityRectangle(int x0, int y0, int x1, int y1) const;
+   void finishIdentityRectangle(Color32 color);
+#endif
    GFX_INFO gfxInfo;
    bool validPixel(void *image, int x, int y, unsigned bytes) const;
    
@@ -70,6 +74,7 @@ class BL
    // blender modes
    int oldBlenderMode;
    bool readMemory1, readMemory2;
+   bool identityBlend1;
    Color32 *psa1, *psb1, *pca1, *pcb1, *psa2, *psb2, *pca2, *pcb2;
    
    // constant colors
@@ -103,6 +108,10 @@ class BL
    static unsigned short *zLUT;
    
  public:
+#ifdef DC_SOFT_PROFILE
+   unsigned profileMode() const { return (unsigned)renderMode | ((unsigned)oldBlenderMode << 16); }
+   unsigned profileFlags() const { return (unsigned)alphaCompare | ((unsigned)depthSource<<8) | (cImg==zImg?0x10000u:0); }
+#endif
    BL(GFX_INFO);
    ~BL();
    

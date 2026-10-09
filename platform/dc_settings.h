@@ -25,6 +25,7 @@ enum {
 	DC_SET_SAVES,
 	DC_SET_VILIMIT,
 	DC_SET_LOGFILE,
+	DC_SET_FRAMESKIP,
 	DC_SET_SKIPMENU,
 	DC_SET_COUNT
 };
@@ -50,6 +51,9 @@ int dc_controls_row_count(void);
 void dc_controls_enter(void);
 int dc_controls_step(const BUTTONS *keys);
 void dc_controls_draw(void);
+/* Applied after controller initialization and whenever a mapping changes. */
+void dc_controls_apply(void);
+const char *dc_settings_status(void);
 
 #ifdef DC_HOST_STUB
 int dc_settings_selftest(void);

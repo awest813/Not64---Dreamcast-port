@@ -161,6 +161,7 @@ void BL::setBlender(int value)
    readMemory1 = psa1==&memoryColor || (force_bl && psb1==&memoryColor);
    readMemory2 = psa1==&memoryColor || psb1==&memoryColor ||
                  psa2==&memoryColor || (force_bl && psb2==&memoryColor);
+   identityBlend1 = psa1==psb1 && pca1==&zero && pcb1==&one;
 }
 
 void BL::setFillColor(int color)
@@ -228,10 +229,19 @@ void BL::cycleModeDraw(int x, int y, Color32 c, float z, Color32 shade, bool two
    pixelColor=c; shadeColor=shade;
    Color32 result=*psa1;
    if(twoCycles || force_bl) {
-       float ca=pca1->getAlpha()/255.0f;
-       invertedAlpha=Color32(0,0,0,255.0f-pca1->getAlpha());
-       float cb=pcb1->getAlpha()/255.0f;
-       result=*psa1*ca+*psb1*cb;
+#ifndef DC_SOFT_REFERENCE
+       if(identityBlend1) {
+           // X * 0 + X * 1 retains all channels exactly. Keep the temporary
+           // alpha register identical to the full first-cycle calculation.
+           invertedAlpha=Color32(0,0,0,255);
+       } else
+#endif
+       {
+           float ca=pca1->getAlpha()/255.0f;
+           invertedAlpha=Color32(0,0,0,255.0f-pca1->getAlpha());
+           float cb=pcb1->getAlpha()/255.0f;
+           result=*psa1*ca+*psb1*cb;
+       }
    }
    if(twoCycles) {
        blendedPixelColor=result;
@@ -264,6 +274,27 @@ void BL::finishOpaqueRectangle(Color32 color)
    pixelColor=color;
    shadeColor=Color32(0,0,0,0);
 }
+
+#ifdef DC_SOFT_IDENTITY_SPAN
+// Rectangular one-cycle identity output only. Keep depth, destination reads,
+// dither and genuine blending in the scalar path; fixed alpha tests can be
+// performed directly without repeating framebuffer validation per pixel.
+bool BL::identityRectangle(int x0,int y0,int x1,int y1) const
+{
+   return format==0 && size==2 && !z_cmp && !z_upd && !readMemory1 &&
+      (!(alphaCompare&1) || !(alphaCompare&2)) && psa1==&pixelColor &&
+      (!force_bl || identityBlend1) && x0<x1 && y0<y1 &&
+      validPixel(cImg,x0,y0,2) && validPixel(cImg,x1-1,y1-1,2);
+}
+
+void BL::finishIdentityRectangle(Color32 color)
+{
+   // Called only after an accepted write. A rectangle with no accepted pixel
+   // leaves the previous temporary registers untouched, as in cycleModeDraw.
+   pixelColor=color;shadeColor=Color32(0,0,0,0);
+   if(force_bl)invertedAlpha=Color32(0,0,0,255);
+}
+#endif
 
 void BL::copyModeDraw(int x, int y, Color32 c)
 {

@@ -32,7 +32,19 @@
 
 /* Optional PVR texture keys, decoded texture staging and readback scratch. */
 #ifdef DC_RASTER_PVR
+#ifdef DC_RASTER_WIDE
+#ifdef DC_RASTER_BATCH_CACHE
+#define DC_TEXCACHE_SIZE        (3072 * DC_KB)
+#else
+#define DC_TEXCACHE_SIZE        (2304 * DC_KB)
+#endif
+#else
+#ifdef DC_RASTER_BATCH_CACHE
+#define DC_TEXCACHE_SIZE        (3072 * DC_KB)
+#else
 #define DC_TEXCACHE_SIZE        (1280 * DC_KB)
+#endif
+#endif
 #else
 #define DC_TEXCACHE_SIZE        0
 #endif
@@ -51,6 +63,19 @@
 #define DC_SOFT_RENDERER_SIZE 0
 #endif
 
+/* Optional bounded SH4 integer block cache; actual storage is statically checked. */
+#ifdef DC_INTERP_BLOCK
+#ifndef DC_INTERP_BLOCK_KB
+#define DC_INTERP_BLOCK_KB 512
+#endif
+#if DC_INTERP_BLOCK_KB != 512 && DC_INTERP_BLOCK_KB != 1024 && DC_INTERP_BLOCK_KB != 2048
+#error Native integer block cache must reserve 512, 1024 or 2048 KiB
+#endif
+#define DC_INTERP_BLOCK_SIZE (DC_INTERP_BLOCK_KB * DC_KB)
+#else
+#define DC_INTERP_BLOCK_SIZE 0
+#endif
+
 /* Audio ring in gc_audio/audio-dc.c */
 #define DC_AUDIO_RING_SIZE      (64 * DC_KB)
 /* KOS PCM staging plus stereo separation scratch. Worker stack remains in
@@ -65,7 +90,7 @@
 #define DC_EMU_FIXED_SIZE \
 	(DC_N64_RDRAM_SIZE + DC_ROM_STREAM_SIZE + DC_TLB_MISC_SIZE + \
 	 DC_TEXCACHE_SIZE + DC_AUDIO_RING_SIZE + DC_AUDIO_OUTPUT_SIZE + \
-	 DC_VIDEO_STAGING_SIZE + DC_SOFT_RENDERER_SIZE)
+	 DC_VIDEO_STAGING_SIZE + DC_SOFT_RENDERER_SIZE + DC_INTERP_BLOCK_SIZE)
 
 #define DC_HEAP_REMAINDER \
 	(DC_MAIN_RAM_SIZE - DC_OS_AND_CODE_RESERVE - DC_EMU_FIXED_SIZE)

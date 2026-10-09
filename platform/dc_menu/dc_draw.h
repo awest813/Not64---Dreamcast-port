@@ -23,6 +23,8 @@
 
 int  dc_draw_init(void);
 void dc_draw_shutdown(void);
+/* Loading screens remain visible until the game's first presentation. */
+void dc_draw_shutdown_keep(void);
 
 /* One frame: begin clears, end presents. */
 void dc_draw_begin(uint16_t clear_rgb565);

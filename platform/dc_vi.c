@@ -10,14 +10,63 @@ static uint16_t vi_rgba16_to_rgb565(uint32_t n64)
 }
 
 #ifdef DC_VI_HIGHRES
-static uint16_t vi_read(const uint8_t *mem, uint32_t address, unsigned bytes)
+static inline __attribute__((always_inline)) uint16_t vi_read(
+    const uint8_t *mem, uint32_t address, unsigned bytes, unsigned aligned)
 {
     if (bytes == 2) {
-        uint16_t v; memcpy(&v, mem + (address ^ 2u), 2);
+        uint16_t v;
+        if(aligned)v=*(const uint16_t *)(mem+(address^2u));
+        else memcpy(&v, mem + (address ^ 2u), 2);
         return vi_rgba16_to_rgb565(v);
     }
-    uint32_t v; memcpy(&v, mem + address, 4);
+    uint32_t v;
+    if(aligned)v=*(const uint32_t *)(mem+address);
+    else memcpy(&v, mem + address, 4);
     return ((v >> 16) & 0xf800u) | ((v >> 13) & 0x7e0u) | ((v >> 11) & 31u);
+}
+
+/* The range/alignment checks in vi_interlaced qualify native loads. Constant
+ * pixel widths keep memcpy and its call setup out of the aligned pixel loop;
+ * an unaligned memory base retains the byte-safe reference reads. */
+static inline __attribute__((always_inline)) void vi_interlaced_rows(
+    const dc_vi_state *s,const uint8_t *mem,dc_vi_frame *frame,
+    unsigned width,unsigned lines,unsigned origin,unsigned stride,
+    unsigned xo,unsigned yo,unsigned ys,unsigned bytes,unsigned aligned)
+{
+    for (unsigned y=0; y<lines; ++y) {
+        unsigned source=yo+y*ys, fraction=source&1023;
+        unsigned address=origin+((source>>10)*stride+xo)*bytes;
+        uint16_t *dst=frame->pixels+(y*2+(s->field&1))*DC_VI_TEXTURE_WIDTH;
+        unsigned x=0;
+        if(bytes==2 && aligned && !(address&3u) &&
+           (fraction==0 || (fraction==512 && !(stride&1u)))) {
+            /* Integer rows and exact half-row interpolation can convert two
+             * RGBA5551 pixels together. Rounded RGB565 averages are channel
+             * exact: exclude each channel's low bit before shifting the XOR.
+             * The excluded halfword bit also prevents cross-pixel carries. */
+            for(;x+1<width;x+=2) {
+                uint32_t a=*(const uint32_t *)(mem+address+x*2);
+                a=(a&0xffc0ffc0u)|((a>>1)&0x001f001fu)|((a>>5)&0x00200020u);
+                if(fraction) {
+                    uint32_t b=*(const uint32_t *)(mem+address+(stride+x)*2);
+                    b=(b&0xffc0ffc0u)|((b>>1)&0x001f001fu)|((b>>5)&0x00200020u);
+                    a=(a|b)-(((a^b)&0xf7def7deu)>>1);
+                }
+                *(uint32_t *)(dst+x)=(a<<16)|(a>>16);
+            }
+        }
+        for (; x<width; ++x) {
+            unsigned a=vi_read(mem,address+x*bytes,bytes,aligned);
+            if (fraction) {
+                unsigned b=vi_read(mem,address+(stride+x)*bytes,bytes,aligned);
+                unsigned r=(((a>>11)*(1024-fraction)+(b>>11)*fraction)+512)>>10;
+                unsigned g=((((a>>5)&63)*(1024-fraction)+((b>>5)&63)*fraction)+512)>>10;
+                unsigned blue=(((a&31)*(1024-fraction)+(b&31)*fraction)+512)>>10;
+                a=(r<<11)|(g<<5)|blue;
+            }
+            dst[x]=a;
+        }
+    }
 }
 
 /* Experimental field-weave preview. Each VI updates only its own field;
@@ -47,21 +96,12 @@ static dc_vi_result vi_interlaced(const dc_vi_state *s, const uint8_t *mem,
     }
     if (!frame->interlaced || frame->width!=width || frame->height!=height)
         memset(frame->pixels,0,sizeof(frame->pixels));
-    for (unsigned y=0; y<lines; ++y) {
-        unsigned source=yo+y*ys, fraction=source&1023;
-        unsigned address=origin+((source>>10)*stride+xo)*bytes;
-        uint16_t *dst=frame->pixels+(y*2+(s->field&1))*DC_VI_TEXTURE_WIDTH;
-        for (unsigned x=0; x<width; ++x) {
-            unsigned a=vi_read(mem,address+x*bytes,bytes);
-            if (fraction) {
-                unsigned b=vi_read(mem,address+(stride+x)*bytes,bytes);
-                unsigned r=(((a>>11)*(1024-fraction)+(b>>11)*fraction)+512)>>10;
-                unsigned g=((((a>>5)&63)*(1024-fraction)+((b>>5)&63)*fraction)+512)>>10;
-                unsigned blue=(((a&31)*(1024-fraction)+(b&31)*fraction)+512)>>10;
-                a=(r<<11)|(g<<5)|blue;
-            }
-            dst[x]=a;
-        }
+    if((uintptr_t)mem&3u) {
+        if(bytes==2)vi_interlaced_rows(s,mem,frame,width,lines,origin,stride,xo,yo,ys,2,0);
+        else vi_interlaced_rows(s,mem,frame,width,lines,origin,stride,xo,yo,ys,4,0);
+    } else {
+        if(bytes==2)vi_interlaced_rows(s,mem,frame,width,lines,origin,stride,xo,yo,ys,2,1);
+        else vi_interlaced_rows(s,mem,frame,width,lines,origin,stride,xo,yo,ys,4,1);
     }
     frame->width=width; frame->height=height; frame->interlaced=1;
     return DC_VI_READY;
@@ -71,12 +111,15 @@ fail:
 }
 #endif
 
-dc_vi_result dc_vi_convert(const dc_vi_state *s, const uint8_t *mem,
-                          size_t size, dc_vi_frame *frame)
+static dc_vi_result vi_convert(const dc_vi_state *s, const uint8_t *mem,
+                              size_t size, dc_vi_frame *frame,
+                              dc_vi_padding_cache *cache)
 {
     uint32_t type, stride, origin, xs, ys, xo, yo, hx0, hx1, vy0, vy1;
     uint32_t width, height, bytes, x, y;
     uint64_t end;
+    unsigned reusable = cache && cache->valid && cache->frame == frame;
+    if (cache) cache->valid = 0;
     if (!frame) return DC_VI_INVALID;
 #ifdef DC_VI_HIGHRES
     if (s && mem && !(size&3u) && (s->status&0x40) &&
@@ -118,11 +161,13 @@ dc_vi_result dc_vi_convert(const dc_vi_state *s, const uint8_t *mem,
     /* The contract is "512-pixel stride, zeroed unused padding". Zero only the
      * padding this frame's row loop will not overwrite — the row tails and the
      * rows below height — instead of re-clearing all 256 KiB every VI update. */
-    memset(frame->pixels + height * DC_VI_TEXTURE_WIDTH, 0,
-           (DC_VI_TEXTURE_HEIGHT - height) * DC_VI_TEXTURE_WIDTH * sizeof(uint16_t));
-    for (y = 0; y < height; ++y) {
-        memset(frame->pixels + y * DC_VI_TEXTURE_WIDTH + width, 0,
-               (DC_VI_TEXTURE_WIDTH - width) * sizeof(uint16_t));
+    if (!reusable || cache->width != width || cache->height != height) {
+        memset(frame->pixels + height * DC_VI_TEXTURE_WIDTH, 0,
+               (DC_VI_TEXTURE_HEIGHT - height) * DC_VI_TEXTURE_WIDTH * sizeof(uint16_t));
+        for (y = 0; y < height; ++y) {
+            memset(frame->pixels + y * DC_VI_TEXTURE_WIDTH + width, 0,
+                   (DC_VI_TEXTURE_WIDTH - width) * sizeof(uint16_t));
+        }
     }
     for (y = 0; y < height; ++y) {
         uint32_t row = origin + ((yo + y) * stride + xo) * bytes;
@@ -175,5 +220,22 @@ dc_vi_result dc_vi_convert(const dc_vi_state *s, const uint8_t *mem,
         }
     }
     frame->width = width; frame->height = height;
+    if (cache) {
+        cache->frame = frame; cache->width = width; cache->height = height;
+        cache->valid = 1;
+    }
     return DC_VI_READY;
+}
+
+dc_vi_result dc_vi_convert(const dc_vi_state *s, const uint8_t *mem,
+                          size_t size, dc_vi_frame *frame)
+{
+    return vi_convert(s, mem, size, frame, NULL);
+}
+
+dc_vi_result dc_vi_convert_cached(const dc_vi_state *s, const uint8_t *mem,
+                                 size_t size, dc_vi_frame *frame,
+                                 dc_vi_padding_cache *cache)
+{
+    return vi_convert(s, mem, size, frame, cache);
 }

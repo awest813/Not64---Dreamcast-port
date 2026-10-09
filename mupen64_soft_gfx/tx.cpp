@@ -64,6 +64,9 @@ TX::~TX()
 
 void TX::invalidateSamples()
 {
+#ifdef DC_RASTER_PVR
+   PVRRaster::textureChanged(this);
+#endif
    if(++sampleEpoch==0) {
        for(auto &entry:sampleCache)entry.epoch=0;
        sampleEpoch=1;
